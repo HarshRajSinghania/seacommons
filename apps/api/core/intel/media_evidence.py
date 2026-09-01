@@ -141,7 +141,11 @@ def _resolves_public(host: str) -> bool:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             return False
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
             return False
     return True
 
@@ -261,22 +265,25 @@ def capture_media_evidence(
     out: list[MediaEvidence] = []
     for url in list(media_urls)[:max_images]:
         ev = MediaEvidence(source_url=source_url, original_media_url=url)
-        data, ev.fetch_status = _fetch(url)
-        if data is not None:
-            validated = _validate_image(data)
-            if validated is None:
-                ev.fetch_status = FETCH_INVALID_IMAGE
-            else:
-                fmt, ev.mime_type, ev.width, ev.height = validated
-                ev.sha256 = hashlib.sha256(data).hexdigest()
-                ev.fetched_at = datetime.now(UTC).isoformat()
-                _ext = _SUPPORTED[fmt][1]
-                _store(_ORIG_PREFIX, f"{ev.sha256}{_ext}", data, ev.mime_type)
-                thumb = _thumbnail(data, fmt)
-                if thumb is not None:
-                    tbytes, tmime, text = thumb
-                    if _store(_PUB_PREFIX, f"{ev.sha256}{text}", tbytes, tmime):
-                        ev.stored_media_url = f"/api/v1/media/{ev.sha256}{text}"
+        try:
+            data, ev.fetch_status = _fetch(url)
+            if data is not None:
+                validated = _validate_image(data)
+                if validated is None:
+                    ev.fetch_status = FETCH_INVALID_IMAGE
+                else:
+                    fmt, ev.mime_type, ev.width, ev.height = validated
+                    ev.sha256 = hashlib.sha256(data).hexdigest()
+                    ev.fetched_at = datetime.now(UTC).isoformat()
+                    _ext = _SUPPORTED[fmt][1]
+                    _store(_ORIG_PREFIX, f"{ev.sha256}{_ext}", data, ev.mime_type)
+                    thumb = _thumbnail(data, fmt)
+                    if thumb is not None:
+                        tbytes, tmime, text = thumb
+                        if _store(_PUB_PREFIX, f"{ev.sha256}{text}", tbytes, tmime):
+                            ev.stored_media_url = f"/api/v1/media/{ev.sha256}{text}"
+        except Exception:  # a single bad image must never sink the whole event
+            ev.fetch_status = FETCH_FAILED
         out.append(ev)
 
     _attach_ocr_outcome(out, ocr_method, ocr_coord, ocr_engine, ocr_text,

@@ -253,6 +253,36 @@ async def get_intel_drifts():
     return intel_drift_collection()
 
 
+@router.get("/api/v1/media/{key}")
+async def get_stored_media(key: str, request: Request):
+    """Serve a durably-stored Alarm Phone source image (docs/prompt.md P1 C).
+
+    Historical events keep working even when the original pbs.twimg.com URL
+    is gone. Key is ``<sha256>`` or ``<sha256>.<ext>`` -- a content-addressed
+    lookup, never an arbitrary path.
+    """
+    from fastapi import Response
+
+    import re
+
+    if not re.fullmatch(r"[0-9a-f]{64}(\.(jpg|png|webp|gif))?", key):
+        raise HTTPException(status_code=404, detail="Not found")
+    rate_limit(request, max_per_minute=120, scope="media")
+    from core.object_store import get
+
+    for candidate in (f"media/{key}", *(f"media/{key}{e}" for e in (".jpg", ".png", ".webp", ".gif"))):
+        try:
+            data = get(candidate)
+        except Exception:
+            continue
+        ext = candidate.rsplit(".", 1)[-1] if "." in candidate else "jpg"
+        mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp",
+                "gif": "image/gif"}.get(ext, "application/octet-stream")
+        return Response(content=data, media_type=mime,
+                        headers={"Cache-Control": "public, max-age=604800, immutable"})
+    raise HTTPException(status_code=404, detail="Not found")
+
+
 @router.post("/api/v1/intel/extract-image")
 async def extract_image_coords(body: ImageExtractRequest, request: Request):
     """

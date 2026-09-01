@@ -409,6 +409,22 @@ def _public_intel_feature(
             }
             for r in thread_reposts
         ]
+
+    # docs/prompt.md P1: expose the SAFE subset of media evidence (durable
+    # thumbnail + provenance), never the raw ocr_text or coordinate candidates.
+    media_evidence = event.metadata.get("media_evidence")
+    if media_evidence:
+        from core.intel.media_evidence import MediaEvidence
+
+        safe = []
+        for entry in media_evidence:
+            if isinstance(entry, dict):
+                fields = {k: entry.get(k) for k in MediaEvidence.__dataclass_fields__}
+                safe.append(MediaEvidence(**fields).public_dict())
+        if safe:
+            metadata["media_evidence"] = safe
+    if event.metadata.get("media_outcome"):
+        metadata["media_outcome"] = event.metadata["media_outcome"]
     # SeaCommons-derived MDA events (spoofing, sanctions, vessel incidents)
     # never went through core.intel.lifecycle's distress state machine --
     # they had no incident_lifecycle at all and sat "active" forever, even

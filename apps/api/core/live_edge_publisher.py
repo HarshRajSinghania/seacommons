@@ -356,6 +356,10 @@ def public_event_from_row(
         ] if thread_reposts else None,
         "location_precision": location_precision,
         "area_weather_narrowed": metadata.get("area_weather_narrowed"),
+        # docs/prompt.md P1: safe media-evidence subset (durable thumbnail +
+        # provenance) so the edge Humanitarian card can render the screenshot.
+        "media_evidence": _safe_media_evidence(metadata.get("media_evidence")),
+        "media_outcome": metadata.get("media_outcome"),
     }
     properties = {key: value for key, value in properties.items() if value not in (None, "")}
 
@@ -375,6 +379,19 @@ def public_event_from_row(
     }
     payload["id"] = _version_id(incident_id, payload)
     return validate_federated_event_input(payload)
+
+
+def _safe_media_evidence(entries: Any) -> list[dict[str, Any]] | None:
+    if not entries:
+        return None
+    from core.intel.media_evidence import MediaEvidence
+
+    safe = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            fields = {k: entry.get(k) for k in MediaEvidence.__dataclass_fields__}
+            safe.append(MediaEvidence(**fields).public_dict())
+    return safe or None
 
 
 def removed_payload(incident_id: str, node_id: str, *, source: str = "unknown") -> dict[str, Any]:

@@ -576,6 +576,37 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
         {coords && <Row label="Coordinates" value={`${Number(coords[1]).toFixed(5)}, ${Number(coords[0]).toFixed(5)}`} mono />}
       </div>
 
+      {isHumanitarian && Array.isArray(props.media_evidence)
+        && props.media_evidence.some((m) => m && m.stored_media_url) && (
+        <div className="cone-section intel-report-media">
+          <SectionLabel>Source screenshot</SectionLabel>
+          {props.media_evidence.filter((m) => m && m.stored_media_url).map((m, i) => (
+            <a
+              key={m.stored_media_url || i}
+              href={props.url || m.source_url || '#'}
+              target="_blank"
+              rel="noreferrer"
+              className="intel-report-screenshot-link"
+            >
+              <img
+                src={m.stored_media_url}
+                alt="Alarm Phone source screenshot"
+                loading="lazy"
+                className="intel-report-screenshot"
+              />
+            </a>
+          ))}
+          <p className="intel-report-provenance">
+            IMAGE OCR · MACHINE EXTRACTED — UNVERIFIED
+            {props.radius_m
+              ? ` · ±${props.radius_m >= 1000
+                  ? `${(props.radius_m / 1000).toFixed(1)} km`
+                  : `${Math.round(props.radius_m)} m`}`
+              : ''}
+          </p>
+        </div>
+      )}
+
       <div className="cone-section intel-report-visual">
         <TrackGraphic feature={panel.feature} driftFeature={driftFeature} dossier={dossier} />
       </div>

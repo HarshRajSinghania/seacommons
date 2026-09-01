@@ -525,6 +525,36 @@ class TwikitMonitor:
             and meta.get("location_status") != "withheld_from_maritime_map"
         )
 
+    def _capture_media_evidence(
+        self, event_id: str, urls: list[str], *, method: str | None,
+        coords: Optional[tuple[float, float]], ocr_diag: dict[str, Any],
+    ) -> None:
+        """Durably store the source images + record the normalized evidence
+        object and the explicit outcome bucket (docs/prompt.md P1)."""
+        try:
+            from core.intel.media_evidence import (
+                capture_media_evidence,
+                classify_media_outcome,
+            )
+
+            stored = intel_store.get(event_id)
+            source_url = stored.url if stored is not None else None
+            engine = "easyocr" if str(method or "").startswith("easyocr") else "tesseract"
+            evidence = capture_media_evidence(
+                urls,
+                source_url=source_url,
+                ocr_method=method if coords is not None else None,
+                ocr_coord=coords,
+                ocr_engine=engine if coords is not None else None,
+                interengine_distance_m=ocr_diag.get("interengine_distance_m"),
+            )
+            intel_store.update_metadata(event_id, metadata={
+                "media_evidence": [e.as_dict() for e in evidence],
+                "media_outcome": classify_media_outcome(evidence, coords, method),
+            })
+        except Exception as exc:  # pragma: no cover - evidence capture is best effort
+            logger.debug("media evidence capture failed for %s: %s", event_id, exc)
+
     def _apply_media_ocr(self, event_id: str, urls: list[str]) -> None:
         """Run in a pool worker: OCR, upgrade the stored position, drift."""
         from core.intel.location_evidence import (
@@ -539,6 +569,9 @@ class TwikitMonitor:
                 urls,
                 context_places=self._event_context_places(event_id),
                 sea_snap=self._event_sea_snap(event_id),
+            )
+            self._capture_media_evidence(
+                event_id, urls, method=method, coords=coords, ocr_diag=ocr_diag,
             )
             if coords is None:
                 record_ocr_result("no_coordinate")

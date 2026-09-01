@@ -528,9 +528,14 @@ class TwikitMonitor:
     def _capture_media_evidence(
         self, event_id: str, urls: list[str], *, method: str | None,
         coords: Optional[tuple[float, float]], ocr_diag: dict[str, Any],
+        ocr_ran: bool = True,
     ) -> None:
         """Durably store the source images + record the normalized evidence
-        object and the explicit outcome bucket (docs/prompt.md P1)."""
+        object and the explicit outcome bucket (docs/prompt.md P1).
+
+        Runs inside the bounded media-OCR pool worker (_apply_media_ocr via
+        media_ocr_queue) -- never inline on the twikit ingest loop and never a
+        per-event thread."""
         try:
             from core.intel.media_evidence import (
                 capture_media_evidence,
@@ -546,11 +551,14 @@ class TwikitMonitor:
                 ocr_method=method if coords is not None else None,
                 ocr_coord=coords,
                 ocr_engine=engine if coords is not None else None,
+                ocr_ran=ocr_ran,
                 interengine_distance_m=ocr_diag.get("interengine_distance_m"),
             )
             intel_store.update_metadata(event_id, metadata={
                 "media_evidence": [e.as_dict() for e in evidence],
-                "media_outcome": classify_media_outcome(evidence, coords, method),
+                "media_outcome": classify_media_outcome(
+                    evidence, coords, method, ocr_ran=ocr_ran,
+                ),
             })
         except Exception as exc:  # pragma: no cover - evidence capture is best effort
             logger.debug("media evidence capture failed for %s: %s", event_id, exc)
@@ -572,6 +580,7 @@ class TwikitMonitor:
             )
             self._capture_media_evidence(
                 event_id, urls, method=method, coords=coords, ocr_diag=ocr_diag,
+                ocr_ran=bool(attempted),
             )
             if coords is None:
                 record_ocr_result("no_coordinate")

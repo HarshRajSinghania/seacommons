@@ -255,32 +255,43 @@ async def get_intel_drifts():
 
 @router.get("/api/v1/media/{key}")
 async def get_stored_media(key: str, request: Request):
-    """Serve a durably-stored Alarm Phone source image (docs/prompt.md P1 C).
+    """Serve the PUBLIC, re-encoded thumbnail of an Alarm Phone source image
+    (docs/prompt.md P1 C).
 
-    Historical events keep working even when the original pbs.twimg.com URL
-    is gone. Key is ``<sha256>`` or ``<sha256>.<ext>`` -- a content-addressed
-    lookup, never an arbitrary path.
+    This route serves ONLY the intentionally-public derivative written to the
+    ``media/pub/`` prefix by media_evidence.capture_media_evidence -- never the
+    private durable original (``media/orig/``) and never an arbitrary object
+    store path. Key is ``<sha256>.<jpg|png>``; the lookup is content-addressed.
+
+    Cache is short and revalidatable, not ``immutable``: there is no takedown
+    workflow yet, so a stale-forever CDN copy of a distress-scene screenshot
+    would be unremovable.
     """
     from fastapi import Response
 
     import re
 
-    if not re.fullmatch(r"[0-9a-f]{64}(\.(jpg|png|webp|gif))?", key):
+    if not re.fullmatch(r"[0-9a-f]{64}\.(jpg|png)", key):
         raise HTTPException(status_code=404, detail="Not found")
     rate_limit(request, max_per_minute=120, scope="media")
     from core.object_store import get
 
-    for candidate in (f"media/{key}", *(f"media/{key}{e}" for e in (".jpg", ".png", ".webp", ".gif"))):
-        try:
-            data = get(candidate)
-        except Exception:
-            continue
-        ext = candidate.rsplit(".", 1)[-1] if "." in candidate else "jpg"
-        mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp",
-                "gif": "image/gif"}.get(ext, "application/octet-stream")
-        return Response(content=data, media_type=mime,
-                        headers={"Cache-Control": "public, max-age=604800, immutable"})
-    raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data = get(f"media/pub/{key}")
+    except Exception:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise HTTPException(status_code=404, detail="Not found")
+    mime = "image/png" if key.endswith(".png") else "image/jpeg"
+    return Response(
+        content=bytes(data),
+        media_type=mime,
+        headers={
+            "Cache-Control": "public, max-age=3600, must-revalidate",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Length": str(len(data)),
+        },
+    )
 
 
 @router.post("/api/v1/intel/extract-image")

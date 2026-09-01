@@ -177,6 +177,13 @@ async def authorization_gate(request, call_next):
     ) or (
         request.method in {"GET", "HEAD", "OPTIONS"}
         and path.startswith(("/api/v1/live/", "/api/v1/play/"))
+    ) or (
+        # docs/prompt.md P1 C: the media route is an EXPLICIT public contract,
+        # not an accident of the proxy header. It serves only the re-encoded
+        # public thumbnail (media/pub/<sha>.<jpg|png>), never the private
+        # durable original, and validates the key shape before any lookup.
+        request.method in {"GET", "HEAD", "OPTIONS"}
+        and path.startswith("/api/v1/media/")
     )
     try:
         if not public and config.INTERNAL_PROXY_SECRET:

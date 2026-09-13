@@ -41,6 +41,7 @@ import { splitObservedTrackSegments } from './features/live/observedTrack.js';
 import { vesselReportFeature } from './features/live/vesselVisual.js';
 import { createVesselArrowImage } from './features/map/vesselMarker.js';
 import { publicBasemapSource } from './features/map/publicBasemap.js';
+import { createFallbackMap } from './features/map/fallbackRenderer.js';
 import { mergeLiveDrifts } from './simulation/liveTracking.js';
 
 // Short two-tone chime for a correlated OSINT alert. Web Audio only; silent
@@ -607,6 +608,7 @@ function App() {
   const [radioSummary, setRadioSummary] = useState({ events: [], messages: [] });
   const [nearestVessels, setNearestVessels] = useState([]);
   const [mapReady, setMapReady] = useState(false);
+  const [fallbackReady, setFallbackReady] = useState(false);
   const [mapError, setMapError] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [cursorHint, setCursorHint] = useState({ visible: false, x: 0, y: 0 });
@@ -732,6 +734,7 @@ function App() {
 
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
+  const fallbackMapRef = useRef(null);
   const liveSignalsFramedRef = useRef(false);
   const selectionModeRef = useRef(false);
   const activePanelRef = useRef(isPublicLiveHost ? 'osint' : APP_PROFILE === 'demo' ? 'sim' : 'live');
@@ -1166,6 +1169,7 @@ function App() {
     let liveMap = null;
 
     async function initMap() {
+      if (window.__SEACOMMONS_FORCE_MAP_FALLBACK__ === true) throw new Error('forced map fallback');
       await import('maplibre-gl/dist/maplibre-gl.css');
       const { default: maplibregl } = await import('maplibre-gl');
       if (disposed || mapRef.current) return;
@@ -2294,12 +2298,31 @@ function App() {
       mapRef.current = map;
     }
 
-    initMap().catch(() => {
+    async function activateFallbackMap() {
+      if (disposed || !mapNodeRef.current) return;
+      try { liveMap?.remove(); } catch { /* partial MapLibre init */ }
+      mapRef.current = null;
+      mapNodeRef.current.replaceChildren();
+      const fallback = await createFallbackMap({
+        container: mapNodeRef.current,
+        center: APP_PROFILE === 'live' ? [15.2, 36.1] : [14.3, 31.0],
+        zoom: APP_PROFILE === 'live' ? 4.15 : 1.9,
+        onFeatureSelect: openIntelReport,
+      });
+      if (disposed) { fallback.destroy(); return; }
+      fallbackMapRef.current = fallback;
+      setMapError('');
+      setFallbackReady(true);
+    }
+
+    initMap().catch(() => activateFallbackMap().catch(() => {
       if (!disposed) setMapError('Map unavailable. Live signals remain available below.');
-    });
+    }));
     return () => {
       disposed = true;
       if (liveMap) liveMap.remove();
+      fallbackMapRef.current?.destroy();
+      fallbackMapRef.current = null;
     };
   }, []);
 
@@ -2450,6 +2473,29 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layerVis]);
 
+  const visibleLivePointFeatures = useMemo(() => {
+    let positioned = intelEvents.filter((feature) => feature.geometry?.type === 'Point' && feature.geometry?.coordinates);
+    if (!isPublicLiveHost) return positioned;
+    const alarmPhoneOn = isLayerGroupOn('alarm_phone');
+    return positioned.filter((feature) => {
+      const props = feature.properties || {};
+      if (!activeSignalCategories.has(signalCategoryOf(props))) return false;
+      if (!alarmPhoneOn && isAlarmPhoneSource(props.source)) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intelEvents, activeSignalCategories, layerVis.alarm_phone]);
+
+  useEffect(() => {
+    const fallback = fallbackMapRef.current;
+    if (!fallbackReady || !fallback) return;
+    fallback.setFeatures(visibleLivePointFeatures);
+    if (!liveSignalsFramedRef.current && visibleLivePointFeatures.length) {
+      fallback.fitFeatures(visibleLivePointFeatures);
+      liveSignalsFramedRef.current = true;
+    }
+  }, [fallbackReady, visibleLivePointFeatures]);
+
   // Intel events map layer — the backend's `kind` is "distress" (active),
   // "resolved" or "archived" (all three still distress-tier, pulsing, colored
   // by incident_lifecycle — see LIFECYCLE_* expressions above) or "context"
@@ -2458,20 +2504,7 @@ function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !map.isStyleLoaded()) return;
-    let positioned = intelEvents.filter((f) => f.geometry?.coordinates);
-    // Signals selector (public Live only) — same category gate as the feed
-    // cards, applied to the map so the two never disagree. Alarm Phone is a
-    // source-level refinement within the distress category, not a type of
-    // its own, so it is checked separately from activeSignalCategories.
-    if (isPublicLiveHost) {
-      const alarmPhoneOn = isLayerGroupOn('alarm_phone');
-      positioned = positioned.filter((f) => {
-        const props = f.properties || {};
-        if (!activeSignalCategories.has(signalCategoryOf(props))) return false;
-        if (!alarmPhoneOn && isAlarmPhoneSource(props.source)) return false;
-        return true;
-      });
-    }
+    const positioned = visibleLivePointFeatures;
     const typeOf = (f) => f.properties?.type;
     const isVesselEpisode = (f) => String(f.properties?.episode_id || f.properties?.id || '').startsWith('vessel-episode:');
     const vesselEpisodes = positioned.filter(isVesselEpisode).map((feature) => {
@@ -2527,7 +2560,7 @@ function App() {
       }));
     });
     map.getSource('intel-observed-tracks')?.setData({ type: 'FeatureCollection', features: observedTracks });
-  }, [intelEvents, mapReady, activeSignalCategories, layerVis.alarm_phone]);
+  }, [intelEvents, mapReady, visibleLivePointFeatures]);
 
   // MDA layer data
   useEffect(() => {

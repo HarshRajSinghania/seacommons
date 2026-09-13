@@ -36,3 +36,16 @@ test('Play archive exposes deterministic filters, dossier and global timeline', 
   await expect(page.getByRole('slider', { name: 'Global archive timeline' })).toBeVisible();
   await expect(page.locator('.play-all-badge strong')).toHaveText('ALL');
 });
+
+test('mobile Play keeps an interactive archive map when MapLibre cannot initialize', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => { window.__SEACOMMONS_FORCE_MAP_FALLBACK__ = true; });
+  await page.goto(PUBLIC_PLAY_URL);
+  await expect(page.locator('.leaflet-container')).toBeVisible();
+  const markers = page.locator('.seacommons-fallback-marker');
+  await expect(markers).toHaveCount(3);
+  await markers.first().click({ force: true });
+  const dossier = page.locator('.play-evidence.is-open');
+  await expect(dossier).toBeVisible();
+  await expect(dossier.locator('h2')).toContainText('Historical distress');
+});

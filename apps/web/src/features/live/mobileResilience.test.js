@@ -17,3 +17,12 @@ test('mobile Live feed scrolls as one sheet so acquisition cannot hide events', 
   assert.match(mobileBlock, /\.live-feed-panel\s*\{[^}]*overflow-y:\s*auto/s);
   assert.match(mobileBlock, /\.live-feed-panel__body\s*\{[^}]*overflow:\s*visible/s);
 });
+
+const mainSource = fs.readFileSync(new URL('../../main.jsx', import.meta.url), 'utf8');
+
+test('Live map initialization fails over to the shared interactive renderer', () => {
+  assert.match(mainSource, /createFallbackMap/);
+  assert.match(mainSource, /fallbackMapRef/);
+  assert.match(mainSource, /__SEACOMMONS_FORCE_MAP_FALLBACK__/);
+  assert.match(mainSource, /setFeatures\(visibleLivePointFeatures\)/);
+});

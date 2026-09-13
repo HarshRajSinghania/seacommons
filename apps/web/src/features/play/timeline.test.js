@@ -299,3 +299,12 @@ test('Play adopts first-page total_count immediately as the catalog total', asyn
   assert.match(source, /payload\?\.total_count/);
   assert.match(source, /setArchiveTotal\(Number\(payload\.total_count\)\)/);
 });
+
+test('Play map initialization fails over to the shared interactive renderer', async () => {
+  const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
+  assert.match(source, /createFallbackMap/);
+  assert.match(source, /fallbackMapRef/);
+  assert.match(source, /__SEACOMMONS_FORCE_MAP_FALLBACK__/);
+  assert.match(source, /fallback\.setFeatures\(incidentCollection\(filteredIncidents\)\.features\)/);
+  assert.match(source, /setSelectedId\(String\(feature\.properties\.incident_id\)\)/);
+});

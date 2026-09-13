@@ -19,9 +19,11 @@ function markerStyle(feature) {
     color: humanitarian ? '#ff746f' : '#8ed8ff',
     fillColor: humanitarian ? '#ff746f' : '#8ed8ff',
     fillOpacity: 0.9,
+    className: 'seacommons-fallback-marker',
   };
 }
 export async function createFallbackMap({ container, center, zoom, onFeatureSelect, leaflet }) {
+  if (!leaflet) await import('leaflet/dist/leaflet.css');
   const module = leaflet || await import('leaflet');
   const L = module.default || module;
   const map = L.map(container, { zoomControl: true, attributionControl: false });

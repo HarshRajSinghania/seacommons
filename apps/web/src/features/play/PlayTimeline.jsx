@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchJson } from '../../services/api/client.js';
 import { createVesselArrowImage, VESSEL_COLOR } from '../map/vesselMarker.js';
+import { createFallbackMap } from '../map/fallbackRenderer.js';
 import {
   incidentCollection,
   mergeIncidentPages,
@@ -83,7 +84,9 @@ function cutoffLabel(state) {
 export default function PlayTimeline({ apiBase }) {
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
+  const fallbackMapRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
+  const [fallbackReady, setFallbackReady] = useState(false);
   const [mapError, setMapError] = useState('');
   const [incidents, setIncidents] = useState([]);
   const [archiveTotal, setArchiveTotal] = useState(null);
@@ -229,6 +232,7 @@ export default function PlayTimeline({ apiBase }) {
   useEffect(() => {
     let disposed = false;
     async function initMap() {
+      if (window.__SEACOMMONS_FORCE_MAP_FALLBACK__ === true) throw new Error('forced map fallback');
       await import('maplibre-gl/dist/maplibre-gl.css');
       const { default: maplibregl } = await import('maplibre-gl');
       if (disposed || !mapNodeRef.current || mapRef.current) return;
@@ -302,13 +306,50 @@ export default function PlayTimeline({ apiBase }) {
         setMapReady(true);
       });
     }
-    initMap().catch(() => setMapError('Map unavailable. Archive cases remain available.'));
+    async function activateFallbackMap() {
+      if (disposed || !mapNodeRef.current) return;
+      try { mapRef.current?.remove(); } catch { /* partial MapLibre init */ }
+      mapRef.current = null;
+      mapNodeRef.current.replaceChildren();
+      const fallback = await createFallbackMap({
+        container: mapNodeRef.current,
+        center: [14.8, 35.7],
+        zoom: 3.55,
+        onFeatureSelect: (feature) => {
+          const incidentId = feature?.properties?.incident_id;
+          if (incidentId) {
+            setSelectedId(String(feature.properties.incident_id));
+            setCasesOpen(false);
+          }
+        },
+      });
+      if (disposed) { fallback.destroy(); return; }
+      fallbackMapRef.current = fallback;
+      setMapError('');
+      setFallbackReady(true);
+    }
+    initMap().catch(() => activateFallbackMap().catch(() => {
+      if (!disposed) setMapError('Map unavailable. Archive cases remain available.');
+    }));
     return () => {
       disposed = true;
-      mapRef.current?.remove();
+      try { mapRef.current?.remove(); } catch { /* already removed */ }
       mapRef.current = null;
+      fallbackMapRef.current?.destroy();
+      fallbackMapRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const fallback = fallbackMapRef.current;
+    if (!fallbackReady || !fallback) return;
+    fallback.setFeatures(incidentCollection(filteredIncidents).features);
+    if (filteredIncidents.length) fallback.fitFeatures(incidentCollection(filteredIncidents).features);
+    const geometry = selectedIncident?.geometry;
+    if (selectedId && geometry?.type === 'Point' && Array.isArray(geometry.coordinates)) {
+      fallback.flyTo({ center: geometry.coordinates, zoom: 6.5 });
+    }
+  }, [fallbackReady, filteredIncidents, selectedId, selectedIncident]);
 
   useEffect(() => {
     const map = mapRef.current;

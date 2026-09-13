@@ -42,9 +42,28 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
       markers.clearLayers();
       for (const feature of pointFeatures(features)) {
         const [lon, lat] = feature.geometry.coordinates;
-        L.circleMarker([Number(lat), Number(lon)], markerStyle(feature))
-          .on('click', () => onFeatureSelect?.(feature))
+        const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature))
           .addTo(markers);
+        const element = marker.getElement?.();
+        if (element) {
+          const incidentId = String(feature?.properties?.incident_id || feature?.properties?.id || 'incident');
+          element.setAttribute('role', 'button');
+          element.setAttribute('tabindex', '0');
+          element.setAttribute('aria-label', `Open incident ${incidentId}`);
+          const select = (event) => {
+            event?.stopPropagation?.();
+            onFeatureSelect?.(feature);
+          };
+          element.addEventListener('click', select);
+          element.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault?.();
+              select(event);
+            }
+          });
+        } else {
+          marker.on('click', () => onFeatureSelect?.(feature));
+        }
       }
     },
     fitFeatures(features) {

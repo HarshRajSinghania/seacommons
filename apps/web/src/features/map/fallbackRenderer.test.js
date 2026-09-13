@@ -16,7 +16,17 @@ function fakeLeaflet(log) {
     tileLayer(url) { log.tileUrl = url; return { addTo() { return this; } }; },
     layerGroup() { return { addTo() { return this; }, clearLayers() { log.cleared = true; } }; },
     circleMarker(latlng, options) {
-      const marker = { on(_event, handler) { marker.handler = handler; return marker; }, addTo() { log.markers.push({ latlng, options, marker }); return marker; } };
+      const element = {
+        handlers: {},
+        attrs: {},
+        addEventListener(event, handler) { element.handlers[event] = handler; },
+        setAttribute(name, value) { element.attrs[name] = value; },
+      };
+      const marker = {
+        on(_event, handler) { marker.handler = handler; return marker; },
+        addTo() { log.markers.push({ latlng, options, marker, element }); return marker; },
+        getElement() { return element; },
+      };
       return marker;
     },
     latLngBounds(points) { return { points }; },
@@ -39,7 +49,9 @@ test('fallback map renders only real point features and preserves canonical sele
 
   assert.equal(log.markers.length, 1);
   assert.deepEqual(log.markers[0].latlng, [34.1, 25.1]);
-  log.markers[0].marker.handler();
+  assert.equal(log.markers[0].element.attrs.role, 'button');
+  assert.equal(log.markers[0].element.attrs['aria-label'], 'Open incident HUM-1');
+  log.markers[0].element.handlers.click({ stopPropagation() {} });
   assert.deepEqual(selected, [point]);
 });
 

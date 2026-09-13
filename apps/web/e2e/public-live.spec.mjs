@@ -96,3 +96,18 @@ test('Alarm Phone transport type stays Humanitarian Distress in counts and feed 
   await categories.locator('a[href="#social"]').click();
   await expect(page.getByText('Distress report', { exact: true })).toBeVisible();
 });
+
+test('mobile Live keeps an interactive incident map when MapLibre cannot initialize', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => { window.__SEACOMMONS_FORCE_MAP_FALLBACK__ = true; });
+  await page.goto(PUBLIC_LIVE_URL);
+  await expect(page.locator('.leaflet-container')).toBeVisible();
+  const markers = page.locator('.seacommons-fallback-marker');
+  await expect(markers).toHaveCount(2);
+  const targetMarker = page.locator('.seacommons-fallback-marker--humanitarian-1');
+  await expect(targetMarker).toHaveAttribute('role', 'button');
+  await targetMarker.dispatchEvent('pointerup');
+  const fallbackReport = page.locator('.cone-panel--intel');
+  await expect(fallbackReport).toBeVisible();
+  await expect(fallbackReport.getByText('Distress report', { exact: true }).first()).toBeVisible();
+});

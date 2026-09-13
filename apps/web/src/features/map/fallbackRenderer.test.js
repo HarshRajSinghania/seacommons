@@ -51,7 +51,8 @@ test('fallback map renders only real point features and preserves canonical sele
   assert.deepEqual(log.markers[0].latlng, [34.1, 25.1]);
   assert.equal(log.markers[0].element.attrs.role, 'button');
   assert.equal(log.markers[0].element.attrs['aria-label'], 'Open incident HUM-1');
-  log.markers[0].element.handlers.click({ stopPropagation() {} });
+  assert.equal(typeof log.markers[0].element.handlers.pointerup, 'function');
+  log.markers[0].element.handlers.pointerup({ stopPropagation() {} });
   assert.deepEqual(selected, [point]);
 });
 

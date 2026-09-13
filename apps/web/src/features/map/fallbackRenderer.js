@@ -50,10 +50,15 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
           element.setAttribute('role', 'button');
           element.setAttribute('tabindex', '0');
           element.setAttribute('aria-label', `Open incident ${incidentId}`);
+          let lastSelectionAt = 0;
           const select = (event) => {
             event?.stopPropagation?.();
+            const now = Date.now();
+            if (now - lastSelectionAt < 250) return;
+            lastSelectionAt = now;
             onFeatureSelect?.(feature);
           };
+          element.addEventListener('pointerup', select);
           element.addEventListener('click', select);
           element.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' || event.key === ' ') {

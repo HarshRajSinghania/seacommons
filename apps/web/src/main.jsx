@@ -786,14 +786,20 @@ function App() {
     };
   }
 
+  function selectIntelReport(feature) {
+    setActivePanel('osint');
+    if (!window.matchMedia('(max-width: 680px)').matches) setSidebarOpen(true);
+    setMapPanel({ type: 'intel', feature });
+    setConePanelHidden(false);
+  }
+
   function openIntelReport(feature) {
     const coordinates = feature?.geometry?.type === 'Point' ? feature.geometry.coordinates : null;
     const isMobile = window.matchMedia('(max-width: 680px)').matches;
     if (coordinates && mapRef.current && !isMobile) {
       mapRef.current.flyTo({ center: coordinates, zoom: 9, duration: 800 });
     }
-    setMapPanel({ type: 'intel', feature });
-    setConePanelHidden(false);
+    selectIntelReport(feature);
   }
 
   function openVesselReport(feature) {
@@ -2307,7 +2313,7 @@ function App() {
         container: mapNodeRef.current,
         center: APP_PROFILE === 'live' ? [15.2, 36.1] : [14.3, 31.0],
         zoom: APP_PROFILE === 'live' ? 4.15 : 1.9,
-        onFeatureSelect: openIntelReport,
+        onFeatureSelect: selectIntelReport,
       });
       if (disposed) { fallback.destroy(); return; }
       fallbackMapRef.current = fallback;

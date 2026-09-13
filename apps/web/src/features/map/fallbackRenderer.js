@@ -56,6 +56,7 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
             const now = Date.now();
             if (now - lastSelectionAt < 250) return;
             lastSelectionAt = now;
+            element.setAttribute('data-activated', 'true');
             onFeatureSelect?.(feature);
           };
           element.addEventListener('pointerup', select);

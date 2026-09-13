@@ -107,6 +107,7 @@ test('mobile Live keeps an interactive incident map when MapLibre cannot initial
   const targetMarker = page.locator('.seacommons-fallback-marker--humanitarian-1');
   await expect(targetMarker).toHaveAttribute('role', 'button');
   await targetMarker.dispatchEvent('pointerup');
+  await expect(targetMarker).toHaveAttribute('data-activated', 'true');
   await expect(page.locator('.cone-panel--intel')).toBeVisible();
   await expect(page.getByText('Distress report', { exact: true })).toBeVisible();
 });

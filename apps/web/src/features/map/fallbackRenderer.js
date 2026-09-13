@@ -9,6 +9,12 @@ function pointFeatures(features = []) {
   });
 }
 
+function markerClass(feature) {
+  const raw = String(feature?.properties?.incident_id || feature?.properties?.id || 'feature');
+  const safe = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `seacommons-fallback-marker seacommons-fallback-marker--${safe || 'feature'}`;
+}
+
 function markerStyle(feature) {
   const domain = String(feature?.properties?.domain || feature?.properties?.macro_domain || '').toLowerCase();
   const source = String(feature?.properties?.source || '').toLowerCase();
@@ -19,7 +25,7 @@ function markerStyle(feature) {
     color: humanitarian ? '#ff746f' : '#8ed8ff',
     fillColor: humanitarian ? '#ff746f' : '#8ed8ff',
     fillOpacity: 0.9,
-    className: 'seacommons-fallback-marker',
+    className: markerClass(feature),
   };
 }
 export async function createFallbackMap({ container, center, zoom, onFeatureSelect, leaflet }) {

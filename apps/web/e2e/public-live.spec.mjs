@@ -104,7 +104,7 @@ test('mobile Live keeps an interactive incident map when MapLibre cannot initial
   await expect(page.locator('.leaflet-container')).toBeVisible();
   const markers = page.locator('.seacommons-fallback-marker');
   await expect(markers).toHaveCount(2);
-  await markers.first().click({ force: true });
+  await page.locator('.seacommons-fallback-marker--humanitarian-1').click({ force: true });
   await expect(page.locator('.cone-panel--intel')).toBeVisible();
   await expect(page.getByText('Distress report', { exact: true })).toBeVisible();
 });

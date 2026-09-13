@@ -44,7 +44,9 @@ test('mobile Play keeps an interactive archive map when MapLibre cannot initiali
   await expect(page.locator('.leaflet-container')).toBeVisible();
   const markers = page.locator('.seacommons-fallback-marker');
   await expect(markers).toHaveCount(3);
-  await page.locator('.seacommons-fallback-marker--play-humanitarian-1').click({ force: true });
+  const targetMarker = page.locator('.seacommons-fallback-marker--play-humanitarian-1');
+  await expect(targetMarker).toHaveAttribute('role', 'button');
+  await targetMarker.dispatchEvent('pointerup');
   const dossier = page.locator('.play-evidence.is-open');
   await expect(dossier).toBeVisible();
   await expect(dossier.locator('h2')).toContainText('Historical distress');

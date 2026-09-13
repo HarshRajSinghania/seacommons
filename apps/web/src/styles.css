@@ -3630,9 +3630,15 @@ h2, h3, .sidebar-header h2, .panel-block h3 {
     border-top: 1px solid rgba(169,255,218,.22);
     border-right: 0;
     transform: translateY(102%);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
   .live-feed-panel.is-open { transform: translateY(0); }
-  .live-feed-panel__header { padding-top: 12px; }
+  .live-feed-panel__header { flex: 0 0 auto; padding-top: 12px; }
+  .live-feed-panel__body { flex: 0 0 auto; overflow: visible; min-height: min-content; }
   .live-feed-panel__title { margin: 12px 0; }
   .live-feed-panel__title h1 { font-size: 24px; }
   .live-feed-toggle,
@@ -3935,3 +3941,5 @@ h2, h3, .sidebar-header h2, .panel-block h3 {
 .live-acquisition__radio-message:hover { background:rgba(255,255,255,.05); }
 .live-acquisition__radio-message strong { font-size:10px; font-weight:600; }
 .live-acquisition__radio-message span { font-size:9px; opacity:.62; text-align:right; }
+
+.map-banner--error { border-color: rgba(255,116,111,.42); color: #ff9a96; }

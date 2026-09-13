@@ -84,6 +84,7 @@ export default function PlayTimeline({ apiBase }) {
   const mapNodeRef = useRef(null);
   const mapRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState('');
   const [incidents, setIncidents] = useState([]);
   const [archiveTotal, setArchiveTotal] = useState(null);
   const [selectedId, setSelectedId] = useState('');
@@ -297,10 +298,11 @@ export default function PlayTimeline({ apiBase }) {
         }
         mapRef.current = map;
         map.resize();
+        setMapError('');
         setMapReady(true);
       });
     }
-    initMap().catch((exc) => setError(exc?.message || 'Map unavailable'));
+    initMap().catch(() => setMapError('Map unavailable. Archive cases remain available.'));
     return () => {
       disposed = true;
       mapRef.current?.remove();
@@ -413,6 +415,7 @@ export default function PlayTimeline({ apiBase }) {
         <div className="play-all-badge"><strong>{modeLabel}</strong><span>{archiveTotal != null ? `${archiveTotal} archive` : `${visibleIncidents.length} loaded`}</span></div>
         {loading ? <div className="play-map-message">Loading temporal evidence…</div> : null}
         {error ? <div className="play-map-message is-error">{error}</div> : null}
+        {mapError ? <div className="play-map-message is-error">{mapError}</div> : null}
         {selectedId ? (
           <div className="play-map-status">
             <span>{selectedIncident?.source || 'incident'}</span>

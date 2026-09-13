@@ -1,3 +1,5 @@
+import { publicBasemapSource } from '../map/publicBasemap.js';
+
 import { isVesselArchiveIncident } from '../map/vesselMarker.js';
 
 function parseTime(value) {
@@ -161,12 +163,7 @@ export function playMapStyle(day = new Date(Date.now() - 24 * 3600 * 1000).toISO
   return {
     version: 8,
     sources: {
-      baseMap: {
-        type: 'raster',
-        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors',
-      },
+      baseMap: publicBasemapSource(),
       satelliteContext: {
         type: 'raster',
         tiles: [`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${day}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`],

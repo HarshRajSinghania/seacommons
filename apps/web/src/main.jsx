@@ -40,6 +40,7 @@ import { initialLayerVisibility, layerVisibilityStorageKey } from './features/li
 import { splitObservedTrackSegments } from './features/live/observedTrack.js';
 import { vesselReportFeature } from './features/live/vesselVisual.js';
 import { createVesselArrowImage } from './features/map/vesselMarker.js';
+import { publicBasemapSource } from './features/map/publicBasemap.js';
 import { mergeLiveDrifts } from './simulation/liveTracking.js';
 
 // Short two-tone chime for a correlated OSINT alert. Web Audio only; silent
@@ -479,12 +480,7 @@ function mapStyle() {
   return {
     version: 8,
     sources: {
-      osm: {
-        type: 'raster',
-        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors',
-      },
+      osm: publicBasemapSource(),
       satellite,
     },
     layers: [
@@ -611,6 +607,7 @@ function App() {
   const [radioSummary, setRadioSummary] = useState({ events: [], messages: [] });
   const [nearestVessels, setNearestVessels] = useState([]);
   const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [cursorHint, setCursorHint] = useState({ visible: false, x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
@@ -2288,6 +2285,7 @@ function App() {
           map.getCanvas().title = '';
         });
         map.getSource('sar-case')?.setData(caseGeojson);
+        setMapError('');
         setMapReady(true);
         if (!isPublicLiveHost) loadWeatherGridForMap(map).catch(() => {});
         spinStep();   // begin the globe intro rotation
@@ -2296,7 +2294,9 @@ function App() {
       mapRef.current = map;
     }
 
-    initMap();
+    initMap().catch(() => {
+      if (!disposed) setMapError('Map unavailable. Live signals remain available below.');
+    });
     return () => {
       disposed = true;
       if (liveMap) liveMap.remove();
@@ -3315,6 +3315,7 @@ function App() {
         ) : null}
         {error  ? <div className={`map-banner error ${sidebarOpen ? 'sidebar-open' : ''}`}>{error}</div> : null}
         {loading ? <div className={`map-banner ${sidebarOpen ? 'sidebar-open' : ''}`}>Connecting to backend…</div> : null}
+        {mapError ? <div className={`map-banner map-banner--error ${sidebarOpen ? 'sidebar-open' : ''}`}>{mapError}</div> : null}
 
         {isOnSim && cursorHint.visible ? (
           <div className="map-cursor-hint" style={{ left: cursorHint.x + 18, top: cursorHint.y + 22 }}>

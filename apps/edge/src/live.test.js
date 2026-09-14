@@ -91,7 +91,7 @@ async function ingest(room, event, secret = 'test-secret') {
 function incidentEvent({
   id,
   incidentId = 'incident-1',
-  observedAt = '2026-08-26T10:00:00Z',
+  observedAt = '2099-08-26T10:00:00Z',
   removed = false,
 }) {
   return {
@@ -111,12 +111,12 @@ function incidentEvent({
 }
 
 test('normalizes a public event with an explicit live expiry', async () => {
-  const before = Date.now();
+  const observedAt = '2026-08-02T12:00:00Z';
   const event = await normalizeEvent({
     type: 'distress_observation',
     source: 'alarm-phone',
     node: 'oracle-collector-1',
-    observed_at: '2026-08-02T12:00:00Z',
+    observed_at: observedAt,
     confidence: 0.7,
     geometry: { type: 'Point', coordinates: [14.5, 35.5] },
   }, 'previous', 3600);
@@ -126,7 +126,7 @@ test('normalizes a public event with an explicit live expiry', async () => {
   assert.equal(event.visibility, 'public');
   assert.match(event.id, /^[a-f0-9]{64}$/);
   assert.match(event.hash, /^[a-f0-9]{64}$/);
-  assert.ok(event.expires_at_ms >= before + 3_599_000);
+  assert.equal(event.expires_at_ms, Date.parse(observedAt) + 3_600_000);
 });
 
 test('edge transport preserves the semantic category and origin metadata', async () => {
@@ -249,11 +249,11 @@ test('an out-of-order observation cannot replace a newer incident version', asyn
   const room = new LiveRoom(state, { INGEST_SECRET: 'test-secret' });
   const newer = incidentEvent({
     id: 'incident-1:v2',
-    observedAt: '2026-08-26T10:10:00Z',
+    observedAt: '2099-08-26T10:10:00Z',
   });
   const older = incidentEvent({
     id: 'incident-1:v1',
-    observedAt: '2026-08-26T10:00:00Z',
+    observedAt: '2099-08-26T10:00:00Z',
   });
 
   const accepted = await ingest(room, newer);

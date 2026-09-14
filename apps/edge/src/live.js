@@ -6,7 +6,7 @@ import {
 } from './live-contracts.js';
 
 const MAX_EVENTS = 500;
-const DEFAULT_TTL_SECONDS = 8 * 24 * 60 * 60;
+const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 const DEFAULT_HEARTBEAT_MAX_AGE_SECONDS = 120;
 const INCIDENT_LIFECYCLE_SET = new Set(INCIDENT_LIFECYCLES);
 const LOCATION_PRECISION_SET = new Set(LOCATION_PRECISIONS);
@@ -144,6 +144,7 @@ export async function normalizeEvent(input, previousHash = null, ttl = DEFAULT_T
     throw new Error('confidence must be between 0 and 1');
   }
   const receivedAt = new Date().toISOString();
+  const observedAtMs = Date.parse(input.observed_at);
   const event = {
     schema: FEDERATED_EVENT_SCHEMA,
     type: String(input.type),
@@ -151,7 +152,9 @@ export async function normalizeEvent(input, previousHash = null, ttl = DEFAULT_T
     node: String(input.node || 'unknown'),
     observed_at: new Date(input.observed_at).toISOString(),
     received_at: receivedAt,
-    expires_at_ms: Date.parse(receivedAt) + ttl * 1000,
+    // Live age is measured from the report, not from delayed delivery. This
+    // prevents a replay/backfill from reviving an already retired incident.
+    expires_at_ms: observedAtMs + ttl * 1000,
     visibility: input.visibility === 'private' ? 'private' : 'public',
     confidence: numericConfidence,
     geometry: validateGeometry(input.geometry),

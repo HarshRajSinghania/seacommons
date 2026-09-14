@@ -29,11 +29,18 @@ function fakeLeaflet(log) {
       };
       return marker;
     },
+    polygon(latlngs, options) {
+      const layer = {
+        on(_event, handler) { layer.handler = handler; return layer; },
+        addTo() { log.polygons.push({ latlngs, options, layer }); return layer; },
+      };
+      return layer;
+    },
     latLngBounds(points) { return { points }; },
   };
 }
 test('fallback map renders only real point features and preserves canonical selection', async () => {
-  const log = { markers: [] };
+  const log = { markers: [], polygons: [] };
   const selected = [];
   const renderer = await createFallbackMap({
     container: {},
@@ -56,8 +63,31 @@ test('fallback map renders only real point features and preserves canonical sele
   assert.deepEqual(selected, [point]);
 });
 
+test('fallback map renders public search-area polygons and selects their incident', async () => {
+  const log = { markers: [], polygons: [] };
+  const selected = [];
+  const renderer = await createFallbackMap({
+    container: {}, center: [15, 36], zoom: 5,
+    onFeatureSelect: (feature) => selected.push(feature),
+    leaflet: fakeLeaflet(log),
+  });
+  const area = {
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [[[24, 35], [25, 35], [25, 36], [24, 35]]] },
+    properties: { incident_id: 'HUM-AREA-1', domain: 'humanitarian' },
+  };
+
+  renderer.setFeatures([area]);
+
+  assert.equal(log.polygons.length, 1);
+  assert.deepEqual(log.polygons[0].latlngs, [[[35, 24], [35, 25], [36, 25], [35, 24]]]);
+  assert.equal(log.polygons[0].options.fillOpacity, 0.22);
+  log.polygons[0].layer.handler();
+  assert.deepEqual(selected, [area]);
+});
+
 test('fallback map supports fit, fly, resize and destroy', async () => {
-  const log = { markers: [] };
+  const log = { markers: [], polygons: [] };
   const renderer = await createFallbackMap({ container: {}, center: [15, 36], zoom: 5, onFeatureSelect() {}, leaflet: fakeLeaflet(log) });
   const features = [{ type: 'Feature', geometry: { type: 'Point', coordinates: [12, 35] }, properties: {} }];
   renderer.fitFeatures(features);

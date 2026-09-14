@@ -55,6 +55,7 @@ def test_public_distress_event_mapping_is_versioned() -> None:
     assert event["properties"]["incident_id"] == "evt-1"
     assert event["properties"]["radius_m"] == 5000
     assert event["properties"]["incident_lifecycle"] == "active"
+    assert event["properties"]["live_contract_version"] == 2
 
 
 def test_humanitarian_edge_accepts_any_verified_humanitarian_source() -> None:
@@ -358,6 +359,7 @@ def test_removed_payload_is_a_valid_incident_removed_event() -> None:
     assert payload["type"] == "incident_removed"
     assert payload["properties"]["incident_id"] == "evt-10"
     assert payload["geometry"] is None
+    assert payload["properties"]["live_contract_version"] == 2
     assert payload["id"].startswith("evt-10:")
 
 

@@ -317,6 +317,10 @@ def public_event_from_row(
         metadata=metadata,
     )
     properties = {
+        # Bump when retention/lifecycle transport semantics change. It is part
+        # of the material version hash, forcing every in-window row through
+        # the durable edge again after a deploy (including tombstones).
+        "live_contract_version": 2,
         "incident_id": incident_id,
         "severity": event.severity,
         "visual_category": category["visual_category"],
@@ -389,7 +393,7 @@ def removed_payload(incident_id: str, node_id: str, *, source: str = "unknown") 
         "visibility": Visibility.PUBLIC.value,
         "confidence": None,
         "geometry": None,
-        "properties": {"incident_id": incident_id},
+        "properties": {"incident_id": incident_id, "live_contract_version": 2},
         "source_url": None,
     }
     payload["id"] = _version_id(incident_id, payload)

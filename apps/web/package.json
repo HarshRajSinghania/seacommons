@@ -28,7 +28,7 @@
     "test": "npm run test:simulation && npm run test:live && npm run test:api && npm run test:map && npm run test:play",
     "test:api": "node --test src/services/api/*.test.js",
     "test:live": "node --test src/features/live/*.test.js",
-    "test:map": "node --test src/features/drift/*.test.js",
+    "test:map": "node --test src/features/drift/*.test.js src/features/map/*.test.js",
     "test:simulation": "node --test src/simulation/*.test.js",
     "test:play": "node --test src/features/play/*.test.js",
     "test:e2e": "playwright test --config=playwright.config.mjs",

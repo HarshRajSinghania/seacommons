@@ -9,6 +9,18 @@ function pointFeatures(features = []) {
   });
 }
 
+function polygonFeatures(features = []) {
+  return (features || []).filter((feature) => (
+    ['Polygon', 'MultiPolygon'].includes(feature?.geometry?.type)
+    && Array.isArray(feature.geometry.coordinates)
+  ));
+}
+
+function leafletPolygonCoordinates(geometry) {
+  const polygons = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
+  return polygons.map((polygon) => polygon.map((ring) => ring.map(([lon, lat]) => [Number(lat), Number(lon)])));
+}
+
 function markerClass(feature) {
   const raw = String(feature?.properties?.incident_id || feature?.properties?.id || 'feature');
   const safe = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -40,6 +52,15 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
   return {
     setFeatures(features) {
       markers.clearLayers();
+      for (const feature of polygonFeatures(features)) {
+        const polygons = leafletPolygonCoordinates(feature.geometry);
+        for (const latlngs of polygons) {
+          L.polygon(latlngs, {
+            color: '#ff746f', weight: 2, fillColor: '#ff746f', fillOpacity: 0.22,
+            className: markerClass(feature),
+          }).on('click', () => onFeatureSelect?.(feature)).addTo(markers);
+        }
+      }
       for (const feature of pointFeatures(features)) {
         const [lon, lat] = feature.geometry.coordinates;
         const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature))

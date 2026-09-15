@@ -117,15 +117,15 @@ const PUBLIC_DEMO_HOSTS = new Set(['play.seacommons.org', 'demo.seacommons.org']
 const LIVE_HOSTS = new Set(['live.seacommons.org', 'console.seacommons.org', 'engine.seacommons.org']);
 // The public Live map only ever fetches data for these layer groups (see the
 // ngo-vessels/platforms effects and loadWeatherGridForMap's isPublicLiveHost
-// guard) — weather/MDA/archive layers stay hidden. Raw AIS is available as
-// optional context but starts off on public Live so incidents remain dominant.
+// guard) — weather/MDA/archive layers stay hidden. Raw AIS belongs to the
+// operator console, not the public signal field: Live stays case-first.
 // Humanitarian and Security used to be two exclusive bundles the mode switch
 // swapped between; the per-category Signals selector now shows/hides each of
 // these individually, so the allow-list is their union -- always available,
 // never gated by a mode.
 const PUBLIC_LIVE_LAYER_GROUPS = new Set([
   'nautical', 'sar', 'fused', 'observed_tracks', 'drift_models', 'simulation', 'ngo_vessels', 'platforms', 'spikes',
-  'ais_moving', 'ais_stationary', 'ais_trails', 'radio_receivers', 'radio_dsc',
+  'radio_receivers', 'radio_dsc',
   'intel_social', 'intel_news', 'intel_hazard', 'intel_incident', 'intel_iom', 'intel_ngo',
 ]);
 // Signals selector: two macro groups (the original Humanitarian/Maritime
@@ -2494,14 +2494,14 @@ function App() {
 
   const fallbackVesselFeatures = useMemo(() => {
     const byId = new Map();
-    for (const feature of [...(vessels.features || []), ...(sarMapFeatures.features || [])]) {
+    for (const feature of (sarMapFeatures.features || [])) {
       if (!feature?.geometry?.coordinates) continue;
       const report = vesselReportFeature(feature);
       const key = report.properties?.mmsi || report.properties?.id || `${report.geometry.coordinates}`;
       byId.set(String(key), report);
     }
     return [...byId.values()];
-  }, [vessels, sarMapFeatures]);
+  }, [sarMapFeatures]);
 
   useEffect(() => {
     const fallback = fallbackMapRef.current;
@@ -2913,7 +2913,9 @@ function App() {
       running = true;
       try {
         const [vesselsPayload, alertsPayload] = await Promise.all([
-          fetchVessels(),
+          isPublicLiveHost
+            ? Promise.resolve({ type: 'FeatureCollection', features: [] })
+            : fetchVessels(),
           isPublicLiveHost
             ? Promise.resolve({ type: 'FeatureCollection', features: [] })
             : fetchJson(apiBase, '/api/v1/alerts/geojson'),

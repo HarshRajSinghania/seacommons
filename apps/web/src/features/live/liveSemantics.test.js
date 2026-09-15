@@ -22,14 +22,15 @@ test('vessel incident safety filter belongs to Maritime macro', () => {
 });
 
 
-test('public Live exposes AIS moving, stationary and selected-track layers with a vessel report on click', () => {
-  assert.match(main, /'ais_moving'/);
-  assert.match(main, /'ais_stationary'/);
-  assert.match(main, /'ais_trails'/);
-  assert.match(main, /id: 'vessels-stationary-layer'/);
+test('public Live is case-first and does not expose raw AIS vessel layers', () => {
+  const allowList = main.slice(main.indexOf('const PUBLIC_LIVE_LAYER_GROUPS'), main.indexOf(']);', main.indexOf('const PUBLIC_LIVE_LAYER_GROUPS')));
+  assert.doesNotMatch(allowList, /'ais_moving'/);
+  assert.doesNotMatch(allowList, /'ais_stationary'/);
+  assert.doesNotMatch(allowList, /'ais_trails'/);
+  assert.match(main, /id: 'vessels-stationary-layer'/); // operator console still owns raw AIS
   assert.match(main, /id: 'selected-vessel-track'/);
   assert.match(main, /openVesselReport/);
-  assert.doesNotMatch(main, /if \(isPublicLiveHost\) \{[\s\S]{0,120}setVessels\(\{ type: 'FeatureCollection', features: \[\] \}\)/);
+  assert.match(main, /isPublicLiveHost[\s\S]{0,120}Promise\.resolve\(\{ type: 'FeatureCollection', features: \[\] \}\)/);
 });
 
 test('public Live exposes the radio receiver mesh and decoded DSC without making Radio a third macro category', () => {

@@ -1184,6 +1184,63 @@ def test_load_from_db_seeds_dedup_keys_for_capped_out_alarm_phone_incidents() ->
     assert store.add(reingest, dedup_key="x:2094849490314486246") is False
 
 
+def test_durable_public_scan_is_not_starved_by_one_noisy_type(monkeypatch) -> None:
+    """A burst of newer security rows must not hide another public event family.
+
+    Production can generate thousands of correlated alerts per hour. A single
+    mixed durable query capped at 1500 then contains only that noisy family,
+    so published Safety/Humanitarian rows disappear before projection.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    safety = IntelEvent(
+        id="durable-fairness-safety-01",
+        timestamp_utc=now,
+        type="vessel_incident",
+        severity="medium",
+        lat=35.2,
+        lon=14.0,
+        title="Vessel unable to manoeuvre",
+        source="ais",
+        metadata={
+            "ais_nav_status_kind": "not_under_command",
+            "maritime_domain": "safety",
+            "publication_status": "published",
+            "source_policy": "official_api",
+            "is_distress": False,
+        },
+    )
+    noisy = IntelEvent(
+        id="durable-fairness-noisy-01",
+        timestamp_utc=now,
+        type="correlated_alert",
+        severity="low",
+        lat=34.0,
+        lon=13.0,
+        title="Internal correlation",
+        source="SeaCommons fusion",
+        metadata={"maritime_domain": "grey_zone", "publication_status": "internal"},
+    )
+
+    monkeypatch.setattr("core.live.feed.intel_store.events", lambda **_kwargs: [])
+
+    def persisted_events(**kwargs):
+        if kwargs.get("source_in"):
+            return []
+        requested = kwargs.get("types") or []
+        if requested == ["vessel_incident"]:
+            return [safety]
+        if len(requested) > 1:
+            return [noisy] * 1500
+        return []
+
+    monkeypatch.setattr("core.live.feed.intel_store.persisted_events", persisted_events)
+    monkeypatch.setattr("core.live.feed._published_ingested_features", lambda _limit: [])
+
+    collection = public_signal_collection(limit=50, days=1, mode="maritime")
+    ids = {feature["properties"]["id"] for feature in collection["features"]}
+    assert "intel:durable-fairness-safety-01" in ids
+
+
 def test_mode_all_reserves_humanitarian_features_from_security_flood() -> None:
     """Regression: mode=all used to merge humanitarian + security then
     truncate to `limit` by a flat recency sort. Security fires far more

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { edgeSnapshotIsUsable } from '../simulation/liveTracking.js';
 import { fetchJson } from '../services/api/client.js';
 import { deriveFeedStatus } from '../features/live/feedStatus.js';
+import { filterPublicLiveWindow, PUBLIC_LIVE_WINDOW_DAYS } from '../features/live/liveWindow.js';
 import { normalizePipelineSources } from '../features/live/pipelineStatus.js';
 import {
   edgeSnapshotToFeatures,
@@ -22,8 +23,7 @@ function loadCachedEvents(isPublicLiveHost, liveMode = 'humanitarian') {
     if (!cached) return [];
     const parsed = JSON.parse(cached);
     if (!Array.isArray(parsed)) return [];
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const recent = parsed.filter((event) => (event?.properties?.timestamp_utc || '') >= cutoff);
+    const recent = isPublicLiveHost ? filterPublicLiveWindow(parsed) : parsed;
     // Humanitarian eligibility is decided once, in backend policy
     // (core.live.projection._public_intel_feature), and applied identically by
     // the VM feed and the edge publisher. The browser must not layer a second
@@ -112,7 +112,7 @@ export function useLiveFeed({
     if (isPublicLiveHost && edgeBase && liveMode === 'humanitarian') return undefined;
     const wsBase = apiBase.replace(/^http/, 'ws');
     const feedPath = isPublicLiveHost
-      ? `/api/v1/live/signals?limit=150&days=30&mode=${encodeURIComponent(liveMode)}`
+      ? `/api/v1/live/signals?limit=150&days=${PUBLIC_LIVE_WINDOW_DAYS}&mode=${encodeURIComponent(liveMode)}`
       : '/api/v1/intel?limit=200&days=30';
     const streamPath = isPublicLiveHost
       ? `/api/v1/live/stream?mode=${encodeURIComponent(liveMode)}`
@@ -277,7 +277,7 @@ export function useLiveFeed({
       try {
         const data = await fetchJson(
           apiBase,
-          '/api/v1/live/signals?limit=150&days=30&mode=humanitarian',
+          `/api/v1/live/signals?limit=150&days=${PUBLIC_LIVE_WINDOW_DAYS}&mode=humanitarian`,
           undefined,
           3000,
         );
@@ -299,7 +299,7 @@ export function useLiveFeed({
       try {
         const data = await fetchJson(
           apiBase,
-          '/api/v1/live/signals?limit=20&days=30&mode=all',
+          `/api/v1/live/signals?limit=20&days=${PUBLIC_LIVE_WINDOW_DAYS}&mode=all`,
           undefined,
           5000,
         );

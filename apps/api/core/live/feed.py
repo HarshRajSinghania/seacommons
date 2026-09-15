@@ -65,6 +65,7 @@ _PUBLIC_DURABLE_TYPES = frozenset({
 # for both modes, then apply ``limit``/``since`` only to the selected payload.
 _LIVE_WINDOW_LIMIT = 500
 _LIVE_DURABLE_SCAN_LIMIT = 1500
+_LIVE_DURABLE_TYPE_SCAN_LIMIT = 500
 
 
 def _published_ingested_features(limit: int) -> list[dict[str, Any]]:
@@ -178,13 +179,21 @@ def public_signal_collection(
     # operator-internal). They can evict older public distress reports from the
     # deque, leaving the public feed empty. Back the public-eligible types with
     # a direct DB read so churn cannot starve it.
-    durable_public = intel_store.persisted_events(
-        types=list(_PUBLIC_DURABLE_TYPES),
-        max_age_days=days,
-        limit=_LIVE_DURABLE_SCAN_LIMIT,
-    )
+    # Read each public event family independently. A single mixed recency
+    # query is unsafe here: high-volume derived families (especially
+    # correlated_alert) can fill the whole durable cap in minutes and hide
+    # lower-volume public Safety/Humanitarian rows before projection.
+    durable_public_by_id: dict[str, IntelEvent] = {}
+    for event_type in sorted(_PUBLIC_DURABLE_TYPES):
+        for event in intel_store.persisted_events(
+            types=[event_type],
+            max_age_days=days,
+            limit=_LIVE_DURABLE_TYPE_SCAN_LIMIT,
+        ):
+            durable_public_by_id[event.id] = event
+    durable_public = list(durable_public_by_id.values())
     by_id = {event.id: event for event in durable_alarm_phone}
-    by_id.update({event.id: event for event in durable_public})
+    by_id.update(durable_public_by_id)
     # In-memory objects contain the most recent metadata observations and must
     # win over the durable snapshot when both are present.
     by_id.update({event.id: event for event in memory_events})

@@ -216,3 +216,33 @@
   }
   .play-map-status { display: none; }
 }
+
+.play-archive-continuity > p:last-child {
+  margin: 5px 14px 0;
+  color: rgba(225,242,237,.38);
+  font: 7px/1.45 var(--font-mono);
+  text-transform: uppercase;
+}
+.play-archive-month > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(117,167,255,.12);
+  border-bottom: 1px solid rgba(117,167,255,.12);
+  background: rgba(4,16,22,.94);
+  backdrop-filter: blur(10px);
+}
+.play-archive-month > header strong { color: #dff6ed; font: 8px var(--font-mono); text-transform: uppercase; }
+.play-archive-month > header span { color: rgba(225,242,237,.42); font: 7px var(--font-mono); text-transform: uppercase; }
+.play-case__evidence { display: flex !important; gap: 6px; margin-top: 6px; }
+.play-case__evidence b {
+  padding: 2px 5px;
+  border: 1px solid rgba(169,255,218,.16);
+  color: var(--live-accent);
+  background: rgba(169,255,218,.035);
+  font: 7px var(--font-mono);
+}

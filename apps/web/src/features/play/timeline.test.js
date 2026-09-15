@@ -13,6 +13,9 @@ import {
   timelineAtCutoff,
   incidentStatusAtCutoff,
   satelliteFootprintCollection,
+  archiveCoverage,
+  groupArchiveByMonth,
+  satelliteContextTileUrl,
 } from './timeline.js';
 
 const items = [
@@ -224,7 +227,7 @@ test('Play satellite basemap is the default visual surface over an OSM fallback'
   assert.equal(style.layers[0].id, 'base-map');
   assert.equal(style.layers[1].id, 'satellite-context');
   assert.equal(style.layers[1].paint?.['raster-opacity'], 1);
-  assert.match(style.sources.satelliteContext.tiles[0], /VIIRS_SNPP_CorrectedReflectance_TrueColor/);
+  assert.match(style.sources.satelliteContext.tiles[0], /VIIRS_NOAA21_CorrectedReflectance_TrueColor/);
 });
 
 test('Play public map hides attribution control and initializes independently of a selected case', async () => {
@@ -307,4 +310,46 @@ test('Play map initialization fails over to the shared interactive renderer', as
   assert.match(source, /__SEACOMMONS_FORCE_MAP_FALLBACK__/);
   assert.match(source, /fallback\.setFeatures\(incidentCollection\(filteredIncidents\)\.features\)/);
   assert.match(source, /setSelectedId\(String\(feature\.properties\.incident_id\)\)/);
+});
+
+
+test('archiveCoverage reports UTC range, covered months and gaps', () => {
+  const coverage = archiveCoverage([
+    { incident_id: 'a', reported_at: '2024-10-19T18:17:19Z' },
+    { incident_id: 'b', reported_at: '2024-12-02T10:00:00Z' },
+    { incident_id: 'c', reported_at: '2026-09-15T17:15:16Z' },
+  ]);
+  assert.equal(coverage.start, '2024-10-19T18:17:19.000Z');
+  assert.equal(coverage.end, '2026-09-15T17:15:16.000Z');
+  assert.deepEqual(coverage.coveredMonths, ['2024-10', '2024-12', '2026-09']);
+  assert.ok(coverage.missingMonths.includes('2024-11'));
+  assert.ok(coverage.missingMonths.includes('2026-08'));
+});
+
+test('groupArchiveByMonth keeps newest month and cases first', () => {
+  const groups = groupArchiveByMonth([
+    { incident_id: 'old', reported_at: '2024-10-19T18:17:19Z' },
+    { incident_id: 'newer', reported_at: '2026-09-15T17:15:16Z' },
+    { incident_id: 'newest', reported_at: '2026-09-15T18:15:16Z' },
+  ]);
+  assert.deepEqual(groups.map((group) => group.key), ['2026-09', '2024-10']);
+  assert.deepEqual(groups[0].incidents.map((item) => item.incident_id), ['newest', 'newer']);
+});
+
+test('satelliteContextTileUrl follows archive day and NOAA mission', () => {
+  assert.match(satelliteContextTileUrl('2026-09-04', 'VIIRS NOAA-21'), /VIIRS_NOAA21_CorrectedReflectance_TrueColor/);
+  assert.match(satelliteContextTileUrl('2026-09-04', 'VIIRS NOAA-20'), /VIIRS_NOAA20_CorrectedReflectance_TrueColor/);
+  assert.match(satelliteContextTileUrl('2026-09-04', 'VIIRS Suomi-NPP'), /VIIRS_SNPP_CorrectedReflectance_TrueColor/);
+  assert.match(satelliteContextTileUrl('2026-09-04', 'VIIRS NOAA-21'), /2026-09-04/);
+});
+
+
+test('Play synchronizes global satellite context to archive time and exposes continuity metadata', async () => {
+  const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
+  assert.match(source, /satelliteContextTileUrl/);
+  assert.match(source, /setTiles/);
+  assert.match(source, /archiveCoverage/);
+  assert.match(source, /groupArchiveByMonth/);
+  assert.match(source, /play-archive-month/);
+  assert.match(source, /evidence_counts/);
 });

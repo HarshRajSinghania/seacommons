@@ -17,6 +17,9 @@ import {
   selectPreferredSatelliteObservation,
   statusLabel,
   timelineAtCutoff,
+  archiveCoverage,
+  groupArchiveByMonth,
+  satelliteContextTileUrl,
 } from './timeline.js';
 
 const TIMELINE_MAX = 1000;
@@ -99,6 +102,7 @@ export default function PlayTimeline({ apiBase }) {
   const [satelliteMission, setSatelliteMission] = useState('auto');
   const [archiveFilter, setArchiveFilter] = useState('all');
   const [satelliteVisible, setSatelliteVisible] = useState(true);
+  const [satelliteContextMission, setSatelliteContextMission] = useState('VIIRS NOAA-21');
 
   const globalState = useMemo(
     () => resolveGlobalTimelinePosition(incidents, globalPosition, TIMELINE_MAX),
@@ -114,10 +118,16 @@ export default function PlayTimeline({ apiBase }) {
     if (archiveFilter === 'correlated') return incident.case_type === 'correlated_alert';
     return true;
   }), [visibleIncidents, archiveFilter]);
+  const coverage = useMemo(() => archiveCoverage(incidents), [incidents]);
+  const archiveGroups = useMemo(() => groupArchiveByMonth(filteredIncidents), [filteredIncidents]);
   const selectedIncident = useMemo(
     () => visibleIncidents.find((item) => item.incident_id === selectedId) || null,
     [visibleIncidents, selectedId],
   );
+  const contextDay = useMemo(() => {
+    const value = globalState.cutoff || selectedIncident?.reported_at || coverage.end;
+    return value ? String(value).slice(0, 10) : new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+  }, [globalState.cutoff, selectedIncident?.reported_at, coverage.end]);
   const fullTimeline = useMemo(
     () => normalizeTimeline(caseData?.timeline || []),
     [caseData],
@@ -385,8 +395,10 @@ export default function PlayTimeline({ apiBase }) {
   useEffect(() => {
     const map = mapRef.current;
     if (!mapReady || !map) return;
+    const source = map.getSource('satelliteContext');
+    source?.setTiles?.([satelliteContextTileUrl(contextDay, satelliteContextMission)]);
     if (map.getLayer('satellite-context')) map.setLayoutProperty('satellite-context', 'visibility', satelliteVisible ? 'visible' : 'none');
-  }, [mapReady, satelliteVisible]);
+  }, [mapReady, satelliteVisible, contextDay, satelliteContextMission]);
 
   const status = selectedIncident ? incidentStatusAtCutoff(selectedIncident, globalState.cutoff) : 'outcome_unknown';
   const frameProps = frame.item?.properties || {};
@@ -432,20 +444,39 @@ export default function PlayTimeline({ apiBase }) {
               <button type="button" className={`signals-selector__link ${satelliteVisible ? 'is-active' : ''}`} onClick={() => setSatelliteVisible((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />SATELLITE</button>
             </div>
           </div>
-          <p className="live-feed-panel__continuity"><span />Evidence is bounded to what was knowable at the selected cutoff.</p>
+          <div className="play-archive-continuity">
+            <p className="live-feed-panel__continuity"><span />Evidence is bounded to what was knowable at the selected cutoff.</p>
+            {coverage.start && coverage.end ? (
+              <p>{coverage.start.slice(0, 10)} → {coverage.end.slice(0, 10)} · {coverage.coveredMonths.length} months with public cases · {coverage.missingMonths.length} continuity gaps</p>
+            ) : null}
+          </div>
         </header>
         <div className="live-feed-panel__body play-cases__list">
-          {filteredIncidents.map((incident) => (
-            <button
-              key={incident.incident_id}
-              type="button"
-              className={`play-case ${selectedId === incident.incident_id ? 'is-active' : ''}`}
-              onClick={() => { setSelectedId(incident.incident_id); setCasesOpen(false); }}
-            >
-              <span className="play-case__time">{itemTime(incident.reported_at)}</span>
-              <strong>{incident.title || 'SeaCommons incident'}</strong>
-              <span>{incident.domain || 'humanitarian'} · {incident.source || 'source'} · {statusLabel(incidentStatusAtCutoff(incident, globalState.cutoff))}</span>
-            </button>
+          {archiveGroups.map((group) => (
+            <section className="play-archive-month" key={group.key}>
+              <header><strong>{group.label}</strong><span>{group.incidents.length} cases</span></header>
+              {group.incidents.map((incident) => {
+                const counts = incident.evidence_counts || {};
+                return (
+                  <button
+                    key={incident.incident_id}
+                    type="button"
+                    className={`play-case ${selectedId === incident.incident_id ? 'is-active' : ''}`}
+                    onClick={() => { setSelectedId(incident.incident_id); setCasesOpen(false); }}
+                  >
+                    <span className="play-case__time">{itemTime(incident.reported_at)}</span>
+                    <strong>{incident.title || 'SeaCommons incident'}</strong>
+                    <span>{incident.domain || 'humanitarian'} · {incident.source || 'source'} · {statusLabel(incidentStatusAtCutoff(incident, globalState.cutoff))}</span>
+                    {(Number(counts.drift) > 0 || Number(counts.satellite) > 0) ? (
+                      <span className="play-case__evidence">
+                        {Number(counts.drift) > 0 ? <b>DRIFT {counts.drift}</b> : null}
+                        {Number(counts.satellite) > 0 ? <b>SAT {counts.satellite}</b> : null}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </section>
           ))}
           {!filteredIncidents.length && !loading ? <div className="play-empty">No incidents at this time.</div> : null}
         </div>
@@ -497,7 +528,16 @@ export default function PlayTimeline({ apiBase }) {
           <section className="play-card">
             <p>Satellite context</p>
             <label className="play-satellite-selector">
-              <span>Layer</span>
+              <span>Global imagery</span>
+              <select value={satelliteContextMission} onChange={(event) => setSatelliteContextMission(event.target.value)}>
+                <option value="VIIRS NOAA-21">NOAA-21 · dated true color</option>
+                <option value="VIIRS NOAA-20">NOAA-20 · dated true color</option>
+                <option value="VIIRS Suomi-NPP">Suomi-NPP · dated true color</option>
+              </select>
+            </label>
+            <span>Context date {contextDay} · NASA EOSDIS GIBS</span>
+            <label className="play-satellite-selector">
+              <span>Case acquisition</span>
               <select value={satelliteMission} onChange={(event) => setSatelliteMission(event.target.value)}>
                 <option value="auto">Auto · Sentinel first</option>
                 {satelliteMissions.map((mission) => <option key={mission} value={mission}>{mission}</option>)}
@@ -518,7 +558,7 @@ export default function PlayTimeline({ apiBase }) {
       </aside>
 
       <footer className="play-timeline-bar">
-        <span className="play-timeline-end">PAST</span>
+        <span className="play-timeline-end">{coverage.start ? coverage.start.slice(0, 10) : 'PAST'}</span>
         <button type="button" disabled={globalPosition <= 0} onClick={() => setGlobalPosition((value) => Math.max(0, value - 50))}>←</button>
         <input
           aria-label="Global archive timeline"
@@ -529,7 +569,7 @@ export default function PlayTimeline({ apiBase }) {
           onChange={(event) => setGlobalPosition(Number(event.target.value))}
         />
         <button type="button" disabled={globalPosition >= TIMELINE_MAX} onClick={() => setGlobalPosition((value) => Math.min(TIMELINE_MAX, value + 50))}>→</button>
-        <div className="play-timeline-bar__label"><strong>{modeLabel}</strong><span>{globalState.mode === 'all' ? 'complete archive' : 'evidence available by cutoff'}</span></div>
+        <div className="play-timeline-bar__label"><strong>{modeLabel}</strong><span>{globalState.mode === 'all' ? `through ${coverage.end?.slice(0, 10) || 'latest'}` : `imagery ${contextDay}`}</span></div>
         <button className="play-all-reset" type="button" disabled={globalState.mode === 'all'} onClick={() => setGlobalPosition(TIMELINE_MAX)}>ALL</button>
       </footer>
     </main>

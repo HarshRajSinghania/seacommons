@@ -159,14 +159,80 @@ export function incidentStatusAtCutoff(incident, cutoff = null) {
 }
 
 
-export function playMapStyle(day = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10)) {
+
+export function satelliteContextTileUrl(day, mission = 'VIIRS NOAA-21') {
+  const layers = {
+    'VIIRS NOAA-21': 'VIIRS_NOAA21_CorrectedReflectance_TrueColor',
+    'VIIRS NOAA-20': 'VIIRS_NOAA20_CorrectedReflectance_TrueColor',
+    'VIIRS Suomi-NPP': 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
+  };
+  const layer = layers[mission] || layers['VIIRS NOAA-21'];
+  return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${layer}/default/${day}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`;
+}
+
+export function archiveCoverage(incidents = []) {
+  const times = incidents
+    .map((incident) => Date.parse(String(incident?.reported_at || '')))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (!times.length) return { start: null, end: null, coveredMonths: [], missingMonths: [] };
+  const coveredMonths = [...new Set(times.map((time) => new Date(time).toISOString().slice(0, 7)))].sort();
+  const present = new Set(coveredMonths);
+  const missingMonths = [];
+  const startDate = new Date(times[0]);
+  const endDate = new Date(times[times.length - 1]);
+  let year = startDate.getUTCFullYear();
+  let month = startDate.getUTCMonth();
+  const endYear = endDate.getUTCFullYear();
+  const endMonth = endDate.getUTCMonth();
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    const key = `${year}-${String(month + 1).padStart(2, '0')}`;
+    if (!present.has(key)) missingMonths.push(key);
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+  }
+  return {
+    start: new Date(times[0]).toISOString(),
+    end: new Date(times[times.length - 1]).toISOString(),
+    coveredMonths,
+    missingMonths,
+  };
+}
+
+export function groupArchiveByMonth(incidents = []) {
+  const groups = new Map();
+  const sorted = [...incidents].sort((a, b) => parseTime(b?.reported_at) - parseTime(a?.reported_at));
+  for (const incident of sorted) {
+    const time = parseTime(incident?.reported_at);
+    if (!Number.isFinite(time)) continue;
+    const date = new Date(time);
+    const key = date.toISOString().slice(0, 7);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label: new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date),
+        incidents: [],
+      });
+    }
+    groups.get(key).incidents.push(incident);
+  }
+  return [...groups.values()];
+}
+
+export function playMapStyle(day = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10), mission = 'VIIRS NOAA-21') {
   return {
     version: 8,
     sources: {
-      baseMap: publicBasemapSource(),
+      baseMap: {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: 'Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+      },
       satelliteContext: {
         type: 'raster',
-        tiles: [`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${day}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`],
+        tiles: [satelliteContextTileUrl(day, mission)],
         tileSize: 256,
         attribution: 'NASA EOSDIS GIBS / VIIRS',
       },

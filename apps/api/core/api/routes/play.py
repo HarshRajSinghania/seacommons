@@ -129,6 +129,9 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     combined: list[dict[str, Any]] = []
     with session_scope() as db:
+        from sqlalchemy import func
+        from core.db.models import DriftResultDB, SatelliteObservationDB
+
         human_rows = db.query(HumanitarianIncidentDB).all()
         human_ids = {row.incident_id for row in human_rows}
         for row in human_rows:
@@ -149,6 +152,36 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 continue
             if _is_public_catalog_maritime(event):
                 combined.append(_generic_maritime_projection(event))
+
+        public_ids = [str(item["incident_id"]) for item in combined]
+        drift_counts: dict[str, int] = {}
+        satellite_counts: dict[str, int] = {}
+        if public_ids:
+            drift_ids = [*public_ids, *(f"intel:{incident_id}" for incident_id in public_ids)]
+            for event_id, count in (
+                db.query(DriftResultDB.event_id, func.count(DriftResultDB.drift_id))
+                .filter(DriftResultDB.status == "completed", DriftResultDB.event_id.in_(drift_ids))
+                .group_by(DriftResultDB.event_id)
+                .all()
+            ):
+                if not event_id:
+                    continue
+                incident_id = str(event_id)[6:] if str(event_id).startswith("intel:") else str(event_id)
+                drift_counts[incident_id] = drift_counts.get(incident_id, 0) + int(count or 0)
+            for incident_id, count in (
+                db.query(SatelliteObservationDB.incident_id, func.count(SatelliteObservationDB.observation_id))
+                .filter(SatelliteObservationDB.incident_id.in_(public_ids))
+                .group_by(SatelliteObservationDB.incident_id)
+                .all()
+            ):
+                satellite_counts[str(incident_id)] = int(count or 0)
+
+        for item in combined:
+            incident_id = str(item["incident_id"])
+            item["evidence_counts"] = {
+                "drift": drift_counts.get(incident_id, 0),
+                "satellite": satellite_counts.get(incident_id, 0),
+            }
 
     combined.sort(
         key=lambda item: str(item.get("last_update_at") or item.get("reported_at") or ""),

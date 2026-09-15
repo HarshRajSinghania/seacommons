@@ -118,6 +118,28 @@ def test_recent_active_incident_is_also_in_general_play_catalog():
     assert TestClient(app).get(f"/api/v1/play/incidents/{event_id}/timeline").status_code == 200
 
 
+
+def test_play_index_exposes_drift_and_satellite_evidence_counts():
+    from core.intel.satellite_observation import SatelliteObservation, persist_observations
+
+    event_id = _seed_case(lifecycle="resolved")
+    observation = SatelliteObservation(
+        observation_id=f"sat-{uuid.uuid4()}", incident_id=event_id,
+        provider="nasa_gibs", mission="VIIRS NOAA-21", product_id="VIIRS_CASE",
+        acquisition_time="2026-09-04T09:30:00+00:00",
+        discovered_at="2026-09-05T00:00:00+00:00",
+        footprint=None, bbox=[14.0, 35.0, 14.2, 35.2], sensor_type="optical",
+        temporal_relation="nearest", temporal_delta_s=0,
+        asset_ref="https://example.test/{z}/{y}/{x}.jpg",
+        source_url="https://example.test/viirs", provenance={},
+    )
+    assert persist_observations([observation]) == 1
+
+    response = TestClient(app).get("/api/v1/play/incidents?limit=500")
+    assert response.status_code == 200
+    item = next(row for row in response.json()["incidents"] if row["incident_id"] == event_id)
+    assert item["evidence_counts"] == {"drift": 1, "satellite": 1}
+
 def test_play_timeline_includes_persisted_satellite_observation():
     from core.intel.satellite_observation import (
         SatelliteObservation,

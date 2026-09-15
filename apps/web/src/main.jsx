@@ -2492,15 +2492,27 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intelEvents, activeSignalCategories, layerVis.alarm_phone]);
 
+  const fallbackVesselFeatures = useMemo(() => {
+    const byId = new Map();
+    for (const feature of [...(vessels.features || []), ...(sarMapFeatures.features || [])]) {
+      if (!feature?.geometry?.coordinates) continue;
+      const report = vesselReportFeature(feature);
+      const key = report.properties?.mmsi || report.properties?.id || `${report.geometry.coordinates}`;
+      byId.set(String(key), report);
+    }
+    return [...byId.values()];
+  }, [vessels, sarMapFeatures]);
+
   useEffect(() => {
     const fallback = fallbackMapRef.current;
     if (!fallbackReady || !fallback) return;
-    fallback.setFeatures(visibleLivePointFeatures);
-    if (!liveSignalsFramedRef.current && visibleLivePointFeatures.length) {
-      fallback.fitFeatures(visibleLivePointFeatures);
+    const payload = { incidents: visibleLivePointFeatures, vessels: fallbackVesselFeatures };
+    fallback.setFeatures(payload);
+    if (!liveSignalsFramedRef.current && (visibleLivePointFeatures.length || fallbackVesselFeatures.length)) {
+      fallback.fitFeatures(payload);
       liveSignalsFramedRef.current = true;
     }
-  }, [fallbackReady, visibleLivePointFeatures]);
+  }, [fallbackReady, visibleLivePointFeatures, fallbackVesselFeatures]);
 
   // Intel events map layer — the backend's `kind` is "distress" (active),
   // "resolved" or "archived" (all three still distress-tier, pulsing, colored

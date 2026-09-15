@@ -3948,3 +3948,14 @@ h2, h3, .sidebar-header h2, .panel-block h3 {
 .live-acquisition__radio-message span { font-size:9px; opacity:.62; text-align:right; }
 
 .map-banner--error { border-color: rgba(255,116,111,.42); color: #ff9a96; }
+
+/* WebGL-less mobile fallback keeps nautical vessel semantics. */
+.seacommons-fallback-vessel-icon { background: transparent !important; border: 0 !important; }
+.seacommons-fallback-vessel-arrow {
+  display: block; width: 0; height: 0;
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-bottom: 18px solid var(--vessel-color, #60a5fa);
+  filter: drop-shadow(0 0 2px #06151d) drop-shadow(0 0 1px #06151d);
+  transform: rotate(var(--vessel-heading, 0deg)); transform-origin: 50% 58%;
+}
+.seacommons-fallback-vessel-stationary { filter: drop-shadow(0 0 2px rgba(2,19,24,.8)); }

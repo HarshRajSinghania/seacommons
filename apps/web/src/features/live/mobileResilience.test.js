@@ -24,5 +24,6 @@ test('Live map initialization fails over to the shared interactive renderer', ()
   assert.match(mainSource, /createFallbackMap/);
   assert.match(mainSource, /fallbackMapRef/);
   assert.match(mainSource, /__SEACOMMONS_FORCE_MAP_FALLBACK__/);
-  assert.match(mainSource, /setFeatures\(visibleLivePointFeatures\)/);
+  assert.match(mainSource, /setFeatures\(payload\)/);
+  assert.match(mainSource, /vessels: fallbackVesselFeatures/);
 });

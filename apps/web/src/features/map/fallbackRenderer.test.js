@@ -4,6 +4,8 @@ import test from 'node:test';
 import { createFallbackMap } from './fallbackRenderer.js';
 
 function fakeLeaflet(log) {
+  log.tiles ||= [];
+  log.vesselMarkers ||= [];
   const map = {
     setView(latlng, zoom) { log.setView = [latlng, zoom]; return map; },
     flyTo(latlng, zoom) { log.flyTo = [latlng, zoom]; },
@@ -13,7 +15,7 @@ function fakeLeaflet(log) {
   };
   return {
     map() { return map; },
-    tileLayer(url) { log.tileUrl = url; return { addTo() { return this; } }; },
+    tileLayer(url, options = {}) { log.tileUrl = url; log.tiles.push({ url, options }); return { addTo() { return this; } }; },
     layerGroup() { return { addTo() { return this; }, clearLayers() { log.cleared = true; } }; },
     circleMarker(latlng, options) {
       const element = {
@@ -35,6 +37,16 @@ function fakeLeaflet(log) {
         addTo() { log.polygons.push({ latlngs, options, layer }); return layer; },
       };
       return layer;
+    },
+    divIcon(options) { return { options }; },
+    marker(latlng, options) {
+      const element = { handlers: {}, attrs: {}, addEventListener(event, handler) { element.handlers[event] = handler; }, setAttribute(name, value) { element.attrs[name] = value; } };
+      const marker = {
+        on(_event, handler) { marker.handler = handler; return marker; },
+        addTo() { log.vesselMarkers.push({ latlng, options, marker, element }); return marker; },
+        getElement() { return element; },
+      };
+      return marker;
     },
     latLngBounds(points) { return { points }; },
   };
@@ -98,4 +110,23 @@ test('fallback map supports fit, fly, resize and destroy', async () => {
   assert.deepEqual(log.flyTo, [[36, 13], 7]);
   assert.equal(log.resized, true);
   assert.equal(log.removed, true);
+});
+
+
+test('fallback map uses nautical retina layers and heading-shaped moving vessels', async () => {
+  const log = { markers: [], polygons: [], tiles: [], vesselMarkers: [] };
+  const renderer = await createFallbackMap({ container: {}, center: [15, 36], zoom: 5, onFeatureSelect() {}, leaflet: fakeLeaflet(log) });
+  const vessel = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [14.2, 35.9] },
+    properties: { id: 'vessel:123', mmsi: '123', entity_kind: 'vessel', report_type: 'vessel', motion_state: 'moving', latest_heading: 72 },
+  };
+  renderer.setFeatures({ incidents: [], vessels: [vessel] });
+  assert.equal(log.tiles.length, 3);
+  assert.match(log.tiles[0].url, /World_Ocean_Base/);
+  assert.match(log.tiles[1].url, /World_Ocean_Reference/);
+  assert.match(log.tiles[2].url, /openseamap/);
+  assert.equal(log.tiles[0].options.detectRetina, true);
+  assert.equal(log.vesselMarkers.length, 1);
+  assert.match(log.vesselMarkers[0].options.icon.options.html, /72deg/);
+  assert.equal(log.vesselMarkers[0].element.attrs['aria-label'], 'Open vessel vessel:123');
 });

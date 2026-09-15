@@ -1,4 +1,8 @@
-import { PUBLIC_BASEMAP_TILE_URL } from './publicBasemap.js';
+import {
+  PUBLIC_BASEMAP_LABEL_URL,
+  PUBLIC_BASEMAP_TILE_URL,
+  PUBLIC_SEAMARK_TILE_URL,
+} from './publicBasemap.js';
 
 function pointFeatures(features = []) {
   return (features || []).filter((feature) => {
@@ -27,73 +31,141 @@ function markerClass(feature) {
   return `seacommons-fallback-marker seacommons-fallback-marker--${safe || 'feature'}`;
 }
 
+function semanticColor(feature) {
+  const p = feature?.properties || {};
+  const domain = String(p.domain || p.macro_domain || p.maritime_domain || '').toLowerCase();
+  const source = String(p.source || '').toLowerCase();
+  const category = String(p.visual_category || p.signal_category || p.category || '').toLowerCase();
+  if (domain === 'humanitarian' || source.includes('alarm')) return '#ff5a57';
+  if (category.includes('navigation') || category.includes('casualty')) return '#ff9f43';
+  if (category.includes('sanction') || category.includes('grey') || category.includes('spoof')) return '#f472b6';
+  if (domain === 'security') return '#c084fc';
+  return '#38bdf8';
+}
+
 function markerStyle(feature) {
-  const domain = String(feature?.properties?.domain || feature?.properties?.macro_domain || '').toLowerCase();
-  const source = String(feature?.properties?.source || '').toLowerCase();
-  const humanitarian = domain === 'humanitarian' || source.includes('alarm');
+  const color = semanticColor(feature);
   return {
     radius: 7,
     weight: 2,
-    color: humanitarian ? '#ff746f' : '#8ed8ff',
-    fillColor: humanitarian ? '#ff746f' : '#8ed8ff',
-    fillOpacity: 0.9,
+    color: '#06151d',
+    fillColor: color,
+    fillOpacity: 0.96,
     className: markerClass(feature),
   };
 }
+
+function vesselHeading(feature) {
+  const p = feature?.properties || {};
+  const raw = p.latest_heading ?? p.heading_deg ?? p.heading ?? p.latest_course ?? p.course ?? p.cog ?? 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? ((value % 360) + 360) % 360 : 0;
+}
+
+function vesselIsStationary(feature) {
+  const p = feature?.properties || {};
+  if (p.motion_state) return p.motion_state !== 'moving';
+  const raw = p.latest_sog ?? p.speed ?? p.sog;
+  const speed = Number(raw);
+  return !Number.isFinite(speed) || speed <= 0.5;
+}
+
+function vesselColor(feature) {
+  const p = feature?.properties || {};
+  const role = `${p.role || ''} ${p.operator_type || ''} ${p.fleet || ''} ${p.group || ''}`.toLowerCase();
+  return /ngo|sar|rescue|civil/.test(role) ? '#34d399' : '#60a5fa';
+}
+
+function bindSelection(marker, feature, onFeatureSelect) {
+  const element = marker.getElement?.();
+  const id = String(feature?.properties?.incident_id || feature?.properties?.id || feature?.properties?.mmsi || 'feature');
+  if (!element) {
+    marker.on?.('click', () => onFeatureSelect?.(feature));
+    return;
+  }
+  element.setAttribute('role', 'button');
+  element.setAttribute('tabindex', '0');
+  const isVessel = feature?.properties?.entity_kind === 'vessel' || feature?.properties?.report_type === 'vessel';
+  element.setAttribute('aria-label', `${isVessel ? 'Open vessel' : 'Open incident'} ${id}`);
+  let lastSelectionAt = 0;
+  const select = (event) => {
+    event?.stopPropagation?.();
+    const now = Date.now();
+    if (now - lastSelectionAt < 250) return;
+    lastSelectionAt = now;
+    onFeatureSelect?.(feature);
+  };
+  element.addEventListener('pointerup', select);
+  element.addEventListener('click', select);
+  element.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault?.();
+      select(event);
+    }
+  });
+}
+
+function normalizePayload(payload) {
+  if (Array.isArray(payload)) return { incidents: payload, vessels: [] };
+  return { incidents: payload?.incidents || [], vessels: payload?.vessels || [] };
+}
+
 export async function createFallbackMap({ container, center, zoom, onFeatureSelect, leaflet }) {
   if (!leaflet) await import('leaflet/dist/leaflet.css');
   const module = leaflet || await import('leaflet');
   const L = module.default || module;
-  const map = L.map(container, { zoomControl: true, attributionControl: false });
+  const map = L.map(container, { zoomControl: true, attributionControl: false, preferCanvas: true });
   map.setView([Number(center[1]), Number(center[0])], zoom);
-  L.tileLayer(PUBLIC_BASEMAP_TILE_URL, { maxZoom: 19 }).addTo(map);
+  const retinaTiles = { detectRetina: true, maxZoom: 19, maxNativeZoom: 16, crossOrigin: true };
+  L.tileLayer(PUBLIC_BASEMAP_TILE_URL, retinaTiles).addTo(map);
+  L.tileLayer(PUBLIC_BASEMAP_LABEL_URL, { ...retinaTiles, opacity: 0.9 }).addTo(map);
+  L.tileLayer(PUBLIC_SEAMARK_TILE_URL, { detectRetina: true, maxZoom: 19, maxNativeZoom: 18, opacity: 0.95, crossOrigin: true }).addTo(map);
   const markers = L.layerGroup().addTo(map);
 
   return {
-    setFeatures(features) {
+    setFeatures(payload) {
+      const { incidents, vessels } = normalizePayload(payload);
       markers.clearLayers();
-      for (const feature of polygonFeatures(features)) {
+      for (const feature of polygonFeatures(incidents)) {
         const polygons = leafletPolygonCoordinates(feature.geometry);
         for (const latlngs of polygons) {
+          const color = semanticColor(feature);
           L.polygon(latlngs, {
-            color: '#ff746f', weight: 2, fillColor: '#ff746f', fillOpacity: 0.22,
+            color, weight: 2, fillColor: color, fillOpacity: 0.22,
             className: markerClass(feature),
           }).on('click', () => onFeatureSelect?.(feature)).addTo(markers);
         }
       }
-      for (const feature of pointFeatures(features)) {
+      for (const feature of pointFeatures(incidents)) {
         const [lon, lat] = feature.geometry.coordinates;
-        const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature))
-          .addTo(markers);
-        const element = marker.getElement?.();
-        if (element) {
-          const incidentId = String(feature?.properties?.incident_id || feature?.properties?.id || 'incident');
-          element.setAttribute('role', 'button');
-          element.setAttribute('tabindex', '0');
-          element.setAttribute('aria-label', `Open incident ${incidentId}`);
-          let lastSelectionAt = 0;
-          const select = (event) => {
-            event?.stopPropagation?.();
-            const now = Date.now();
-            if (now - lastSelectionAt < 250) return;
-            lastSelectionAt = now;
-            onFeatureSelect?.(feature);
-          };
-          element.addEventListener('pointerup', select);
-          element.addEventListener('click', select);
-          element.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault?.();
-              select(event);
-            }
-          });
-        } else {
-          marker.on('click', () => onFeatureSelect?.(feature));
+        const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature)).addTo(markers);
+        bindSelection(marker, feature, onFeatureSelect);
+      }
+      for (const feature of pointFeatures(vessels)) {
+        const [lon, lat] = feature.geometry.coordinates;
+        if (vesselIsStationary(feature) || !L.divIcon || !L.marker) {
+          const marker = L.circleMarker([Number(lat), Number(lon)], {
+            radius: 5, weight: 1.5, color: '#06151d', fillColor: vesselColor(feature), fillOpacity: 0.98,
+            className: `${markerClass(feature)} seacommons-fallback-vessel-stationary`,
+          }).addTo(markers);
+          bindSelection(marker, feature, onFeatureSelect);
+          continue;
         }
+        const heading = vesselHeading(feature);
+        const color = vesselColor(feature);
+        const icon = L.divIcon({
+          className: 'seacommons-fallback-vessel-icon',
+          html: `<span class="seacommons-fallback-vessel-arrow" style="--vessel-heading:${heading}deg;--vessel-color:${color}"></span>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        const marker = L.marker([Number(lat), Number(lon)], { icon, keyboard: true }).addTo(markers);
+        bindSelection(marker, feature, onFeatureSelect);
       }
     },
-    fitFeatures(features) {
-      const points = pointFeatures(features).map((feature) => {
+    fitFeatures(payload) {
+      const { incidents, vessels } = normalizePayload(payload);
+      const points = [...pointFeatures(incidents), ...pointFeatures(vessels)].map((feature) => {
         const [lon, lat] = feature.geometry.coordinates;
         return [Number(lat), Number(lon)];
       });
@@ -102,11 +174,7 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
     flyTo({ center: nextCenter, zoom: nextZoom }) {
       map.flyTo([Number(nextCenter[1]), Number(nextCenter[0])], nextZoom);
     },
-    resize() {
-      map.invalidateSize();
-    },
-    destroy() {
-      map.remove();
-    },
+    resize() { map.invalidateSize(); },
+    destroy() { map.remove(); },
   };
 }

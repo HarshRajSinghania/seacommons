@@ -271,7 +271,7 @@ def test_live_projection_exposes_safe_media_evidence():
 
 # --------------------------------------------------------------- drift gate ---
 
-def test_media_ocr_unverified_never_auto_drifts():
+def test_media_ocr_unverified_at_sea_can_auto_drift_under_policy_v2():
     from core.intel.drift_service import is_auto_drift_eligible
     from core.intel.store import IntelEvent
 
@@ -285,11 +285,11 @@ def test_media_ocr_unverified_never_auto_drifts():
             "media_outcome": "media_coordinates_found",
         },
     )
-    ok, _ = is_auto_drift_eligible(event)
-    assert ok is False
+    ok, reason = is_auto_drift_eligible(event)
+    assert ok is True, reason
 
 
-def test_visual_pin_only_never_auto_drifts():
+def test_media_outcome_does_not_override_valid_pin_location_evidence():
     from core.intel.drift_service import is_auto_drift_eligible
     from core.intel.store import IntelEvent
 
@@ -298,13 +298,14 @@ def test_visual_pin_only_never_auto_drifts():
         title="distress", text="", source="alarm_phone",
         metadata={
             "is_distress": True,
-            "coordinate_source": "media_ocr_pin_landmark",
+            "coordinate_source": "media_pin_landmark",
             "coordinate_review_status": "machine_ocr_unverified",
+            "location_uncertainty_m": 4000,
             "media_outcome": "visual_pin_only",
         },
     )
-    ok, _ = is_auto_drift_eligible(event)
-    assert ok is False
+    ok, reason = is_auto_drift_eligible(event)
+    assert ok is True, reason
 
 
 # ------------------------------------------------------------- backpressure ---
@@ -732,7 +733,7 @@ def test_queue_burst_is_bounded_and_overflow_is_explicit():
 
 # ---- 7. DRIFT F-01: force cannot bypass the evidence gate -----------
 
-def _ineligible_media_event(outcome, review="machine_ocr_unverified", source="media_ocr_text"):
+def _ineligible_media_event(outcome, review="machine_ocr_disputed_needs_review", source="media_ocr_text"):
     from core.intel.store import IntelEvent
 
     return IntelEvent(
@@ -754,6 +755,8 @@ def test_force_scheduling_cannot_bypass_evidence_gate(monkeypatch):
     class _FakeStore:
         def get(self, _id):
             return ev
+
+        get_durable = get
 
         def update_metadata(self, _id, metadata):
             updates.update(metadata)

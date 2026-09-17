@@ -406,3 +406,80 @@ def test_play_catalog_hides_translated_duplicate_incident() -> None:
     assert response.status_code == 200
     ids = {item["incident_id"] for item in response.json()["incidents"]}
     assert event_id not in ids
+
+
+def test_play_catalog_excludes_legacy_fusion_and_ais_only_casualty_but_keeps_beacon():
+    from core.db.models import IntelEventDB
+    from core.db.session import session_scope
+    now = datetime.now(timezone.utc) - timedelta(hours=30)
+    suffix = str(uuid.uuid4())
+    fusion_id = f"audit-fusion-{suffix}"
+    aground_id = f"audit-aground-{suffix}"
+    beacon_id = f"audit-beacon-{suffix}"
+    with session_scope() as db:
+        db.add_all([
+            IntelEventDB(
+                id=fusion_id, timestamp_utc=now.isoformat(), type="correlated_alert",
+                severity="medium", lat=35.0, lon=14.0, title="Vessel unable to manoeuvre — AUDIT",
+                text="", url="", source="SeaCommons fusion", linked_mmsi="209888001",
+                maritime_domain="safety", meta={
+                    "maritime_domain": "safety", "publication_status": "published",
+                    "source_policy": "operator_published", "ais_nav_status_kind": "not_under_command",
+                },
+            ),
+            IntelEventDB(
+                id=aground_id, timestamp_utc=now.isoformat(), type="vessel_incident",
+                severity="medium", lat=35.1, lon=14.1, title="Vessel ran aground — AUDIT",
+                text="", url="", source="ais", linked_mmsi="209888002",
+                maritime_domain="safety", meta={
+                    "maritime_domain": "safety", "publication_status": "published",
+                    "source_policy": "official_api", "verification_status": "ais_transponder",
+                    "ais_nav_status_kind": "aground",
+                },
+            ),
+            IntelEventDB(
+                id=beacon_id, timestamp_utc=now.isoformat(), type="distress",
+                severity="high", lat=35.2, lon=14.2, title="Distress beacon activated",
+                text="", url="", source="ais_sart", linked_mmsi="",
+                maritime_domain="safety", meta={
+                    "maritime_domain": "safety", "publication_status": "published",
+                    "source_policy": "official_api", "verification_status": "ais_transponder",
+                },
+            ),
+        ])
+    ids = {row["incident_id"] for row in TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]}
+    assert fusion_id not in ids
+    assert aground_id not in ids
+    assert beacon_id in ids
+
+
+def test_play_catalog_collapses_near_simultaneous_alarm_phone_translation():
+    from core.db.models import IntelEventDB
+    from core.db.session import session_scope
+    base = datetime.now(timezone.utc) - timedelta(hours=30)
+    suffix = str(uuid.uuid4())
+    older = f"audit-ap-en-{suffix}"
+    newer = f"audit-ap-fr-{suffix}"
+    for event_id, seconds, title in (
+        (older, 0, "27 people left Boumerdes and are missing"),
+        (newer, 33, "27 personnes parties de Boumerdes sont portees disparues"),
+    ):
+        event = IntelEvent(
+            id=event_id, type="distress", severity="high", lat=36.79492, lon=3.5,
+            title=title, text="", url="", source="alarm_phone", linked_mmsi="",
+            timestamp_utc=(base + timedelta(seconds=seconds)).isoformat(),
+            metadata={"publication_status": "published", "source_policy": "operator_published",
+                      "is_distress": True, "maritime_domain": "sar"},
+        )
+        with session_scope() as db:
+            db.add(IntelEventDB(
+                id=event.id, timestamp_utc=event.timestamp_utc, type=event.type,
+                severity=event.severity, lat=event.lat, lon=event.lon, title=event.title,
+                text=event.text, url=event.url, source=event.source, linked_mmsi="",
+                maritime_domain="sar", meta=event.metadata,
+            ))
+        sync_incident_for_event(event, lifecycle="active", case_type="distress")
+    response = TestClient(app).get("/api/v1/play/incidents?limit=500")
+    ids = [row["incident_id"] for row in response.json()["incidents"]]
+    assert older in ids
+    assert newer not in ids

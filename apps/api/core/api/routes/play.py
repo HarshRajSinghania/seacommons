@@ -12,7 +12,12 @@ from core.intel.humanitarian_incident import public_incident_status
 from core.intel.lifecycle import parse_utc
 from core.intel.public_policy import domains_for_mode
 from core.intel.store import IntelEvent
-from core.live.projection import public_archive_event_types, public_intel_feature
+from core.live.projection import (
+    dedupe_public_case_items,
+    is_useful_public_case_feature,
+    public_archive_event_types,
+    public_intel_feature,
+)
 
 router = APIRouter(prefix="/api/v1/play", tags=["play"])
 
@@ -86,9 +91,10 @@ def _is_public_catalog_maritime(event) -> bool:
     age decision. Unpositioned records remain searchable/listable and current
     records may coexist with Live; only the map requires geometry.
     """
-    return public_intel_feature(
+    feature = public_intel_feature(
         _intel_event_from_row(event), allowed_domains=domains_for_mode("all")
-    ) is not None
+    )
+    return is_useful_public_case_feature(feature)
 
 
 def _generic_maritime_projection(event) -> dict[str, Any]:
@@ -202,6 +208,7 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
         for hypothesis, episode in investigations:
             combined.append(_investigation_projection(hypothesis, episode))
 
+        combined = dedupe_public_case_items(combined)
         public_ids = [str(item["incident_id"]) for item in combined]
         drift_counts: dict[str, int] = {}
         satellite_counts: dict[str, int] = {}

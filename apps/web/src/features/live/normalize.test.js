@@ -141,3 +141,22 @@ test('public Live collapses near-simultaneous Alarm Phone translations of the sa
   ]);
   assert.equal(result.length, 1);
 });
+
+
+test('published assessed intelligence survives the public Live useful-case filter', () => {
+  const feature = {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [14.1, 35.1] },
+    properties: {
+      id: 'hyp:v1:position_spoofing:test',
+      type: 'ais_anomaly',
+      source: 'SeaCommons assessed intelligence',
+      publication_status: 'published',
+      hypothesis_type: 'position_spoofing',
+      evidence_stage: 'corroborated',
+      visual_category: 'spoofing',
+      timestamp_utc: '2026-09-17T12:00:00Z',
+    },
+  };
+  assert.deepEqual(usefulPublicLiveFeatures([feature]), [feature]);
+});

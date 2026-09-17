@@ -128,8 +128,8 @@ def can_publish(hypothesis: InvestigationHypothesis) -> tuple[bool, str]:
         return False, f"evidence_stage={hypothesis.evidence_stage!r} not in {sorted(_PUBLISHABLE_EVIDENCE_STAGES)}"
     if not hypothesis.reason_codes:
         return False, "reason_codes empty"
-    if not hypothesis.evidence_links:
-        return False, "evidence_links empty"
+    if len(set(hypothesis.evidence_links)) < 2:
+        return False, "evidence_links requires at least two distinct references"
     if hypothesis.has_unresolved_blocking_identity_conflict:
         return False, "unresolved blocking identity conflict"
     if hypothesis.allegation_shaped_wording and not hypothesis.explicit_review_done:

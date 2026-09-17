@@ -159,7 +159,8 @@ function usefulPublicLiveFeature(feature) {
     if (!independentlySupported) return false;
   }
   if (['ais_anomaly', 'dark_candidate', 'vessel_identity', 'correlated_alert'].includes(String(props.type || ''))) {
-    return hypothesisState === 'published';
+    return hypothesisState === 'published'
+      || (String(props.publication_status || '') === 'published' && Boolean(props.hypothesis_type));
   }
   return true;
 }

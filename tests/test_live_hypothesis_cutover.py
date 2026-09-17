@@ -61,6 +61,7 @@ def test_live_security_uses_published_hypothesis_not_raw_detector_events():
     assert "intel:spoof-b" not in ids
     feature = next(f for f in collection["features"] if f["properties"]["id"] == hypothesis_id)
     assert feature["properties"]["hypothesis_type"] == "position_spoofing"
+    assert feature["properties"]["hypothesis_state"] == "published"
     assert feature["properties"]["visual_category"] == "spoofing"
     assert feature["properties"]["verification_status"] == "multi_source_corroborated"
     assert "mmsi" not in feature["properties"]

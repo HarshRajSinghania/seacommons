@@ -76,6 +76,32 @@ def test_exit_gate_assessed_without_evidence_links_cannot_publish():
         transition(h, "published", actor="system")
 
 
+def test_exit_gate_single_evidence_link_cannot_publish():
+    h = new_hypothesis("hyp-single", "dark_transit", ("subj:mmsi:111000111",))
+    h = transition(h, "collecting", actor="system")
+    h = transition(h, "review_ready", actor="system")
+    h = replace(
+        h, reason_codes=("isolated_gap",), evidence_links=("obs:only",),
+        evidence_stage="corroborated",
+    )
+    h = transition(h, "assessed", actor="system")
+    ok, reason = can_publish(h)
+    assert ok is False
+    assert "at least two" in reason
+
+
+def test_exit_gate_duplicate_evidence_link_does_not_count_twice():
+    h = new_hypothesis("hyp-duplicate", "dark_transit", ("subj:mmsi:111000111",))
+    h = transition(h, "collecting", actor="system")
+    h = transition(h, "review_ready", actor="system")
+    h = replace(
+        h, reason_codes=("isolated_gap",), evidence_links=("obs:same", "obs:same"),
+        evidence_stage="corroborated",
+    )
+    h = transition(h, "assessed", actor="system")
+    assert can_publish(h)[0] is False
+
+
 def test_a_fully_evidenced_hypothesis_can_reach_published():
     h = _ready_to_publish()
     ok, _ = can_publish(h)

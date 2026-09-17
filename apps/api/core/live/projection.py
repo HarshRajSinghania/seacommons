@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -197,6 +198,98 @@ def public_intel_feature(
 ) -> dict[str, Any] | None:
     """Public wrapper around the canonical Live privacy/eligibility projection."""
     return _public_intel_feature(event, allowed_domains=allowed_domains)
+
+
+def dedupe_public_case_items(items: list[dict[str, Any]], *, window_seconds: int = 120) -> list[dict[str, Any]]:
+    """Collapse near-simultaneous Alarm Phone translations in public projections.
+
+    The source monitor can receive language variants as separate posts. They remain
+    separate evidence internally, but public case surfaces keep the earlier report
+    when count, point and time make them the same operational case.
+    """
+    def fields(item: dict[str, Any]) -> tuple[str, str, str, Any, str]:
+        props = item.get("properties") if isinstance(item.get("properties"), dict) else item
+        source = str(props.get("source") or "").lower().replace(" ", "_").replace("-", "_")
+        title = str(props.get("title") or "")
+        timestamp = str(
+            props.get("timestamp_utc") or props.get("source_timestamp_utc")
+            or props.get("reported_at") or item.get("reported_at") or ""
+        )
+        geometry = item.get("geometry")
+        item_id = str(props.get("id") or props.get("incident_id") or item.get("incident_id") or "")
+        return source, title, timestamp, geometry, item_id
+
+    def parsed_time(value: str) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            return None
+
+    def duplicate(a: dict[str, Any], b: dict[str, Any]) -> bool:
+        sa, ta, tsa, ga, _ = fields(a)
+        sb, tb, tsb, gb, _ = fields(b)
+        if sa != "alarm_phone" or sb != "alarm_phone":
+            return False
+        ca = re.search(r"\b(\d{1,3})\b", ta)
+        cb = re.search(r"\b(\d{1,3})\b", tb)
+        if ca is None or cb is None or ca.group(1) != cb.group(1):
+            return False
+        if ga is None or gb is None or ga.get("type") != "Point" or gb.get("type") != "Point":
+            return False
+        axy = ga.get("coordinates") or []
+        bxy = gb.get("coordinates") or []
+        if len(axy) < 2 or len(bxy) < 2:
+            return False
+        try:
+            if abs(float(axy[0]) - float(bxy[0])) > 0.01 or abs(float(axy[1]) - float(bxy[1])) > 0.01:
+                return False
+        except (TypeError, ValueError):
+            return False
+        da, db = parsed_time(tsa), parsed_time(tsb)
+        return da is not None and db is not None and abs((da - db).total_seconds()) <= window_seconds
+
+    ordered = sorted(
+        items,
+        key=lambda item: parsed_time(fields(item)[2]) or datetime.max.replace(tzinfo=UTC),
+    )
+    duplicate_ids: set[str] = set()
+    for index, item in enumerate(ordered):
+        item_id = fields(item)[4]
+        if item_id in duplicate_ids:
+            continue
+        for later in ordered[index + 1:]:
+            later_id = fields(later)[4]
+            if later_id and duplicate(item, later):
+                duplicate_ids.add(later_id)
+    return [item for item in items if fields(item)[4] not in duplicate_ids]
+
+
+def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
+    """Case-surface quality gate applied after privacy/publication projection.
+
+    Neutral AIS status is still projectable as evidence, but a lone transponder
+    status is not a public incident. Legacy fusion/security detector rows are
+    evidence too; reviewed intelligence reaches public surfaces only through
+    the InvestigationHypothesis projection.
+    """
+    if not feature:
+        return False
+    props = feature.get("properties") or {}
+    event_type = str(props.get("type") or "")
+    if event_type in {"correlated_alert", "dark_candidate", "vessel_identity"}:
+        return False
+    if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
+        return False
+    source = str(props.get("source") or "").lower()
+    category = str(props.get("visual_category") or "")
+    verification = str(props.get("verification_status") or "")
+    if source == "ais" and category == "navigation_casualty" and verification == "ais_transponder":
+        independent = int(props.get("independent_source_count") or 0) >= 2
+        evidence_stage = str(props.get("evidence_stage") or "")
+        if not independent and evidence_stage not in {"corroborated", "assessed", "confirmed"}:
+            return False
+    return True
 
 
 def _safe_public_url(value: str) -> str:

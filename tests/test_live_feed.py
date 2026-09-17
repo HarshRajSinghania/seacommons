@@ -2069,3 +2069,53 @@ def test_dsc_safety_projection_is_radio_modality() -> None:
     assert feature is not None
     assert feature["properties"]["operational_label"] == "DSC distress"
     assert feature["properties"]["input_modality"] == "radio"
+
+
+def test_public_signal_collection_excludes_unverified_ais_navigation_casualty_but_keeps_beacon() -> None:
+    from core.intel.store import intel_store
+    now = datetime.now(timezone.utc).isoformat()
+    casualty = IntelEvent(
+        id="audit-ais-aground", type="vessel_incident", severity="medium",
+        lat=35.2, lon=14.0, title="Vessel ran aground — AUDIT", source="ais",
+        linked_mmsi="209888000", timestamp_utc=now,
+        metadata={
+            "ais_nav_status_kind": "aground", "maritime_domain": "safety",
+            "publication_status": "published", "source_policy": "official_api",
+            "verification_status": "ais_transponder",
+        },
+    )
+    beacon = IntelEvent(
+        id="audit-ais-sart", type="distress", severity="high",
+        lat=35.3, lon=14.1, title="Distress beacon activated", source="ais_sart",
+        timestamp_utc=now, metadata={
+            "maritime_domain": "safety", "publication_status": "published",
+            "source_policy": "official_api", "verification_status": "ais_transponder",
+        },
+    )
+    intel_store.add(casualty, dedup_key=casualty.id)
+    intel_store.add(beacon, dedup_key=beacon.id)
+    collection = public_signal_collection(mode="maritime", days=1, limit=500)
+    ids = {f["properties"]["id"] for f in collection["features"]}
+    assert "intel:audit-ais-aground" not in ids
+    assert "intel:audit-ais-sart" in ids
+
+
+def test_public_signal_collection_collapses_near_simultaneous_alarm_phone_translation() -> None:
+    from core.intel.store import intel_store
+    base = datetime.now(timezone.utc)
+    for event_id, seconds, title in (
+        ("audit-ap-en", 0, "27 people left Boumerdes and are missing"),
+        ("audit-ap-fr", 33, "27 personnes parties de Boumerdes sont portees disparues"),
+    ):
+        event = IntelEvent(
+            id=event_id, type="twitter", severity="high", lat=36.79492, lon=3.5,
+            title=title, source="alarm_phone", timestamp_utc=(base + timedelta(seconds=seconds)).isoformat(),
+            metadata={
+                "is_distress": True, "maritime_domain": "sar",
+                "publication_status": "published", "source_policy": "operator_published",
+            },
+        )
+        intel_store.add(event, dedup_key=event.id)
+    collection = public_signal_collection(mode="humanitarian", days=1, limit=500)
+    audit = [f for f in collection["features"] if f["properties"]["id"] in {"intel:audit-ap-en", "intel:audit-ap-fr"}]
+    assert [f["properties"]["id"] for f in audit] == ["intel:audit-ap-en"]

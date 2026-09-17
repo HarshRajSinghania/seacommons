@@ -40,6 +40,8 @@ from core.live.projection import (
     _is_publishable_live_drift,
     _public_drift_feature,
     _public_intel_feature,
+    dedupe_public_case_items,
+    is_useful_public_case_feature,
 )
 from core.live.vessel_episodes import (
     add_nearby_humanitarian_context,
@@ -120,6 +122,7 @@ def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
                 "location_precision": LocationPrecision.REPORTED_OR_DERIVED.value,
                 "maritime_domain": "grey_zone",
                 "hypothesis_type": hypothesis_type,
+                "hypothesis_state": "published",
                 "reason_codes": list(props.get("reason_codes") or ()),
                 "evidence_stage": props.get("evidence_stage"),
                 "caveats": list(props.get("caveats") or ()),
@@ -298,7 +301,7 @@ def public_signal_collection(
             event,
             allowed_domains=domains_for_mode(event_mode),
         )
-        if not feature:
+        if not feature or not is_useful_public_case_feature(feature):
             continue
         kind = feature["properties"].get("kind")
         if kind == "distress" and event.type != "correlated_alert":
@@ -445,6 +448,9 @@ def public_signal_collection(
     )
     add_nearby_humanitarian_context(
         features_by_mode["security"], features_by_mode["humanitarian"]
+    )
+    features_by_mode["humanitarian"] = dedupe_public_case_items(
+        features_by_mode["humanitarian"]
     )
     maritime_features = sorted(
         [*features_by_mode["safety"], *features_by_mode["security"]],

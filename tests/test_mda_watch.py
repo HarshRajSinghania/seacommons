@@ -320,6 +320,22 @@ def test_spoofing_teleport():
     assert _alerts("ais_anomaly")[0].metadata["anomaly_type"] == "position_jump"
 
 
+def test_spoofing_ignores_zero_longitude_sentinel_jump():
+    from datetime import timedelta
+    w = MdaWatch()
+    base = datetime.now(timezone.utc) - timedelta(minutes=15)
+    points = [
+        (43.5885, 7.1236), (43.5885, 7.1237), (43.5885, 0.0),
+        (43.5885, 7.1236), (43.5885, 7.1237), (43.5885, 7.1236),
+    ]
+    for i, (lat, lon) in enumerate(points):
+        track_store.on_position("111000119", "ZERO-LON", lat, lon, sog=0.0,
+                                nav_status=0, received_at=base + timedelta(seconds=i * 60))
+        track_store._last_write_epoch["111000119"] = 0.0
+    assert w.scan_spoofing() == 0
+    assert not [e for e in _alerts("ais_anomaly") if e.linked_mmsi == "111000119"]
+
+
 def test_mmsi_duplicate():
     w = MdaWatch()
     # same MMSI, two clusters 300 km apart, many fixes

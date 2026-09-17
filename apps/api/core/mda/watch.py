@@ -414,6 +414,7 @@ class MdaWatch:
         from core.mda.coverage import compute_coverage_baseline
         from core.mda.gap_reason import build_gap_reason
         from core.mda.jamming import jamming
+        from core.mda.reference import reference
         from core.vessels.registry import registry
         from core.vessels.track_store import track_store
 
@@ -464,11 +465,13 @@ class MdaWatch:
                 if not provider_coverage.gap_eligible:
                     continue
             jam = jamming.in_jamming_zone(last.lat, last.lon)
+            port_or_anchorage = reference.in_port_or_anchorage(last.lat, last.lon)
+            pre_gap_course = _last_course(track_store, mmsi)
             cue = None
             if jam < 0.3:   # not just jamming — worth a satellite cross-cue
                 try:
                     from core.mda.darkship_cue import build as _cue
-                    course = _last_course(track_store, mmsi)
+                    course = pre_gap_course
                     cue = _cue(lat=last.lat, lon=last.lon, course_deg=course,
                                speed_kn=last.sog,
                                gap_start=datetime.fromtimestamp(last.ts, tz=timezone.utc))
@@ -511,6 +514,9 @@ class MdaWatch:
                     "coordinate_source": "ais_position",
                     "silent_seconds": int(time.time() - last.ts),
                     "jamming_score": jam, "anomaly_confidence": confidence,
+                    "port_or_anchorage": port_or_anchorage,
+                    "pre_gap_speed_kn": last.sog,
+                    "pre_gap_course_deg": pre_gap_course,
                     "confidence_v2": confidence_v2.as_metadata(),
                     # docs/fixes.md M14.1: vessel class is context only here,
                     # never a detection gate.
@@ -700,6 +706,9 @@ class MdaWatch:
             if len(pts) < 6:
                 continue
             pts.sort(key=lambda r: r["ts"])
+            pts = self._clean_spoof_points(pts)
+            if len(pts) < 6:
+                continue
             reason, extra = self._spoof_signature(pts)
             if reason is None:
                 continue
@@ -912,6 +921,33 @@ class MdaWatch:
             if kn > 60 and haversine_km(a["lat"], a["lon"], b["lat"], b["lon"]) > 15:
                 return kn, dt
         return None, 0.0
+
+    @staticmethod
+    def _clean_spoof_points(pts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop obvious coordinate sentinels before kinematic inference.
+
+        Exact longitude 0 is geographically valid, so it is removed only when
+        the same track is otherwise clustered well away from Greenwich and the
+        zero fix keeps essentially the same latitude. This catches receiver /
+        decoder default-value artifacts without masking genuine meridian
+        crossings.
+        """
+        nonzero_lons = [float(p["lon"]) for p in pts if abs(float(p.get("lon") or 0.0)) > 1e-6]
+        if len(nonzero_lons) < 3:
+            return pts
+        ordered = sorted(nonzero_lons)
+        median_lon = ordered[len(ordered) // 2]
+        if abs(median_lon) <= 1.0:
+            return pts
+        nonzero_lats = [float(p["lat"]) for p in pts if abs(float(p.get("lon") or 0.0)) > 1e-6]
+        median_lat = sorted(nonzero_lats)[len(nonzero_lats) // 2]
+        return [
+            p for p in pts
+            if not (
+                abs(float(p.get("lon") or 0.0)) <= 1e-6
+                and abs(float(p.get("lat") or 0.0) - median_lat) <= 0.25
+            )
+        ]
 
     @staticmethod
     def _spoof_signature(pts: list[dict[str, Any]]) -> tuple[Optional[str], str]:

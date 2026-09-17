@@ -58,6 +58,44 @@ def _event_counter_indicators(events: list[Any]) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
+def _high_specificity_dark_gap_ready(events: list[Any]) -> bool:
+    """A long isolated AIS silence can justify collection, not corroboration.
+
+    This is deliberately stricter than the base dark-transit gate: it requires
+    four hours of vessel-specific silence, healthy neighbouring traffic on
+    both sides of the gap, no port/anchorage context, no material jamming, and
+    a vessel that was underway before disappearing.
+    """
+    for event in events:
+        meta = getattr(event, "metadata", {}) or {}
+        if meta.get("anomaly_type") not in {"gap", "long_gap"}:
+            continue
+        gap = meta.get("gap_reason")
+        if not isinstance(gap, dict) or gap.get("hypothesis") != "vessel_gap":
+            continue
+        if float(meta.get("silent_seconds") or 0.0) < 4 * 3600:
+            continue
+        if float(gap.get("confidence") or 0.0) < 0.7:
+            continue
+        if int(gap.get("nearby_vessels_reporting_before") or 0) < 5:
+            continue
+        if int(gap.get("nearby_vessels_reporting_after") or 0) < 5:
+            continue
+        if float(gap.get("coverage_ratio") or 0.0) < 0.7:
+            continue
+        if float(meta.get("jamming_score") or 0.0) >= 0.3:
+            continue
+        if meta.get("port_or_anchorage"):
+            continue
+        speed = meta.get("pre_gap_speed_kn")
+        if speed is None:
+            speed = ((meta.get("darkship_cue") or {}).get("last_known") or {}).get("speed_kn")
+        if float(speed or 0.0) < 2.0:
+            continue
+        return True
+    return False
+
+
 def _high_specificity_spoofing_ready(events: list[Any]) -> bool:
     """A reproducible teleport is investigation-worthy, not corroborated.
 
@@ -147,7 +185,11 @@ def evaluate_hypothesis_eligibility(
     verification_status = str(props.get("verification_status") or "single_source_observed")
     corroborated = verification_status == "multi_source_corroborated"
     investigation_ready = bool(props.get("cross_modal_investigation_ready"))
-    if family in _LOW_SPECIFICITY and not (corroborated or investigation_ready):
+    high_specificity_dark_gap = (
+        hypothesis_type == "dark_transit"
+        and _high_specificity_dark_gap_ready(events)
+    )
+    if family in _LOW_SPECIFICITY and not (corroborated or investigation_ready or high_specificity_dark_gap):
         return EligibilityDecision(
             False,
             hypothesis_type,
@@ -166,7 +208,9 @@ def evaluate_hypothesis_eligibility(
         hypothesis_type == "position_spoofing"
         and _high_specificity_spoofing_ready(events)
     )
-    may_advance = corroborated or investigation_ready or high_specificity_spoof
+    may_advance = (
+        corroborated or investigation_ready or high_specificity_spoof or high_specificity_dark_gap
+    )
     return EligibilityDecision(
         True,
         hypothesis_type,

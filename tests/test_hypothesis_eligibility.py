@@ -52,6 +52,49 @@ def test_single_gap_is_not_hypothesis_eligible() -> None:
     assert decision.hypothesis_type == "dark_transit"
 
 
+def test_long_isolated_gap_enters_collecting_as_derived_investigation() -> None:
+    mod = _eligibility()
+    event = _event(
+        "gap:strong", "gap",
+        gap_reason={
+            "hypothesis": "vessel_gap", "confidence": 0.7,
+            "coverage_ratio": 1.2,
+            "nearby_vessels_reporting_before": 12,
+            "nearby_vessels_reporting_after": 14,
+        },
+        silent_seconds=4.5 * 3600,
+        jamming_score=0.0,
+        port_or_anchorage=None,
+        pre_gap_speed_kn=9.0,
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("gap_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is True
+    assert decision.hypothesis_type == "dark_transit"
+    assert decision.may_advance_collecting is True
+    assert decision.evidence_stage == "derived"
+
+
+def test_long_gap_near_port_stays_unpromoted() -> None:
+    mod = _eligibility()
+    event = _event(
+        "gap:port", "gap",
+        gap_reason={
+            "hypothesis": "vessel_gap", "confidence": 0.7,
+            "coverage_ratio": 1.0,
+            "nearby_vessels_reporting_before": 20,
+            "nearby_vessels_reporting_after": 20,
+        },
+        silent_seconds=5 * 3600, jamming_score=0.0,
+        port_or_anchorage="Piraeus", pre_gap_speed_kn=8.0,
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("gap_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is False
+
+
 def test_two_same_lineage_gap_indicators_are_not_hypothesis_eligible() -> None:
     mod = _eligibility()
     events = [

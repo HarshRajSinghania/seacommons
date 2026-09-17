@@ -85,7 +85,13 @@ def _high_specificity_dark_gap_ready(events: list[Any]) -> bool:
             continue
         if float(meta.get("jamming_score") or 0.0) >= 0.3:
             continue
-        if meta.get("port_or_anchorage"):
+        port_context = meta.get("port_or_anchorage")
+        if "port_or_anchorage" not in meta:
+            lat, lon = getattr(event, "lat", None), getattr(event, "lon", None)
+            if lat is not None and lon is not None:
+                from core.mda.reference import reference
+                port_context = reference.in_port_or_anchorage(float(lat), float(lon))
+        if port_context:
             continue
         speed = meta.get("pre_gap_speed_kn")
         if speed is None:

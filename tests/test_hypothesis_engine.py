@@ -410,3 +410,29 @@ def test_satellite_candidate_moves_dark_transit_into_collecting():
     assert hyp.state == "collecting"
     assert hyp.evidence_stage == "derived"
     assert any(link.startswith("sat:gfw_sar:") for link in hyp.evidence_links)
+
+
+def test_durable_hypothesis_sampler_keeps_gap_family_under_spoof_flood():
+    from datetime import datetime, timezone
+    from core.db.models import IntelEventDB
+    from core.db.session import session_scope
+    from core.mda.watch import MdaWatch
+
+    now = datetime.now(timezone.utc).isoformat()
+    with session_scope() as db:
+        for i in range(40):
+            db.add(IntelEventDB(
+                id=f"sampler-spoof-{i}", timestamp_utc=now, type="ais_anomaly",
+                severity="medium", lat=35.0, lon=15.0, title="spoof", source="mda",
+                linked_mmsi=f"21188{i:04d}"[-9:],
+                meta={"anomaly_type": "position_jump", "maritime_domain": "grey_zone"},
+            ))
+        db.add(IntelEventDB(
+            id="sampler-gap", timestamp_utc=now, type="ais_anomaly", severity="medium",
+            lat=36.0, lon=16.0, title="gap", source="mda", linked_mmsi="211879870",
+            meta={"anomaly_type": "gap", "maritime_domain": "grey_zone"},
+        ))
+    sampled = MdaWatch._durable_hypothesis_family_events(limit_per_family=5)
+    ids = {event.id for event in sampled}
+    assert "sampler-gap" in ids
+    assert len([event for event in sampled if (event.metadata or {}).get("anomaly_type") == "position_jump"]) <= 5

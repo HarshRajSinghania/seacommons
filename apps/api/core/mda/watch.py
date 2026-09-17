@@ -155,6 +155,54 @@ class MdaWatch:
 
     # ── investigation hypotheses ────────────────────────────────────────────
 
+    @staticmethod
+    def _durable_hypothesis_family_events(*, max_age_days: int = 2, limit_per_family: int = 750):
+        """Bounded, fair durable sample for hypothesis evaluation.
+
+        A single recency-sorted AIS-anomaly query lets chatty spoof/circle
+        detectors crowd dark-gap evidence out of the hypothesis scan. Read the
+        same IntelEvent table in small semantic quotas instead. This is not a
+        second pipeline; it is only fair candidate selection for the existing
+        canonical hypothesis engine.
+        """
+        from datetime import datetime, timedelta, timezone
+        from core.db.models import IntelEventDB
+        from core.db.session import session_scope
+        from core.intel.store import IntelEvent
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        families = (
+            ("ais_anomaly", ("gap", "long_gap")),
+            ("ais_anomaly", ("position_jump", "circle_spoof", "static_spoof")),
+            ("ais_rendezvous", ("ais_rendezvous", "rendezvous", "sts")),
+            ("vessel_identity", ("mmsi_duplicate", "identity_anomaly", "sdn_match", "sanctioned_vessel")),
+            ("dark_candidate", ("dark_candidate",)),
+        )
+        by_id = {}
+        with session_scope() as db:
+            anomaly = IntelEventDB.meta["anomaly_type"].as_string()
+            for event_type, anomaly_types in families:
+                rows = (
+                    db.query(IntelEventDB)
+                    .filter(
+                        IntelEventDB.timestamp_utc >= cutoff,
+                        IntelEventDB.type == event_type,
+                        anomaly.in_(anomaly_types),
+                    )
+                    .order_by(IntelEventDB.timestamp_utc.desc())
+                    .limit(limit_per_family)
+                    .all()
+                )
+                for row in rows:
+                    by_id[row.id] = IntelEvent(
+                        id=row.id, timestamp_utc=row.timestamp_utc, type=row.type or "",
+                        severity=row.severity or "", lat=row.lat, lon=row.lon,
+                        title=row.title or "", text=row.text or "", url=row.url or "",
+                        source=row.source or "", linked_mmsi=row.linked_mmsi or "",
+                        metadata=dict(row.meta or {}),
+                    )
+        return list(by_id.values())
+
     def scan_hypotheses(self) -> int:
         from core.intel.hypothesis_engine import (
             event_to_episode_input_feature,
@@ -168,10 +216,10 @@ class MdaWatch:
         # before the hypothesis pass sees them. Merge a bounded durable window
         # with memory so evidence from different lineages can meet without
         # turning the scan into an unbounded historical replay.
-        by_id = {event.id: event for event in intel_store.persisted_events(
-            types=["ais_anomaly", "ais_rendezvous", "dark_candidate", "vessel_identity"],
-            max_age_days=2, limit=2000,
-        )}
+        by_id = {
+            event.id: event
+            for event in self._durable_hypothesis_family_events(max_age_days=2, limit_per_family=750)
+        }
         for event in intel_store.persisted_events(
             source_in=["GFW", "VIIRS VBD"], max_age_days=7, limit=1000,
         ):

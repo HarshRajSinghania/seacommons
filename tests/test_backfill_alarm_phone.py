@@ -267,6 +267,26 @@ def test_run_apply_drifts_a_sea_coordinate_recovered_by_backfill(monkeypatch) ->
     assert len(drift_calls) == 1
 
 
+
+def test_apply_position_preserves_solver_uncertainty(monkeypatch) -> None:
+    _add_row(
+        id="ap-pin-unc", source="alarm_phone", lat=34.8, lon=24.8,
+        coordinate_review_status="not_applicable",
+        meta={"coordinate_source": "region_area", "area_geojson": {"type": "Polygon", "coordinates": []}},
+    )
+    monkeypatch.setattr("core.intel.landmask.in_operational_region", lambda *a: True)
+    monkeypatch.setattr("core.intel.landmask.nearest_sea_point", lambda a, b: (a, b))
+    outcome = bf.apply_position(
+        "ap-pin-unc", 34.2, 25.4, "easyocr_pin_landmark",
+        estimated_position_error_m=63_118.0,
+    )
+    assert outcome == "newly_positioned_approximate"
+    r = _row("ap-pin-unc")
+    assert (r.lat, r.lon) == (34.2, 25.4)
+    assert r.location_uncertainty_m == 63_118.0
+    assert r.meta["coordinate_source"] == "media_pin_landmark"
+    assert "area_geojson" not in r.meta
+
 def test_apply_position_never_downgrades_and_is_idempotent() -> None:
     _add_row(
         id="ap-nodown",

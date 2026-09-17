@@ -224,8 +224,8 @@ def canonicalize_event(event_id: str, *, apply: bool) -> dict[str, Any]:
 
 
 # ── Coordinate reprocessing ─────────────────────────────────────────────────
-def resolve_position(candidate: dict) -> tuple[float, float, str] | None:
-    """Best image-derived coordinate for one candidate, or None."""
+def resolve_position(candidate: dict) -> tuple[float, float, str, dict[str, Any]] | None:
+    """Best image-derived coordinate plus solver diagnostics, or None."""
     from core.intel.x_media_utils import _ocr_photo, fetch_tweet_photos
 
     urls = list(candidate.get("media_urls") or [])
@@ -241,9 +241,9 @@ def resolve_position(candidate: dict) -> tuple[float, float, str] | None:
         except Exception as exc:
             logger.debug("backfill OCR failed for %s: %s", url, exc)
             continue
-        coord, method = result[0], result[2]
+        coord, method, diagnostics = result[0], result[2], dict(result[3] or {})
         if coord is not None:
-            return coord[0], coord[1], method
+            return coord[0], coord[1], method, diagnostics
     return None
 
 
@@ -265,7 +265,10 @@ def _is_land_case(candidate: dict) -> bool:
     return _case_type(text, distress=False, resolved=False) == "land_humanitarian"
 
 
-def apply_position(event_id: str, lat: float, lon: float, method: str) -> str:
+def apply_position(
+    event_id: str, lat: float, lon: float, method: str, *,
+    estimated_position_error_m: float | None = None,
+) -> str:
     """Write an image-derived position back, unless it would downgrade the
     stored evidence. Idempotent. Returns an outcome bucket."""
     from core.db.models import IntelEventDB
@@ -277,7 +280,9 @@ def apply_position(event_id: str, lat: float, lon: float, method: str) -> str:
         logger.info("backfill: %s coord %.4f,%.4f out of region -- skipped", event_id, lat, lon)
         return "still_unpositioned"
     lat, lon = nearest_sea_point(float(lat), float(lon))
-    new_meta = evidence_from_ocr_method(method, lat, lon).as_metadata()
+    new_meta = evidence_from_ocr_method(
+        method, lat, lon, estimated_position_error_m=estimated_position_error_m
+    ).as_metadata()
 
     with session_scope() as db:
         row = db.query(IntelEventDB).filter(IntelEventDB.id == event_id).first()
@@ -383,9 +388,17 @@ def run(*, apply: bool, limit: int, with_drift: bool) -> dict:
             _log(candidate, f"no image coordinate -> {bucket}")
             continue
 
-        lat, lon, method = position
+        if len(position) == 4:
+            lat, lon, method, diagnostics = position
+        else:  # compatibility with injected/test resolvers and older callers
+            lat, lon, method = position
+            diagnostics = {}
+        estimated_error = diagnostics.get("estimated_position_error_m")
         if apply:
-            outcome = apply_position(candidate["id"], lat, lon, method)
+            outcome = apply_position(
+                candidate["id"], lat, lon, method,
+                estimated_position_error_m=estimated_error,
+            )
         else:
             from core.intel.landmask import in_operational_region
 

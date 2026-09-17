@@ -78,7 +78,8 @@ def _high_specificity_dark_gap_ready(events: list[Any], props: dict[str, Any]) -
         effective_silent = props.get("current_silent_seconds")
         if effective_silent is None:
             effective_silent = meta.get("silent_seconds")
-        if float(effective_silent or 0.0) < 4 * 3600:
+        effective_silent = float(effective_silent or 0.0)
+        if effective_silent < 4 * 3600 or effective_silent > 12 * 3600:
             continue
         if float(gap.get("confidence") or 0.0) < 0.7:
             continue

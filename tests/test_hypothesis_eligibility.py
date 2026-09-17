@@ -142,6 +142,30 @@ def test_behaviour_context_never_counts_as_independent_source() -> None:
     assert decision.eligible is False
 
 
+
+def test_stale_dark_gap_over_twelve_hours_does_not_auto_advance() -> None:
+    mod = _eligibility()
+    event = _event(
+        "gap:stale", "gap",
+        gap_reason={
+            "hypothesis": "vessel_gap", "confidence": 0.7,
+            "coverage_ratio": 1.1,
+            "nearby_vessels_reporting_before": 12,
+            "nearby_vessels_reporting_after": 13,
+        },
+        silent_seconds=13 * 3600, jamming_score=0.0,
+        port_or_anchorage=None, pre_gap_speed_kn=8.0,
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode(
+            "gap_episode", "single_source_observed", 1,
+            gap_still_open=True, current_silent_seconds=13 * 3600,
+        ),
+        [event],
+    )
+    assert decision.eligible is False
+    assert decision.may_advance_collecting is False
+
 def test_reproducible_teleport_enters_collecting_without_becoming_corroborated() -> None:
     mod = _eligibility()
     events = [

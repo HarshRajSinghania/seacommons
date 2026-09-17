@@ -180,7 +180,6 @@ class MdaWatch:
         )
         by_id = {}
         with session_scope() as db:
-            from sqlalchemy import func
             from core.db.models import VesselTrackDB
             from core.intel.lifecycle import parse_utc
 
@@ -198,24 +197,30 @@ class MdaWatch:
                     query = query.order_by(IntelEventDB.timestamp_utc.desc())
                 rows = query.limit(limit_per_family).all()
 
-                latest_track = {}
-                if event_type == "ais_anomaly" and "gap" in anomaly_types:
-                    mmsis = [str(row.linked_mmsi or "") for row in rows if row.linked_mmsi]
-                    if mmsis:
-                        latest_track = dict(
-                            db.query(VesselTrackDB.mmsi, func.max(VesselTrackDB.ts))
-                            .filter(VesselTrackDB.mmsi.in_(mmsis))
-                            .group_by(VesselTrackDB.mmsi)
-                            .all()
-                        )
-
                 now = datetime.now(timezone.utc)
                 for row in rows:
                     metadata = dict(row.meta or {})
                     if event_type == "ais_anomaly" and metadata.get("anomaly_type") in {"gap", "long_gap"}:
                         stored_silent = float(metadata.get("silent_seconds") or 0.0)
                         emitted_at = parse_utc(row.timestamp_utc)
-                        latest = latest_track.get(str(row.linked_mmsi or ""))
+                        gap_reason = metadata.get("gap_reason") or {}
+                        worth_lookup = (
+                            isinstance(gap_reason, dict)
+                            and gap_reason.get("hypothesis") == "vessel_gap"
+                            and float(gap_reason.get("confidence") or 0.0) >= 0.7
+                            and int(gap_reason.get("nearby_vessels_reporting_before") or 0) >= 5
+                            and int(gap_reason.get("nearby_vessels_reporting_after") or 0) >= 5
+                            and float(metadata.get("jamming_score") or 0.0) < 0.3
+                        )
+                        latest = None
+                        if worth_lookup and row.linked_mmsi:
+                            latest = (
+                                db.query(VesselTrackDB.ts)
+                                .filter(VesselTrackDB.mmsi == str(row.linked_mmsi))
+                                .order_by(VesselTrackDB.ts.desc())
+                                .limit(1)
+                                .scalar()
+                            )
                         if emitted_at is not None and latest is not None and stored_silent > 0:
                             original_last = emitted_at - timedelta(seconds=stored_silent)
                             latest_utc = latest if latest.tzinfo is not None else latest.replace(tzinfo=timezone.utc)

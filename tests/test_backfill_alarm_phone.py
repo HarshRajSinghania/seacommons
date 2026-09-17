@@ -314,3 +314,20 @@ def test_land_humanitarian_candidate_gets_no_maritime_position(monkeypatch) -> N
     report = bf.run(apply=True, limit=10, with_drift=True)
     assert report["land_humanitarian"] == 1
     assert calls == []
+
+
+def test_apply_position_updates_media_evidence_after_pin_recovery(monkeypatch) -> None:
+    _add_row(
+        id="ap-media-sync", source="alarm_phone", lat=34.8, lon=24.8,
+        coordinate_review_status="not_applicable",
+        meta={"coordinate_source": "region_area", "media_outcome": "media_stored_no_location",
+              "media_evidence": [{"fetch_status": "ok", "ocr_status": "no_coordinate", "location_method": None}]},
+    )
+    monkeypatch.setattr("core.intel.landmask.in_operational_region", lambda *a: True)
+    monkeypatch.setattr("core.intel.landmask.nearest_sea_point", lambda a, b: (a, b))
+    bf.apply_position("ap-media-sync", 34.2, 25.4, "easyocr_pin_landmark", estimated_position_error_m=63118.0)
+    r = _row("ap-media-sync")
+    ev = r.meta["media_evidence"][0]
+    assert ev["ocr_status"] == "pin_only"
+    assert ev["location_method"] == "easyocr_pin_landmark"
+    assert r.meta["media_outcome"] == "visual_pin_only"

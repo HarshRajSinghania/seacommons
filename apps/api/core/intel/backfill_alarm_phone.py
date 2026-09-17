@@ -292,6 +292,15 @@ def apply_position(
         if row.lat is not None and metadata_quality(new_meta) <= metadata_quality(existing):
             return "already_good"
         merged = {**existing, **new_meta, "backfilled_at": datetime.now(timezone.utc).isoformat()}
+        evidence = [dict(e) for e in (existing.get("media_evidence") or []) if isinstance(e, dict)]
+        if evidence:
+            target = next((e for e in evidence if e.get("fetch_status") == "ok"), evidence[0])
+            target["ocr_engine"] = "easyocr" if str(method).startswith("easyocr") else "tesseract"
+            target["location_method"] = method
+            target["ocr_status"] = "pin_only" if str(method).endswith("pin_landmark") else "coordinates_found"
+            target["coordinate_candidates"] = [{"lat": round(float(lat), 5), "lon": round(float(lon), 5), "method": method, "approximate": str(method).endswith("pin_landmark")}]
+            merged["media_evidence"] = evidence
+            merged["media_outcome"] = "visual_pin_only" if str(method).endswith("pin_landmark") else "media_coordinates_found"
         for key in ("area_geojson", "area_confidence", "area_weather_narrowed"):
             merged.pop(key, None)
         row.lat = float(lat)

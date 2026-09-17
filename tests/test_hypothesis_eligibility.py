@@ -99,16 +99,18 @@ def test_behaviour_context_never_counts_as_independent_source() -> None:
     assert decision.eligible is False
 
 
-def test_high_specificity_spoofing_can_be_candidate_but_not_collecting_on_one_lineage() -> None:
+def test_reproducible_teleport_enters_collecting_without_becoming_corroborated() -> None:
     mod = _eligibility()
     events = [
         _event(
             "spoof:1", "position_jump",
             ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+            teleport_pattern="sustained_relocation",
         ),
         _event(
             "spoof:2", "position_jump",
             ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+            teleport_pattern="sustained_relocation",
         ),
     ]
     decision = mod.evaluate_hypothesis_eligibility(
@@ -116,5 +118,47 @@ def test_high_specificity_spoofing_can_be_candidate_but_not_collecting_on_one_li
     )
     assert decision.eligible is True
     assert decision.hypothesis_type == "position_spoofing"
+    assert decision.may_advance_collecting is True
+    assert decision.evidence_stage == "derived"
+def test_circular_pattern_does_not_auto_advance_on_one_ais_lineage() -> None:
+    mod = _eligibility()
+    event = _event(
+        "circle:1", "circle_spoof",
+        ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("spoofing_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is True
+    assert decision.hypothesis_type == "position_spoofing"
     assert decision.may_advance_collecting is False
     assert decision.evidence_stage == "derived"
+
+
+def test_sustained_teleport_near_port_does_not_auto_advance() -> None:
+    mod = _eligibility()
+    event = _event(
+        "spoof:port", "position_jump",
+        ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+        teleport_pattern="sustained_relocation", teleport_near_port="Trieste",
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("spoofing_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is True
+    assert decision.may_advance_collecting is False
+
+
+def test_sustained_teleport_with_coincident_peer_does_not_auto_advance() -> None:
+    mod = _eligibility()
+    event = _event(
+        "spoof:peer", "position_jump",
+        ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+        teleport_pattern="sustained_relocation",
+        coincident_teleport_peers=["subj:mmsi:111000102"],
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("spoofing_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is True
+    assert decision.may_advance_collecting is False

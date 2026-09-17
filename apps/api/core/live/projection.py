@@ -249,6 +249,15 @@ def _public_intel_feature(
     domains = allowed_domains if allowed_domains is not None else public_maritime_domains()
     resolved_domain = str(event.maritime_domain() or "sar").strip().lower()
     domain_public = resolved_domain in domains
+    # Canonical cutover: raw Security detector output is evidence, not a
+    # public case. Grey-zone/sanctions AIS anomalies, fused alerts, identity
+    # flags and satellite dark candidates can reach public Live only after
+    # they have become a published InvestigationHypothesis.
+    if (
+        resolved_domain in {"grey_zone", "sanctions"}
+        and event.type in {"ais_anomaly", "correlated_alert", "vessel_identity", "dark_candidate"}
+    ):
+        return None
     # Security correlated alerts are derived interpretations, not raw facts.
     # Historical records may pre-date an explicit publication_status; fail
     # closed so domain eligibility / source policy / corroboration cannot act

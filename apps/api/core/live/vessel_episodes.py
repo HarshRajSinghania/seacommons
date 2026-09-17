@@ -139,11 +139,16 @@ def coalesce_security_vessel_episodes(
         if signal_id in by_signal_id:
             continue  # duplicate id in one snapshot -- keep the first
         by_signal_id[signal_id] = feature
+        explicit_subject_ids = tuple(sorted({
+            str(value).strip() for value in (props.get("subject_ids") or ())
+            if str(value).strip()
+        }))
         subject_id = subject_id_for(imo=props.get("imo"), mmsi=mmsi) or f"subj:mmsi:{mmsi}"
+        subject_ids = explicit_subject_ids or (subject_id,)
         point = _point(feature)
         signals.append(EpisodeSignal(
             signal_id=signal_id,
-            subject_ids=(subject_id,),
+            subject_ids=subject_ids,
             family=family_for(
                 props.get("anomaly_type") or props.get("ais_nav_status_kind"),
                 explicit_family=props.get("episode_family"),

@@ -262,12 +262,13 @@ def test_v1_corroborated_gap_links_persisted_episode() -> None:
         assert row.episode_id == episode_id
 
 
-def test_v1_same_lineage_spoofing_stays_candidate() -> None:
+def test_v1_reproducible_teleport_enters_collecting_as_derived() -> None:
     for event_id in ("v1-spoof-a", "v1-spoof-b"):
         _add_event(
             event_id,
             anomaly_type="position_jump",
             ais_integrity_classification={"label": "position_anomaly", "confidence": 0.8},
+            teleport_pattern="sustained_relocation",
         )
     episode = _episode(
         "spoofing_episode",
@@ -284,7 +285,7 @@ def test_v1_same_lineage_spoofing_stays_candidate() -> None:
     hyp = evaluate_episode(episode)
     assert hyp is not None
     assert hyp.hypothesis_type == "position_spoofing"
-    assert hyp.state == "candidate"
+    assert hyp.state == "collecting"
     assert hyp.evidence_stage == "derived"
 
 
@@ -339,3 +340,73 @@ def test_v1_engine_never_relinks_or_mutates_legacy_null_episode_hypothesis() -> 
         assert legacy.episode_id is None
         assert legacy.reason_codes == ["legacy-gap"]
         assert legacy.evidence_links == ["legacy-evidence"]
+
+
+def test_rendezvous_event_preserves_all_vessel_subjects():
+    from core.intel.hypothesis_engine import event_to_episode_input_feature
+
+    event = IntelEvent(
+        id="rdv-pair", type="ais_rendezvous", severity="medium",
+        lat=35.0, lon=17.0, title="pair", source="GFW",
+        metadata={
+            "anomaly_type": "ais_rendezvous",
+            "vessels": ["247123456", "255987654"],
+        },
+    )
+    feature = event_to_episode_input_feature(event)
+    assert feature is not None
+    assert feature["properties"]["subject_ids"] == [
+        "subj:mmsi:247123456", "subj:mmsi:255987654"
+    ]
+
+
+def test_durable_gfw_gap_is_not_independent_from_ais_gap(monkeypatch):
+    from core.mda.watch import MdaWatch
+
+    ais = IntelEvent(
+        id="durable-ais-gap", type="ais_anomaly", severity="medium",
+        lat=35.5, lon=14.1, title="isolated AIS gap", source="mda",
+        linked_mmsi="211879870", metadata={
+            "anomaly_type": "gap",
+            "gap_reason": {"hypothesis": "vessel_gap", "confidence": 0.8},
+        },
+    )
+    gfw = IntelEvent(
+        id="durable-gfw-gap", type="ais_anomaly", severity="medium",
+        lat=35.51, lon=14.11, title="GFW gap", source="GFW",
+        linked_mmsi="211879870", metadata={"anomaly_type": "long_gap"},
+    )
+    by_id = {ais.id: ais, gfw.id: gfw}
+    monkeypatch.setattr(intel_store, "events", lambda *a, **k: [])
+    monkeypatch.setattr(intel_store, "persisted_events", lambda *a, **k: [ais, gfw])
+    monkeypatch.setattr(intel_store, "get_durable", lambda event_id: by_id.get(event_id))
+
+    assert MdaWatch().scan_hypotheses() == 0
+    assert get_hypothesis(
+        "hyp:v1:dark_transit:episode:subj:mmsi:211879870:gap_episode:1"
+    ) is None
+
+
+def test_satellite_candidate_moves_dark_transit_into_collecting():
+    gap = IntelEvent(
+        id="gap-with-sar", type="ais_anomaly", severity="high",
+        lat=35.5, lon=14.1, title="isolated AIS gap", source="mda",
+        linked_mmsi="211879870", metadata={
+            "anomaly_type": "gap",
+            "gap_reason": {"hypothesis": "vessel_gap", "confidence": 0.8},
+            "darkship_cue": {
+                "association_status": "unmatched_candidate",
+                "gfw_unmatched_in_area": [
+                    {"lat": 35.53, "lon": 14.15, "timestamp": "2026-09-17T10:15:00+00:00"}
+                ],
+            },
+        },
+    )
+    intel_store.add(gap, dedup_key=gap.id)
+    hyp = evaluate_episode(_episode(
+        "gap_episode", signal_ids=[gap.id], episode_id="episode:dark:sar",
+    ))
+    assert hyp is not None
+    assert hyp.state == "collecting"
+    assert hyp.evidence_stage == "derived"
+    assert any(link.startswith("sat:gfw_sar:") for link in hyp.evidence_links)

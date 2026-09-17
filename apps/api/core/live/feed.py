@@ -48,16 +48,13 @@ from core.live.vessel_episodes import (
 
 logger = logging.getLogger(__name__)
 
-# Public-eligible intel types that must survive in-memory deque churn — read
-# straight from the DB in public_signal_collection so the high-volume MDA
-# analysis events cannot evict them. Includes Security-mode types
-# (ais_anomaly/vessel_identity/dark_candidate) unconditionally: cheap to
-# over-fetch, and mode=humanitarian still drops them at the domain gate in
-# _public_intel_feature, so this doesn't change that mode's output.
+# Public received/safety types that must survive in-memory deque churn. Raw
+# Security detector families are intentionally absent: after the canonical
+# cutover they remain internal evidence and public Live reads assessed
+# InvestigationHypothesis rows through _published_security_hypothesis_features.
 _PUBLIC_DURABLE_TYPES = frozenset({
     "distress", "twitter", "mastodon", "bluesky", "ngo_activity", "news",
-    "gdacs", "vessel_incident", "iom_incident", "correlated_alert",
-    "ais_anomaly", "vessel_identity", "dark_candidate",
+    "gdacs", "vessel_incident", "iom_incident",
 })
 
 # Candidate and count computation must not depend on the response page size.
@@ -66,6 +63,73 @@ _PUBLIC_DURABLE_TYPES = frozenset({
 _LIVE_WINDOW_LIMIT = 500
 _LIVE_DURABLE_SCAN_LIMIT = 1500
 _LIVE_DURABLE_TYPE_SCAN_LIMIT = 500
+
+
+def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
+    """Project only hypothesis-gated Maritime Intelligence into Live.
+
+    Raw AIS/security detector output is evidence and is blocked in
+    core.live.projection. This is the canonical replacement path.
+    """
+    from core.intel.hypothesis_publication import public_hypothesis_collection
+
+    type_to_anomaly = {
+        "dark_transit": "ais_gap",
+        "position_spoofing": "position_spoofing",
+        "covert_rendezvous": "rendezvous",
+        "infrastructure_pattern": "infrastructure",
+    }
+    features: list[dict[str, Any]] = []
+    for feature in public_hypothesis_collection(limit=limit).get("features", []):
+        props = dict(feature.get("properties") or {})
+        hypothesis_type = str(props.get("hypothesis_type") or "")
+        anomaly_type = type_to_anomaly.get(hypothesis_type, hypothesis_type)
+        category = visual_category_fields(
+            source="SeaCommons assessed intelligence",
+            event_type="ais_anomaly",
+            maritime_domain="grey_zone",
+            metadata={"anomaly_type": anomaly_type},
+        )
+        timestamp = props.get("timestamp_utc")
+        if not timestamp or not feature.get("geometry"):
+            continue
+        public = {
+            "type": "Feature",
+            "id": props["id"],
+            "geometry": feature["geometry"],
+            "properties": {
+                "schema": LIVE_SIGNAL_SCHEMA,
+                "id": props["id"],
+                "type": "ais_anomaly",
+                **category,
+                "kind": LiveSignalKind.CONTEXT.value,
+                "severity": "medium",
+                "tier": IntelTier.SIGNAL.value,
+                "verification_status": (
+                    VerificationStatus.MULTI_SOURCE_CORROBORATED.value
+                    if props.get("evidence_stage") == "corroborated"
+                    else str(props.get("evidence_stage") or "assessed")
+                ),
+                "publication_status": PublicationStatus.PUBLISHED.value,
+                "source_policy": SourcePolicy.OPERATOR_PUBLISHED.value,
+                "title": str(props.get("title") or "Reviewed maritime intelligence")[:255],
+                "text": "",
+                "url": "",
+                "source": "SeaCommons assessed intelligence",
+                "timestamp_utc": timestamp,
+                "location_precision": LocationPrecision.REPORTED_OR_DERIVED.value,
+                "maritime_domain": "grey_zone",
+                "hypothesis_type": hypothesis_type,
+                "reason_codes": list(props.get("reason_codes") or ()),
+                "evidence_stage": props.get("evidence_stage"),
+                "caveats": list(props.get("caveats") or ()),
+            },
+        }
+        try:
+            features.append(validate_live_signal(public))
+        except ValueError:
+            logger.warning("Dropping hypothesis that violates Live contract id=%s", props.get("id"))
+    return features
 
 
 def _published_ingested_features(limit: int) -> list[dict[str, Any]]:
@@ -370,6 +434,15 @@ def public_signal_collection(
         mode_name: finalize(mode_name)
         for mode_name in ("humanitarian", "security", "safety")
     }
+    # Canonical Security cutover: detector output stays internal evidence;
+    # only hypotheses that passed the publication gate enter public Live.
+    features_by_mode["security"].extend(
+        _published_security_hypothesis_features(_LIVE_WINDOW_LIMIT)
+    )
+    features_by_mode["security"].sort(
+        key=lambda f: str((f.get("properties") or {}).get("timestamp_utc") or ""),
+        reverse=True,
+    )
     add_nearby_humanitarian_context(
         features_by_mode["security"], features_by_mode["humanitarian"]
     )

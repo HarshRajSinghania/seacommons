@@ -163,8 +163,24 @@ class MdaWatch:
         from core.intel.store import intel_store
         from core.live.vessel_episodes import coalesce_security_vessel_episodes
 
+        # The bounded in-memory deque is dominated by high-volume MDA/AIS
+        # churn. Independent corroborators such as GFW can therefore vanish
+        # before the hypothesis pass sees them. Merge a bounded durable window
+        # with memory so evidence from different lineages can meet without
+        # turning the scan into an unbounded historical replay.
+        by_id = {event.id: event for event in intel_store.persisted_events(
+            types=["ais_anomaly", "ais_rendezvous", "dark_candidate", "vessel_identity"],
+            max_age_days=2, limit=2000,
+        )}
+        for event in intel_store.persisted_events(
+            source_in=["GFW", "VIIRS VBD"], max_age_days=7, limit=1000,
+        ):
+            by_id[event.id] = event
+        for event in intel_store.events(limit=1200, max_age_days=7):
+            by_id[event.id] = event
+
         features = []
-        for event in intel_store.events(limit=600):
+        for event in by_id.values():
             feature = event_to_episode_input_feature(event)
             if feature is not None:
                 features.append(feature)
@@ -669,6 +685,7 @@ class MdaWatch:
         from core.intel import confidence as confidence_mod
         from core.intel.ais_integrity_replay import classify_impossible_speed
         from core.mda.jamming import jamming
+        from core.mda.reference import reference
         from core.vessels.registry import registry
         from core.vessels.track_store import track_store
 
@@ -755,7 +772,15 @@ class MdaWatch:
             # unchanged), vessel type is passed through but never used to
             # gate the classification either (see that module's docstring).
             integrity_classification = None
+            teleport_pattern = None
+            coincident_teleport_peers: tuple[str, ...] = ()
+            teleport_near_port = None
             if reason == "teleport":
+                teleport_pattern = self._teleport_pattern(pts)
+                trigger = self._teleport_trigger(pts)
+                coincident_teleport_peers = self._coincident_teleport_peers(by_mmsi, mmsi)
+                if trigger is not None:
+                    teleport_near_port = reference.in_port_or_anchorage(*trigger["to"])
                 kn, dt_s = self._teleport_metrics(pts)
                 if kn is not None:
                     v = cache.get(mmsi, {})
@@ -797,10 +822,82 @@ class MdaWatch:
                     "jamming_score": jam, "detail": extra,
                     "confidence_v2": confidence_v2.as_metadata(),
                     "ais_integrity_classification": integrity_classification,
+                    "teleport_pattern": teleport_pattern,
+                    "coincident_teleport_peers": list(coincident_teleport_peers),
+                    "teleport_near_port": teleport_near_port,
                 },
             ), dedup_key=f"spoof:{mmsi}:{reason}:{int(time.time() // 21600)}")
             emitted += 1
         return emitted
+
+    @staticmethod
+    def _teleport_trigger(pts: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        for index, (a, b) in enumerate(zip(pts, pts[1:])):
+            dt = (_parse(b["ts"]) - _parse(a["ts"])).total_seconds()
+            if dt <= 0:
+                continue
+            distance_km = haversine_km(a["lat"], a["lon"], b["lat"], b["lon"])
+            implied_kn = distance_km / 1.852 / (dt / 3600)
+            if implied_kn > 60 and distance_km > 15:
+                return {
+                    "index": index,
+                    "at": _parse(b["ts"]),
+                    "from": (float(a["lat"]), float(a["lon"])),
+                    "to": (float(b["lat"]), float(b["lon"])),
+                    "distance_km": distance_km,
+                    "implied_speed_kn": implied_kn,
+                }
+        return None
+
+    @staticmethod
+    def _coincident_teleport_peers(
+        by_mmsi: dict[str, list[dict[str, Any]]], current_mmsi: str,
+        *, max_time_s: float = 300.0, max_distance_km: float = 30.0,
+    ) -> tuple[str, ...]:
+        current = MdaWatch._teleport_trigger(by_mmsi.get(current_mmsi, []))
+        if current is None:
+            return ()
+        peers: list[str] = []
+        for mmsi, pts in by_mmsi.items():
+            if mmsi == current_mmsi:
+                continue
+            other = MdaWatch._teleport_trigger(pts)
+            if other is None:
+                continue
+            if abs((other["at"] - current["at"]).total_seconds()) > max_time_s:
+                continue
+            if haversine_km(*current["to"], *other["to"]) <= max_distance_km:
+                peers.append(mmsi)
+        return tuple(sorted(set(peers)))
+
+    @staticmethod
+    def _teleport_pattern(pts: list[dict[str, Any]]) -> str:
+        """Classify the first impossible jump by what happens immediately after.
+
+        A fix that jumps away and returns close to the origin is a transient
+        outlier. A jump followed by at least two nearby fixes at the new
+        location is a sustained relocation worth opening as an investigation.
+        Everything else remains unresolved evidence.
+        """
+        for index, (a, b) in enumerate(zip(pts, pts[1:])):
+            dt = (_parse(b["ts"]) - _parse(a["ts"])).total_seconds()
+            if dt <= 0:
+                continue
+            distance_km = haversine_km(a["lat"], a["lon"], b["lat"], b["lon"])
+            implied_kn = distance_km / 1.852 / (dt / 3600)
+            if implied_kn <= 60 or distance_km <= 15:
+                continue
+            following = pts[index + 2:index + 5]
+            if any(haversine_km(a["lat"], a["lon"], p["lat"], p["lon"]) <= 5 for p in following):
+                return "transient_outlier"
+            new_cluster = sum(
+                1 for p in following
+                if haversine_km(b["lat"], b["lon"], p["lat"], p["lon"]) <= 15
+            )
+            if new_cluster >= 2:
+                return "sustained_relocation"
+            return "unresolved_jump"
+        return "not_applicable"
 
     @staticmethod
     def _teleport_metrics(pts: list[dict[str, Any]]) -> tuple[Optional[float], float]:

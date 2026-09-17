@@ -115,10 +115,10 @@ def test_public_maritime_mode_unifies_safety_and_security_with_canonical_counts(
     all_feed = public_signal_collection(mode="all", days=1, limit=50)
 
     maritime_ids = {f["properties"]["id"] for f in maritime["features"]}
-    assert maritime_ids == {"intel:canonical-safety-1", "intel:canonical-security-1"}
+    assert maritime_ids == {"intel:canonical-safety-1"}
     assert {f["properties"]["id"] for f in legacy_security["features"]} == maritime_ids
     assert {f["properties"]["id"] for f in humanitarian_feed["features"]} == {"intel:canonical-hum-1"}
     assert {f["properties"]["id"] for f in all_feed["features"]} == maritime_ids | {"intel:canonical-hum-1"}
-    assert maritime["meta"]["mode_counts"] == {"humanitarian": 1, "maritime": 2}
+    assert maritime["meta"]["mode_counts"] == {"humanitarian": 1, "maritime": 1}
     assert maritime["meta"]["mode"] == "maritime"
     assert legacy_security["meta"]["mode"] == "maritime"

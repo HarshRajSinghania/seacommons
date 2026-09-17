@@ -111,6 +111,32 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     }
 
 
+def _investigation_projection(hypothesis, episode) -> dict[str, Any]:
+    title = {
+        "dark_transit": "Dark transit investigation candidate",
+        "position_spoofing": "Position integrity investigation candidate",
+        "covert_rendezvous": "Covert rendezvous investigation candidate",
+        "infrastructure_pattern": "Infrastructure pattern investigation candidate",
+    }.get(hypothesis.hypothesis_type, "Maritime investigation candidate")
+    return {
+        "incident_id": hypothesis.hypothesis_id,
+        "incident_status": hypothesis.state,
+        "surface": "play",
+        "case_type": hypothesis.hypothesis_type,
+        "reported_at": _iso(episode.start_at),
+        "last_update_at": _iso(hypothesis.updated_at) or _iso(episode.end_at),
+        "state_changed_at": _iso(hypothesis.updated_at),
+        "resolved_at": None,
+        "title": title,
+        "source": "SeaCommons evidence engine",
+        "geometry": episode.geometry,
+        "domain": "investigation",
+        "evidence_stage": hypothesis.evidence_stage,
+        "reason_codes": list(hypothesis.reason_codes or []),
+        "counter_indicators": list(hypothesis.counter_indicators or []),
+    }
+
+
 _PLAY_COUNTS_TTL_S = 60.0
 _play_counts_cache: dict[str, Any] = {}
 _play_counts_lock = Lock()
@@ -123,7 +149,12 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
     intentionally exact: a high-volume block of private/non-public rows can
     never crowd older public history out of the result.
     """
-    from core.db.models import HumanitarianIncidentDB, IntelEventDB
+    from core.db.models import (
+        HumanitarianIncidentDB,
+        IntelEventDB,
+        InvestigationHypothesisDB,
+        MaritimeEpisodeDB,
+    )
     from core.db.session import session_scope
 
     now = datetime.now(timezone.utc)
@@ -136,6 +167,9 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
         human_ids = {row.incident_id for row in human_rows}
         for row in human_rows:
             event = db.get(IntelEventDB, row.incident_id)
+            event_meta = dict(event.meta or {}) if event is not None else {}
+            if event_meta.get("translation_of") or event_meta.get("publication_status") == "internal":
+                continue
             combined.append(_incident_projection(row, event, now=now))
 
         publication_status = IntelEventDB.meta["publication_status"].as_string()
@@ -152,6 +186,21 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 continue
             if _is_public_catalog_maritime(event):
                 combined.append(_generic_maritime_projection(event))
+
+        investigations = (
+            db.query(InvestigationHypothesisDB, MaritimeEpisodeDB)
+            .join(
+                MaritimeEpisodeDB,
+                InvestigationHypothesisDB.episode_id == MaritimeEpisodeDB.episode_id,
+            )
+            .filter(
+                InvestigationHypothesisDB.state.in_(("collecting", "review_ready", "assessed", "published")),
+                InvestigationHypothesisDB.hypothesis_type.in_(("dark_transit", "position_spoofing")),
+            )
+            .all()
+        )
+        for hypothesis, episode in investigations:
+            combined.append(_investigation_projection(hypothesis, episode))
 
         public_ids = [str(item["incident_id"]) for item in combined]
         drift_counts: dict[str, int] = {}
@@ -196,10 +245,12 @@ def _compute_play_counts() -> dict[str, Any]:
     catalog = _compute_play_catalog()
     humanitarian_count = sum(1 for item in catalog if item.get("domain") == "humanitarian")
     maritime_count = sum(1 for item in catalog if item.get("domain") == "maritime")
+    investigation_count = sum(1 for item in catalog if item.get("domain") == "investigation")
     return {
         "total_count": len(catalog),
         "humanitarian_count": humanitarian_count,
         "maritime_count": maritime_count,
+        "investigation_count": investigation_count,
         "generated_at": now.isoformat(),
     }
 
@@ -344,12 +395,55 @@ def play_incident_timeline(incident_id: str):
         HumanitarianIncidentDB,
         IncidentTransitionDB,
         IntelEventDB,
+        InvestigationHypothesisDB,
+        MaritimeEpisodeDB,
         SatelliteObservationDB,
     )
     from core.db.session import session_scope
 
     now = datetime.now(timezone.utc)
     with session_scope() as db:
+        hypothesis = db.get(InvestigationHypothesisDB, incident_id)
+        if hypothesis is not None and hypothesis.state != "candidate" and hypothesis.hypothesis_type in {"dark_transit", "position_spoofing"}:
+            episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id) if hypothesis.episode_id else None
+            if episode is None:
+                raise HTTPException(status_code=404, detail="Investigation not found")
+            timeline = [{
+                "id": hypothesis.hypothesis_id,
+                "at": _iso(episode.start_at),
+                "type": "hypothesis",
+                "source": "SeaCommons evidence engine",
+                "title": _investigation_projection(hypothesis, episode)["title"],
+                "geometry": episode.geometry,
+                "properties": {
+                    "state": hypothesis.state,
+                    "evidence_stage": hypothesis.evidence_stage,
+                    "reason_codes": list(hypothesis.reason_codes or []),
+                    "counter_indicators": list(hypothesis.counter_indicators or []),
+                },
+            }]
+            for evidence_id in hypothesis.evidence_links or []:
+                evidence = db.get(IntelEventDB, evidence_id)
+                if evidence is None:
+                    continue
+                meta = dict(evidence.meta or {})
+                geometry = ({"type": "Point", "coordinates": [evidence.lon, evidence.lat]}
+                            if evidence.lat is not None and evidence.lon is not None else None)
+                timeline.append({
+                    "id": f"evidence:{evidence.id}", "at": _iso(evidence.timestamp_utc),
+                    "type": "evidence", "source": evidence.source,
+                    "title": str(meta.get("anomaly_type") or evidence.type).replace("_", " "),
+                    "geometry": geometry,
+                    "properties": {"evidence_stage": hypothesis.evidence_stage},
+                })
+            timeline = [item for item in timeline if item.get("at")]
+            timeline.sort(key=lambda item: item["at"])
+            return {
+                "incident_id": incident_id, "incident_status": hypothesis.state,
+                "surface": "play", "domain": "investigation",
+                "timeline": timeline, "generated_at": now.isoformat(),
+            }
+
         incident = db.get(HumanitarianIncidentDB, incident_id)
         event = db.get(IntelEventDB, incident_id)
         generic_maritime = incident is None and event is not None and _is_public_catalog_maritime(event)

@@ -244,7 +244,7 @@ def test_play_index_paginates_combined_archive():
     assert first["next_offset"] == 2
     assert first_ids.isdisjoint(second_ids)
 
-def test_play_index_reuses_public_projection_for_historical_security_signal():
+def test_play_index_excludes_raw_historical_security_detector_output():
     from core.db.models import IntelEventDB
     from core.db.session import session_scope
     event_id = f"security-{uuid.uuid4()}"
@@ -260,10 +260,8 @@ def test_play_index_reuses_public_projection_for_historical_security_signal():
         ))
     response = TestClient(app).get("/api/v1/play/incidents?limit=500")
     assert response.status_code == 200
-    item = next(row for row in response.json()["incidents"] if row["incident_id"] == event_id)
-    assert item["domain"] == "maritime"
-    assert item["case_type"] == "ais_anomaly"
-    assert item["geometry"] == {"type": "Point", "coordinates": [14.8, 35.8]}
+    ids = {row["incident_id"] for row in response.json()["incidents"]}
+    assert event_id not in ids
 
 
 def test_play_counts_exposes_real_archive_total():
@@ -272,7 +270,9 @@ def test_play_counts_exposes_real_archive_total():
     response = TestClient(app).get("/api/v1/play/counts")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total_count"] == payload["humanitarian_count"] + payload["maritime_count"]
+    assert payload["total_count"] == (
+        payload["humanitarian_count"] + payload["maritime_count"] + payload.get("investigation_count", 0)
+    )
     assert payload["total_count"] >= 2
 
 
@@ -389,3 +389,20 @@ def test_play_catalog_prefilters_explicit_internal_rows_before_public_projection
     monkeypatch.setattr(play_routes, "_is_public_catalog_maritime", checked)
     catalog = play_routes._compute_play_catalog()
     assert internal_id not in {item["incident_id"] for item in catalog}
+
+def test_play_catalog_hides_translated_duplicate_incident() -> None:
+    from core.db.models import IntelEventDB
+    from core.db.session import session_scope
+
+    event_id = _seed_case(lifecycle="active", age_hours=2, with_update=False)
+    with session_scope() as db:
+        row = db.get(IntelEventDB, event_id)
+        meta = dict(row.meta or {})
+        meta["translation_of"] = "canonical-case"
+        meta["publication_status"] = "internal"
+        row.meta = meta
+
+    response = TestClient(app).get("/api/v1/play/incidents?limit=500")
+    assert response.status_code == 200
+    ids = {item["incident_id"] for item in response.json()["incidents"]}
+    assert event_id not in ids

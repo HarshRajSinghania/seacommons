@@ -45,6 +45,42 @@ def _counter_indicators(props: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
+def _event_counter_indicators(events: list[Any]) -> tuple[str, ...]:
+    values: set[str] = set()
+    for event in events:
+        meta = getattr(event, "metadata", {}) or {}
+        if meta.get("coincident_teleport_peers"):
+            values.add("COINCIDENT_MULTI_VESSEL_POSITION_JUMPS")
+        if meta.get("teleport_near_port"):
+            values.add("PORT_OR_ANCHORAGE_CONTEXT")
+        if meta.get("teleport_pattern") == "transient_outlier":
+            values.add("TRANSIENT_POSITION_OUTLIER")
+    return tuple(sorted(values))
+
+
+def _high_specificity_spoofing_ready(events: list[Any]) -> bool:
+    """A reproducible teleport is investigation-worthy, not corroborated.
+
+    Circular/frozen tracks remain single-lineage cues until another sensor or
+    lineage supports them; they are far too common to auto-open investigations.
+    """
+    for event in events:
+        meta = getattr(event, "metadata", {}) or {}
+        if meta.get("anomaly_type") != "position_jump":
+            continue
+        classification = meta.get("ais_integrity_classification")
+        if not isinstance(classification, dict):
+            continue
+        if (
+            classification.get("label") == "position_anomaly"
+            and meta.get("teleport_pattern") == "sustained_relocation"
+            and not meta.get("coincident_teleport_peers")
+            and not meta.get("teleport_near_port")
+        ):
+            return True
+    return False
+
+
 def _base_gate(hypothesis_type: str, events: list[Any]) -> tuple[bool, str]:
     if hypothesis_type == "dark_transit":
         gap_reasons = [
@@ -97,8 +133,10 @@ def evaluate_hypothesis_eligibility(
     props = episode.get("properties") or {}
     family = str(props.get("episode_family") or "")
     hypothesis_type = _FAMILY_HYPOTHESIS_TYPE.get(family)
-    reasons = _reason_codes(events)
-    counters = _counter_indicators(props)
+    reasons = tuple(sorted(set(_reason_codes(events)) | {
+        str(v) for v in (props.get("cross_modal_reason_codes") or ()) if v
+    }))
+    counters = tuple(sorted(set(_counter_indicators(props)) | set(_event_counter_indicators(events))))
     if hypothesis_type is None:
         return EligibilityDecision(False, None, False, "observed", reasons, counters, "episode family has no intelligence hypothesis mapping")
 
@@ -108,7 +146,8 @@ def evaluate_hypothesis_eligibility(
 
     verification_status = str(props.get("verification_status") or "single_source_observed")
     corroborated = verification_status == "multi_source_corroborated"
-    if family in _LOW_SPECIFICITY and not corroborated:
+    investigation_ready = bool(props.get("cross_modal_investigation_ready"))
+    if family in _LOW_SPECIFICITY and not (corroborated or investigation_ready):
         return EligibilityDecision(
             False,
             hypothesis_type,
@@ -119,8 +158,15 @@ def evaluate_hypothesis_eligibility(
             "independent corroboration required for low-specificity episode",
         )
 
+    # A physically independent candidate (e.g. unmatched SAR target inside a
+    # gap's reachable area) is enough to start collection, not enough to call
+    # the vessel identity corroborated or make the allegation publishable.
     evidence_stage = "corroborated" if corroborated else "derived"
-    may_advance = corroborated
+    high_specificity_spoof = (
+        hypothesis_type == "position_spoofing"
+        and _high_specificity_spoofing_ready(events)
+    )
+    may_advance = corroborated or investigation_ready or high_specificity_spoof
     return EligibilityDecision(
         True,
         hypothesis_type,

@@ -35,7 +35,7 @@ def _record_for_hypothesis(hypothesis: InvestigationHypothesis) -> dict[str, Any
     identity: a published hypothesis is about a behaviour pattern, not a
     public dossier on the vessel (same principle as project_public_safety
     /project_public_maritime_assessed's own _VESSEL_IDENTITY_FIELDS strip)."""
-    events = [e for e in (intel_store.get(sid) for sid in hypothesis.evidence_links) if e is not None]
+    events = [e for e in (intel_store.get_durable(sid) for sid in hypothesis.evidence_links) if e is not None]
     events.sort(key=lambda e: e.timestamp_utc)
     latest = events[-1] if events else None
     return {

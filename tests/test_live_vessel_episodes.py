@@ -226,3 +226,21 @@ def test_episode_preserves_behaviour_context_and_alternative_explanations() -> N
         "COASTAL_RECEIVER_COVERAGE",
         "SCHEDULED_SERVICE_PATTERN",
     ]
+
+
+def test_rendezvous_feature_uses_explicit_multi_subject_identity():
+    feature = _feature(
+        "intel:rdv-pair", "2026-09-17T12:00:00+00:00", 17.0, 35.0,
+        type="ais_rendezvous", linked_mmsi="247123456",
+        anomaly_type="ais_rendezvous",
+        subject_ids=["subj:mmsi:247123456", "subj:mmsi:255987654"],
+        title="Encounter pair",
+    )
+
+    result = coalesce_security_vessel_episodes([feature])
+
+    assert len(result) == 1
+    assert result[0]["properties"]["subject_ids"] == [
+        "subj:mmsi:247123456", "subj:mmsi:255987654"
+    ]
+    assert "subj:mmsi:247123456+subj:mmsi:255987654" in result[0]["id"]

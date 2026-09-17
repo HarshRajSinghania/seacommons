@@ -22,11 +22,95 @@ from core.intel.hypothesis_store import get_hypothesis, save_hypothesis
 from core.intel.store import IntelEvent, intel_store
 
 
+def _event_mmsis(event: IntelEvent) -> tuple[str, ...]:
+    metadata = event.metadata or {}
+    candidates: list[Any] = [event.linked_mmsi, metadata.get("mmsi")]
+    for vessel in metadata.get("vessels") or ():
+        if isinstance(vessel, dict):
+            candidates.extend((vessel.get("mmsi"), vessel.get("ssvid")))
+        else:
+            candidates.append(vessel)
+    return tuple(dict.fromkeys(
+        text for value in candidates
+        if len((text := str(value or "").strip())) == 9 and text.isdigit()
+    ))
+
+
+def _attach_cross_modal_evidence(
+    episode: dict[str, Any], events: list[IntelEvent],
+) -> dict[str, Any]:
+    """Attach independent sensor evidence without turning it into a verdict.
+
+    A dark-ship cue can move a case into investigation only when an AIS
+    lineage and a physically independent satellite detection are both present.
+    An unmatched SAR detection remains a candidate, never corroborated identity.
+    """
+    from copy import deepcopy
+    from datetime import datetime, timezone
+
+    from core.evidence.cross_modal import CrossModalEvidencePacket, EvidenceReference
+    from core.evidence.cross_modal_analysis import evaluate_independence
+    from core.intel.lifecycle import parse_utc
+
+    refs: list[EvidenceReference] = []
+    reason_codes: set[str] = set()
+    for event in events:
+        observed = parse_utc(event.timestamp_utc) or datetime.now(timezone.utc)
+        if event.type in {"ais_anomaly", "ais_rendezvous", "ais_spike"}:
+            confidence = float(((event.metadata or {}).get("gap_reason") or {}).get("confidence") or 0.5)
+            refs.append(EvidenceReference(
+                evidence_id=f"ais:{event.id}", evidence_class="ais_observation",
+                source_lineage="ais_sensor_lineage", modality="ais",
+                observed_at=observed, confidence=max(0.0, min(1.0, confidence)),
+            ))
+        cue = (event.metadata or {}).get("darkship_cue") or {}
+        if cue.get("association_status") != "unmatched_candidate":
+            continue
+        for detection in cue.get("gfw_unmatched_in_area") or ():
+            if not isinstance(detection, dict):
+                continue
+            det_at = parse_utc(str(detection.get("timestamp") or "")) or observed
+            lat = detection.get("lat")
+            lon = detection.get("lon")
+            evidence_id = f"sat:gfw_sar:{det_at.isoformat()}:{lat}:{lon}"
+            refs.append(EvidenceReference(
+                evidence_id=evidence_id, evidence_class="satellite_observation",
+                source_lineage="gfw_sar", modality="satellite",
+                observed_at=det_at, confidence=0.45,
+            ))
+            reason_codes.add("SATELLITE_CANDIDATE_IN_REACHABLE_AREA")
+
+    if not refs:
+        return episode
+    subject_ids = tuple(str(v) for v in ((episode.get("properties") or {}).get("subject_ids") or ()) if v)
+    if not subject_ids:
+        return episode
+    packet = CrossModalEvidencePacket(subject_id=subject_ids[0], evidence=tuple(refs))
+    assessment = evaluate_independence(packet)
+    updated = deepcopy(episode)
+    props = updated.setdefault("properties", {})
+    props["cross_modal_packet_id"] = packet.packet_id
+    props["cross_modal_evidence_ids"] = [ref.evidence_id for ref in packet.evidence]
+    props["cross_modal_modalities"] = list(assessment.modalities)
+    props["cross_modal_independence_groups"] = list(assessment.independence_groups)
+    props["cross_modal_reason_codes"] = sorted(reason_codes)
+    props["cross_modal_investigation_ready"] = (
+        assessment.independent_group_count >= 2
+        and {"ais", "satellite"}.issubset(set(assessment.modalities))
+    )
+    return updated
+
+
 def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]]:
     """Build the internal feature used by the bounded episode builder."""
-    mmsi = str(event.linked_mmsi or "").strip()
-    if len(mmsi) != 9 or not mmsi.isdigit():
+    mmsis = _event_mmsis(event)
+    if not mmsis:
         return None
+    mmsi = mmsis[0]
+    from core.mda.vessel_subject import subject_id_for
+    subject_ids = tuple(
+        subject_id_for(mmsi=value) or f"subj:mmsi:{value}" for value in mmsis
+    )
     coordinates = [event.lon, event.lat] if event.lat is not None and event.lon is not None else []
     metadata = event.metadata or {}
     parent_ids = tuple(str(v) for v in (metadata.get("contributing") or ()) if v)
@@ -37,6 +121,7 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
             "id": event.id,
             "timestamp_utc": event.timestamp_utc,
             "linked_mmsi": mmsi,
+            "subject_ids": list(subject_ids),
             "anomaly_type": metadata.get("anomaly_type"),
             "ais_nav_status_kind": metadata.get("ais_nav_status_kind"),
             "episode_family": metadata.get("episode_family"),
@@ -59,8 +144,14 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
     if not episode_id or not subject_ids:
         return None
 
-    # Persistence precedes interpretation: an episode remains auditable even
-    # when it is benign, unclassified, Safety-only, or hypothesis-ineligible.
+    signal_ids = tuple(str(s) for s in (props.get("related_signal_ids") or ()) if s)
+    events = [e for e in (intel_store.get_durable(sid) for sid in signal_ids) if e is not None]
+    if events:
+        episode = _attach_cross_modal_evidence(episode, events)
+        props = episode.get("properties") or {}
+
+    # Persistence precedes interpretation: the enriched episode remains
+    # auditable even when it is benign, Safety-only, or hypothesis-ineligible.
     save_episode(episode)
     from core.observability import record_maritime_episode_evaluation
 
@@ -68,9 +159,6 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
         str(props.get("episode_family") or "unclassified_episode"),
         str(props.get("verification_status") or "single_source_observed"),
     )
-
-    signal_ids = tuple(str(s) for s in (props.get("related_signal_ids") or ()) if s)
-    events = [e for e in (intel_store.get_durable(sid) for sid in signal_ids) if e is not None]
     if not events:
         return None
 
@@ -99,11 +187,15 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
             raise ValueError("v1 hypothesis episode identity mismatch")
         hyp = existing
 
+    evidence_links = tuple(dict.fromkeys((
+        *signal_ids,
+        *(str(v) for v in (props.get("cross_modal_evidence_ids") or ()) if v),
+    )))
     hyp = replace(
         hyp,
         reason_codes=decision.reason_codes,
         counter_indicators=decision.counter_indicators,
-        evidence_links=signal_ids,
+        evidence_links=evidence_links,
         evidence_stage=decision.evidence_stage,
     )
 

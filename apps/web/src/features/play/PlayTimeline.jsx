@@ -115,6 +115,7 @@ export default function PlayTimeline({ apiBase }) {
   const filteredIncidents = useMemo(() => visibleIncidents.filter((incident) => {
     if (archiveFilter === 'humanitarian') return incident.domain === 'humanitarian';
     if (archiveFilter === 'maritime') return incident.domain === 'maritime';
+    if (archiveFilter === 'investigations') return incident.domain === 'investigation';
     if (archiveFilter === 'correlated') return incident.case_type === 'correlated_alert';
     return true;
   }), [visibleIncidents, archiveFilter]);
@@ -261,7 +262,7 @@ export default function PlayTimeline({ apiBase }) {
           filter: ['!=', ['get', 'marker_kind'], 'vessel'],
           paint: {
             'circle-radius': ['case', ['==', ['get', 'incident_id'], selectedId], 8, 5],
-            'circle-color': ['match', ['get', 'domain'], 'maritime', '#8ed8ff', '#ff746f'],
+            'circle-color': ['match', ['get', 'domain'], 'maritime', '#8ed8ff', 'investigation', '#f7b955', '#ff746f'],
             'circle-opacity': 0.9,
             'circle-stroke-color': '#071014', 'circle-stroke-width': 1.5,
           },
@@ -440,6 +441,7 @@ export default function PlayTimeline({ apiBase }) {
               <button type="button" className={`signals-selector__link ${archiveFilter === 'all' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('all')}><span className="signals-selector__box" aria-hidden="true" />ALL</button>
               <button type="button" className={`signals-selector__link ${archiveFilter === 'humanitarian' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('humanitarian')}><span className="signals-selector__box" aria-hidden="true" />HUMANITARIAN</button>
               <button type="button" className={`signals-selector__link ${archiveFilter === 'maritime' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('maritime')}><span className="signals-selector__box" aria-hidden="true" />MARITIME</button>
+              <button type="button" className={`signals-selector__link ${archiveFilter === 'investigations' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('investigations')}><span className="signals-selector__box" aria-hidden="true" />INVESTIGATIONS</button>
               <button type="button" className={`signals-selector__link ${archiveFilter === 'correlated' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('correlated')}><span className="signals-selector__box" aria-hidden="true" />CORRELATED</button>
               <button type="button" className={`signals-selector__link ${satelliteVisible ? 'is-active' : ''}`} onClick={() => setSatelliteVisible((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />SATELLITE</button>
             </div>
@@ -514,6 +516,8 @@ export default function PlayTimeline({ apiBase }) {
             <div><span>Status</span><strong>{statusLabel(status)}</strong></div>
             <div><span>View</span><strong>{modeLabel}</strong></div>
             <div><span>Evidence known</span><strong>{visibleTimeline.length}</strong></div>
+            {selectedIncident?.evidence_stage ? <div><span>Evidence stage</span><strong>{statusLabel(selectedIncident.evidence_stage)}</strong></div> : null}
+            {selectedIncident?.reason_codes?.length ? <div><span>Why flagged</span><strong>{selectedIncident.reason_codes.join(' · ')}</strong></div> : null}
             {frame.item ? <div><span>Latest at cutoff</span><strong>{frame.item.type}</strong></div> : null}
             {frameProps.model ? <div><span>Model</span><strong>{frameProps.model}</strong></div> : null}
             {frameProps.reason_code ? <div><span>Reason</span><strong>{frameProps.reason_code}</strong></div> : null}

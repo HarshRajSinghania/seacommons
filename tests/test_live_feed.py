@@ -86,11 +86,8 @@ def test_public_projection_keeps_professional_vessel_identifier(monkeypatch) -> 
 
     feature = _public_intel_feature(event, allowed_domains=frozenset({"grey_zone"}))
 
-    assert feature is not None
-    assert feature["properties"]["linked_mmsi"] == "352001914"
-    assert feature["properties"]["vessel_name"] == "ST. OLGA"
-    assert feature["properties"]["imo"] == "9493224"
-    assert feature["properties"]["flag"] == "PA"
+    # Raw Security AIS is evidence only after the canonical cutover.
+    assert feature is None
 
 
 def test_public_humanitarian_projection_excludes_vessel_identity(monkeypatch) -> None:
@@ -1287,10 +1284,11 @@ def test_mode_all_reserves_humanitarian_features_from_security_flood() -> None:
     assert collection["meta"]["mode_counts"]["humanitarian"] == 1
     ids = {feature["properties"]["id"] for feature in collection["features"]}
     assert "intel:floodtest-hum-01" in ids
-    assert len(collection["features"]) == limit
+    # Raw security anomalies no longer fill the public transport budget.
+    assert len(collection["features"]) == 1
     # Public counter is the real eligible Live population, never the transport cap.
     assert collection["meta"]["total"] == collection["meta"]["mode_counts"]["humanitarian"] + collection["meta"]["mode_counts"]["maritime"]
-    assert collection["meta"]["total"] > len(collection["features"])
+    assert collection["meta"]["total"] == len(collection["features"])
 
 
 def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> None:
@@ -1378,10 +1376,8 @@ def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> No
         "intel:mode-other-ngo-01",
         "intel:mode-humanitarian-context-01",
     }
-    assert [feature["properties"]["id"] for feature in security_feed["features"]] == [
-        "intel:mode-security-01"
-    ]
-    expected_counts = {"humanitarian": 3, "maritime": 1}
+    assert security_feed["features"] == []
+    expected_counts = {"humanitarian": 3, "maritime": 0}
     assert humanitarian_feed["meta"]["mode_counts"] == expected_counts
     assert security_feed["meta"]["mode_counts"] == expected_counts
     assert small_feed["meta"]["mode_counts"] == expected_counts
@@ -2031,12 +2027,9 @@ def test_public_correlated_alert_exposes_evidence_lineage_summary() -> None:
     )
 
     feature = _public_intel_feature(event, allowed_domains=frozenset({"grey_zone"}))
-    assert feature is not None
-    props = feature["properties"]
-    assert props["contributing_independence_groups"] == ["ais_sensor_lineage", "official_report"]
-    assert props["independent_source_count"] == 2
-    assert props["evidence_count"] == 3
-    assert props["verification_explanation"] == "3 evidence items across 2 independent evidence lineages"
+    # Correlated alerts remain evidence; public Maritime Intelligence is
+    # emitted only from a published InvestigationHypothesis.
+    assert feature is None
 
 
 def test_maritime_safety_projection_exposes_operational_label_and_input_modality() -> None:

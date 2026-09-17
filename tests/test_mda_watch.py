@@ -369,3 +369,34 @@ def test_fused_mode_suppresses_gap_while_provider_is_degraded(monkeypatch):
     _degraded_provider_gap_fixture(monkeypatch, "fused", mmsi)
     assert MdaWatch().scan_gaps() == 0
     assert not [e for e in _alerts("ais_anomaly") if e.linked_mmsi == mmsi]
+
+
+def test_teleport_pattern_separates_transient_outlier_from_sustained_relocation():
+    from datetime import timedelta
+    base = datetime.now(timezone.utc) - timedelta(minutes=10)
+    def point(lat, lon, seconds):
+        return {"lat": lat, "lon": lon, "ts": base + timedelta(seconds=seconds), "sog": 10.0}
+
+    transient = [
+        point(35.0, 15.0, 0), point(39.0, 20.0, 60),
+        point(35.01, 15.01, 120), point(35.02, 15.02, 180),
+    ]
+    sustained = [
+        point(35.0, 15.0, 0), point(39.0, 20.0, 60),
+        point(39.01, 20.01, 120), point(39.02, 20.02, 180),
+    ]
+    assert MdaWatch._teleport_pattern(transient) == "transient_outlier"
+    assert MdaWatch._teleport_pattern(sustained) == "sustained_relocation"
+
+
+def test_coincident_teleport_peers_detect_same_area_and_time():
+    from datetime import timedelta
+    base = datetime.now(timezone.utc) - timedelta(minutes=10)
+    def p(lat, lon, sec):
+        return {"lat": lat, "lon": lon, "ts": base + timedelta(seconds=sec), "sog": 10.0}
+    tracks = {
+        "111000101": [p(30.0, 30.0, 0), p(31.0, 32.0, 60), p(31.01, 32.01, 120)],
+        "111000102": [p(30.5, 30.5, 5), p(31.05, 32.05, 65), p(31.06, 32.06, 125)],
+        "111000103": [p(35.0, 15.0, 0), p(39.0, 20.0, 60)],
+    }
+    assert MdaWatch._coincident_teleport_peers(tracks, "111000101") == ("111000102",)

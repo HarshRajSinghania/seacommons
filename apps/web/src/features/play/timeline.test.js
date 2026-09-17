@@ -276,18 +276,18 @@ test('Play uses the shared Live vessel triangle for AIS archive identities', asy
 });
 
 
-test('Play gives the exact archive counter a longer timeout without delaying map pages', async () => {
+test('Play derives public counts from useful loaded cases without a raw catalog count request', async () => {
   const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
-  assert.match(source, /fetchJson\(apiBase, '\/api\/v1\/play\/counts', undefined, 30_000\)/);
+  assert.doesNotMatch(source, /\/api\/v1\/play\/counts/);
   assert.match(source, /fetchJson\(apiBase, `\/api\/v1\/play\/incidents\?limit=500&offset=\$\{offset\}`\)/);
 });
 
 
-test('Play labels partial progressive archive counts as loaded until exact total arrives', async () => {
+test('Play counters reflect useful cases instead of the raw archive catalog', async () => {
   const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
-  assert.match(source, /archiveTotal != null \? `\$\{archiveTotal\} archive` : `\$\{visibleIncidents\.length\} loaded`/);
-  assert.match(source, /Archive · \{archiveTotal != null \? archiveTotal : `\$\{visibleIncidents\.length\} loaded`\}/);
-  assert.doesNotMatch(source, /`\$\{visibleIncidents\.length\} points`/);
+  assert.match(source, /Cases · \{usefulIncidents\.length\}/);
+  assert.match(source, /usefulIncidents\.length.*useful cases/s);
+  assert.doesNotMatch(source, /archiveTotal/);
 });
 
 test('Play archive loader follows pagination to exhaustion without a fixed page ceiling', async () => {
@@ -297,10 +297,9 @@ test('Play archive loader follows pagination to exhaustion without a fixed page 
   assert.match(source, /next_offset/);
 });
 
-test('Play adopts first-page total_count immediately as the catalog total', async () => {
+test('Play does not use raw catalog total_count as its public useful-case count', async () => {
   const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
-  assert.match(source, /payload\?\.total_count/);
-  assert.match(source, /setArchiveTotal\(Number\(payload\.total_count\)\)/);
+  assert.doesNotMatch(source, /setArchiveTotal/);
 });
 
 test('Play map initialization fails over to the shared interactive renderer', async () => {
@@ -360,4 +359,43 @@ test('Play case dossier renders the selected satellite quicklook asset', async (
   assert.match(source, /play-satellite-preview/);
   assert.match(source, /satelliteProps\.asset_ref/);
   assert.match(source, /Satellite quicklook/);
+});
+
+
+test('Play useful-case filter keeps real incidents and collecting-or-later investigations only', async () => {
+  const mod = await import('./timeline.js');
+  assert.equal(typeof mod.usefulPlayIncidents, 'function');
+  const items = [
+    { incident_id: 'human-1', domain: 'humanitarian', incident_status: 'active' },
+    { incident_id: 'inv-candidate', domain: 'investigation', incident_status: 'candidate' },
+    { incident_id: 'inv-collecting', domain: 'investigation', incident_status: 'collecting' },
+    { incident_id: 'inv-rejected', domain: 'investigation', incident_status: 'rejected' },
+    { incident_id: 'raw', domain: 'maritime', case_type: 'ais_anomaly', incident_status: 'outcome_unknown' },
+  ];
+  assert.deepEqual(mod.usefulPlayIncidents(items).map((item) => item.incident_id), ['human-1', 'inv-collecting']);
+});
+
+test('Play removes legacy fusion and AIS-only casualty rows but keeps distress beacons', async () => {
+  const { usefulPlayIncidents } = await import('./timeline.js');
+  const items = [
+    { incident_id: 'fus:1', domain: 'maritime', case_type: 'correlated_alert', source: 'SeaCommons fusion', title: 'Vessel unable to manoeuvre' },
+    { incident_id: 'aisinc:1:aground', domain: 'maritime', case_type: 'distress', source: 'ais', title: 'Vessel ran aground — TEST' },
+    { incident_id: 'aisinc:2:beacon', domain: 'maritime', case_type: 'distress', source: 'ais_sart', title: 'Distress beacon activated' },
+    { incident_id: 'aisinc:3:beacon', domain: 'maritime', case_type: 'distress', source: 'ais_epirb', title: 'Distress beacon activated' },
+  ];
+  assert.deepEqual(usefulPlayIncidents(items).map((item) => item.incident_id), ['aisinc:2:beacon', 'aisinc:3:beacon']);
+});
+
+
+test('Play collapses near-simultaneous Alarm Phone translations into one useful case', async () => {
+  const { usefulPlayIncidents } = await import('./timeline.js');
+  const make = (incident_id, title, reported_at, case_type) => ({
+    incident_id, domain: 'humanitarian', case_type, source: 'alarm_phone', title, reported_at,
+    geometry: { type: 'Point', coordinates: [3.5, 36.79492] },
+  });
+  const result = usefulPlayIncidents([
+    make('en', 'Where are they? A boat with 27 people left Boumerdes', '2026-09-17T14:45:26Z', 'missing'),
+    make('fr', 'Porté·es disparu·es! bateau de 27 personnes', '2026-09-17T14:45:59Z', 'distress'),
+  ]);
+  assert.deepEqual(result.map((item) => item.incident_id), ['en']);
 });

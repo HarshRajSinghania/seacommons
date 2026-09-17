@@ -96,6 +96,47 @@ export function satelliteRasterDescriptor(observation) {
   };
 }
 
+
+function playAlarmPhoneDuplicate(a, b) {
+  if (String(a?.source || '').toLowerCase() !== 'alarm_phone' || String(b?.source || '').toLowerCase() !== 'alarm_phone') return false;
+  const countA = String(a?.title || '').match(/\b(\d{1,3})\b/)?.[1];
+  const countB = String(b?.title || '').match(/\b(\d{1,3})\b/)?.[1];
+  if (!countA || countA !== countB) return false;
+  const ca = a?.geometry?.type === 'Point' ? a.geometry.coordinates : null;
+  const cb = b?.geometry?.type === 'Point' ? b.geometry.coordinates : null;
+  if (!Array.isArray(ca) || !Array.isArray(cb)) return false;
+  if (Math.abs(Number(ca[0]) - Number(cb[0])) > 0.01 || Math.abs(Number(ca[1]) - Number(cb[1])) > 0.01) return false;
+  const ta = Date.parse(a?.reported_at || '');
+  const tb = Date.parse(b?.reported_at || '');
+  return Number.isFinite(ta) && Number.isFinite(tb) && Math.abs(ta - tb) <= 2 * 60 * 1000;
+}
+
+export function usefulPlayIncidents(incidents = []) {
+  const investigationStates = new Set(['collecting', 'review_ready', 'assessed', 'published']);
+  const rawMaritimeTypes = new Set(['ais_anomaly', 'dark_candidate', 'vessel_identity']);
+  const candidates = (Array.isArray(incidents) ? incidents : []).filter((incident) => {
+    if (!incident || incident.publication_status === 'internal' || incident.translation_of) return false;
+    if (incident.domain === 'investigation') return investigationStates.has(String(incident.incident_status || ''));
+    if (incident.domain === 'maritime') {
+      const caseType = String(incident.case_type || '');
+      const source = String(incident.source || '').toLowerCase();
+      const title = String(incident.title || '').toLowerCase();
+      if (rawMaritimeTypes.has(caseType) || caseType === 'correlated_alert') return false;
+      if (caseType === 'distress' && source === 'ais' && (title.includes('ran aground') || title.includes('unable to manoeuvre'))) return false;
+    }
+    return true;
+  });
+  const ordered = [...candidates].sort((a, b) => Date.parse(a?.reported_at || '') - Date.parse(b?.reported_at || ''));
+  const duplicateIds = new Set();
+  for (let i = 0; i < ordered.length; i += 1) {
+    if (duplicateIds.has(ordered[i]?.incident_id)) continue;
+    for (let j = i + 1; j < ordered.length; j += 1) {
+      if (playAlarmPhoneDuplicate(ordered[i], ordered[j])) duplicateIds.add(ordered[j]?.incident_id);
+    }
+  }
+  return candidates.filter((incident) => !duplicateIds.has(incident?.incident_id));
+}
+
 export function incidentsAtCutoff(incidents = [], cutoff = null) {
   if (!cutoff) return [...incidents];
   const cutoffMs = parseTime(cutoff);

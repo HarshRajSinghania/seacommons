@@ -20,6 +20,7 @@ import {
   archiveCoverage,
   groupArchiveByMonth,
   satelliteContextTileUrl,
+  usefulPlayIncidents,
 } from './timeline.js';
 
 const TIMELINE_MAX = 1000;
@@ -92,7 +93,6 @@ export default function PlayTimeline({ apiBase }) {
   const [fallbackReady, setFallbackReady] = useState(false);
   const [mapError, setMapError] = useState('');
   const [incidents, setIncidents] = useState([]);
-  const [archiveTotal, setArchiveTotal] = useState(null);
   const [selectedId, setSelectedId] = useState('');
   const [caseData, setCaseData] = useState(null);
   const [globalPosition, setGlobalPosition] = useState(TIMELINE_MAX);
@@ -104,13 +104,14 @@ export default function PlayTimeline({ apiBase }) {
   const [satelliteVisible, setSatelliteVisible] = useState(true);
   const [satelliteContextMission, setSatelliteContextMission] = useState('VIIRS NOAA-21');
 
+  const usefulIncidents = useMemo(() => usefulPlayIncidents(incidents), [incidents]);
   const globalState = useMemo(
-    () => resolveGlobalTimelinePosition(incidents, globalPosition, TIMELINE_MAX),
-    [incidents, globalPosition],
+    () => resolveGlobalTimelinePosition(usefulIncidents, globalPosition, TIMELINE_MAX),
+    [usefulIncidents, globalPosition],
   );
   const visibleIncidents = useMemo(
-    () => incidentsAtCutoff(incidents, globalState.cutoff),
-    [incidents, globalState.cutoff],
+    () => incidentsAtCutoff(usefulIncidents, globalState.cutoff),
+    [usefulIncidents, globalState.cutoff],
   );
   const filteredIncidents = useMemo(() => visibleIncidents.filter((incident) => {
     if (archiveFilter === 'humanitarian') return incident.domain === 'humanitarian';
@@ -119,7 +120,7 @@ export default function PlayTimeline({ apiBase }) {
     if (archiveFilter === 'correlated') return incident.case_type === 'correlated_alert';
     return true;
   }), [visibleIncidents, archiveFilter]);
-  const coverage = useMemo(() => archiveCoverage(incidents), [incidents]);
+  const coverage = useMemo(() => archiveCoverage(usefulIncidents), [usefulIncidents]);
   const archiveGroups = useMemo(() => groupArchiveByMonth(filteredIncidents), [filteredIncidents]);
   const selectedIncident = useMemo(
     () => visibleIncidents.find((item) => item.incident_id === selectedId) || null,
@@ -184,23 +185,6 @@ export default function PlayTimeline({ apiBase }) {
     }
     loadIncidents({ full: true });
     const timer = window.setInterval(() => loadIncidents({ full: false }), 60_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [apiBase]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadCounts() {
-      try {
-        const payload = await fetchJson(apiBase, '/api/v1/play/counts', undefined, 30_000);
-        if (!cancelled && Number.isFinite(Number(payload?.total_count))) {
-          setArchiveTotal(Number(payload.total_count));
-        }
-      } catch {
-        // Map/archive loading remains usable even if the lightweight counter is unavailable.
-      }
-    }
-    loadCounts();
-    const timer = window.setInterval(loadCounts, 60_000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [apiBase]);
 
@@ -416,13 +400,13 @@ export default function PlayTimeline({ apiBase }) {
         <div className="play-header__actions">
           <div className="play-header__meta">
             <span>{globalState.mode === 'all' ? 'Complete archive' : 'Historical cutoff'}</span>
-            <strong>{globalState.mode === 'all' && archiveTotal != null ? archiveTotal : visibleIncidents.length}</strong>
+            <strong>{globalState.mode === 'all' ? usefulIncidents.length : visibleIncidents.length}</strong>
           </div>
         </div>
       </header>
 
       <button className="live-feed-toggle play-mobile-cases-toggle" type="button" onClick={() => setCasesOpen((value) => !value)}>
-        Archive · {archiveTotal != null ? archiveTotal : `${visibleIncidents.length} loaded`}
+        Cases · {usefulIncidents.length}
       </button>
 
       <aside className={`live-feed-panel is-open play-archive-panel play-cases ${casesOpen ? 'is-mobile-open' : ''}`}>
@@ -486,7 +470,7 @@ export default function PlayTimeline({ apiBase }) {
 
       <section className="map-stage play-map-stage">
         <div className="map-frame play-map" ref={mapNodeRef} />
-        <div className="play-all-badge"><strong>{modeLabel}</strong><span>{archiveTotal != null ? `${archiveTotal} archive` : `${visibleIncidents.length} loaded`}</span></div>
+        <div className="play-all-badge"><strong>{modeLabel}</strong><span>{`${usefulIncidents.length} useful cases`}</span></div>
         {loading ? <div className="play-map-message">Loading temporal evidence…</div> : null}
         {error ? <div className="play-map-message is-error">{error}</div> : null}
         {mapError ? <div className="play-map-message is-error">{mapError}</div> : null}

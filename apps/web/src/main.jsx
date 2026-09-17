@@ -794,10 +794,10 @@ function App() {
   }
 
   function openIntelReport(feature) {
-    const coordinates = feature?.geometry?.type === 'Point' ? feature.geometry.coordinates : null;
+    const coordinates = panelFocusCoordinates({ feature });
     const isMobile = window.matchMedia('(max-width: 680px)').matches;
     if (coordinates && mapRef.current && !isMobile) {
-      mapRef.current.flyTo({ center: coordinates, zoom: 9, duration: 800 });
+      mapRef.current.flyTo({ center: coordinates, zoom: feature?.geometry?.type === 'Polygon' ? 7.2 : 9, duration: 800, essential: true });
     }
     selectIntelReport(feature);
   }
@@ -1921,15 +1921,19 @@ function App() {
           map.getCanvas().style.cursor = APP_PROFILE === 'demo' && (activePanelRef.current === 'sim' || selectionModeRef.current) ? 'crosshair' : '';
           distressHoverPopup.remove();
         });
-        map.on('click', 'intel-distress-core', (event) => {
+        const openDistressMapFeature = (event) => {
           const feature = event.features?.[0];
           if (!feature) return;
-          const [lon, lat] = feature.geometry.coordinates;
-          map.flyTo({ center: [lon, lat], zoom: 9, duration: 800 });
-          setActivePanel('osint');
-          if (!window.matchMedia('(max-width: 680px)').matches) setSidebarOpen(true);
-          setMapPanel({ type: 'intel', feature });
-          setConePanelHidden(false);
+          const coordinates = panelFocusCoordinates({ feature });
+          if (!coordinates) return;
+          const [lon, lat] = coordinates;
+          map.flyTo({
+            center: coordinates,
+            zoom: feature.geometry?.type === 'Polygon' ? 7.2 : 9,
+            duration: 800,
+            essential: true,
+          });
+          selectIntelReport(feature);
           const props = feature.properties || {};
           if (!isPublicLiveHost && props.id && props.drift_eligible
               && props.drift_status !== 'completed' && props.drift_status !== 'computing') {
@@ -1941,7 +1945,12 @@ function App() {
             );
           }
           event.originalEvent?.stopPropagation?.();
-        });
+        };
+        for (const layerId of ['intel-distress-core', 'intel-distress-area', 'intel-distress-polygon-fill', 'intel-distress-polygon-outline']) {
+          map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
+          map.on('click', layerId, openDistressMapFeature);
+        }
 
         // Pulse animation: oscillate the outer ring radius/opacity ~1.4s.
         // Only numeric properties are touched here — color stays whatever
@@ -2480,7 +2489,10 @@ function App() {
   }, [layerVis]);
 
   const visibleLivePointFeatures = useMemo(() => {
-    let positioned = intelEvents.filter((feature) => feature.geometry?.type === 'Point' && feature.geometry?.coordinates);
+    let positioned = intelEvents.filter((feature) => (
+      (feature.geometry?.type === 'Point' || feature.geometry?.type === 'Polygon')
+      && feature.geometry?.coordinates
+    ));
     if (!isPublicLiveHost) return positioned;
     const alarmPhoneOn = isLayerGroupOn('alarm_phone');
     return positioned.filter((feature) => {
@@ -3702,50 +3714,7 @@ function App() {
                 <span />
                 Approved collectors remain active when this map is closed.
               </p>
-              <section className="live-acquisition" aria-label="Acquisition pipeline">
-                <div className="live-acquisition__head"><span>Acquisition</span><small>ONE DATA PIPELINE</small></div>
-                <div className="live-acquisition__mesh">
-                  Radio mesh · {receiverMesh.catalogued || 0} catalogued · {receiverMesh.reachable || 0} reachable · {receiverMesh.eligible || 0} eligible · {receiverMesh.active || 0} active
-                </div>
-                <div className="live-acquisition__mesh">
-                  RF events · {(radioSummary.events || []).length} recent · DSC · {(radioSummary.messages || []).filter((message) => message.kind === 'dsc').length} · NAVTEX · {(radioSummary.messages || []).filter((message) => message.kind === 'navtex').length}
-                </div>
-                {(radioSummary.messages || []).slice(0, 3).map((message) => (
-                  <button
-                    type="button"
-                    className="live-acquisition__radio-message"
-                    key={message.observation_id}
-                    onClick={() => {
-                      setMapPanel({
-                        type: 'radio_message',
-                        feature: {
-                          type: 'Feature',
-                          geometry: Number.isFinite(Number(message.latitude)) && Number.isFinite(Number(message.longitude))
-                            ? { type: 'Point', coordinates: [Number(message.longitude), Number(message.latitude)] }
-                            : null,
-                          properties: { ...message, ais_association_json: JSON.stringify(message.ais_association || null) },
-                        },
-                      });
-                      setConePanelHidden(false);
-                    }}
-                  >
-                    <strong>{message.kind === 'dsc' ? `DSC · ${message.category || 'decoded'}` : `NAVTEX · ${message.station_id || 'message'}`}</strong>
-                    <span>{message.mmsi ? `MMSI ${message.mmsi}` : message.subject_id || message.area || 'structured radio'}</span>
-                  </button>
-                ))}
-                {pipelineSources.map((source) => (
-                  <div className="live-acquisition__source" key={source.family}>
-                    <div><i className={`is-${source.state}`} /><strong>{source.label}</strong><span>{source.state}</span></div>
-                    {source.family === 'radio' && Array.isArray(source.receivers) && source.receivers.map((receiver) => (
-                      <div className="live-acquisition__receiver" key={receiver.receiver_id}>
-                        <strong>{receiver.station_label || receiver.receiver_id}</strong>
-                        <span>{receiver.provider} · {receiverChannelLabel(receiver)}</span>
-                        <small>{receiver.state}</small>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </section>
+
             </header>
 
             <div className="live-feed-panel__body">

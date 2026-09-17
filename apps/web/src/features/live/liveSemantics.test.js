@@ -63,3 +63,23 @@ test('correlated alerts render canonical semantic colour before domain fallback'
 test('public dashboard filters by semantic signal category, not raw transport type', () => {
   assert.match(dashboard, /signalCategoryOf\(f\.properties \|\| \{\}\)/);
 });
+
+
+test('public Live maps both point and area incidents and list selection focuses either geometry', () => {
+  assert.match(main, /geometry\?\.type === 'Point' \|\| feature\.geometry\?\.type === 'Polygon'/);
+  assert.match(main, /const coordinates = panelFocusCoordinates\(\{ feature \}\)/);
+  assert.match(main, /intel-distress-polygon-fill/);
+  assert.match(main, /intel-distress-area/);
+});
+
+test('public Live header no longer embeds acquisition pipeline controls', () => {
+  const publicShell = main.slice(main.indexOf('{isPublicLiveHost ? ('), main.indexOf('{!isPublicLiveHost', main.indexOf('{isPublicLiveHost ? (')));
+  assert.doesNotMatch(publicShell, /live-acquisition/);
+  assert.doesNotMatch(publicShell, />Acquisition</);
+});
+
+test('movement panel distinguishes real tracks from unavailable movement evidence', () => {
+  assert.match(cone, /Movement \/ drift evidence/);
+  assert.match(cone, /No observed movement track is available/);
+  assert.match(cone, /area-based position cannot originate a drift model/i);
+});

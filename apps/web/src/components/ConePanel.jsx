@@ -293,7 +293,7 @@ function featurePosition(feature) {
   return [sum[0] / ring.length, sum[1] / ring.length];
 }
 
-function TrackGraphic({ feature, driftFeature, dossier }) {
+function TrackGraphic({ feature, driftFeature, dossier, isHumanitarian }) {
   const props = feature?.properties || {};
   const publicTrack = Array.isArray(props.observed_track) ? props.observed_track : [];
   const dossierTrack = Array.isArray(dossier?.track_points) ? dossier.track_points : [];
@@ -307,6 +307,26 @@ function TrackGraphic({ feature, driftFeature, dossier }) {
     : [];
   const position = featurePosition(feature);
   const fallback = position ? [{ lon: Number(position[0]), lat: Number(position[1]) }] : [];
+  const hasObservedTrack = observed.length >= 2;
+  const hasDrift = forecast.length >= 2;
+  const areaBased = feature?.geometry?.type === 'Polygon'
+    || String(props.location_precision || '').startsWith('area')
+    || props.coordinate_source === 'region_area';
+  if (!hasObservedTrack && !hasDrift) {
+    return (
+      <div className="intel-report-graphic">
+        <div className="intel-report-graphic__head">
+          <strong>Movement / drift evidence</strong>
+          <span>{isHumanitarian ? 'reported position and model availability' : 'observed movement availability'}</span>
+        </div>
+        <p className="intel-report-note">
+          {isHumanitarian && areaBased
+            ? 'No drift model is shown because this report contains an area-based position. An area-based position cannot originate a drift model until a verified point is available.'
+            : 'No observed movement track is available yet. At least two time-separated AIS fixes are required to draw movement.'}
+        </p>
+      </div>
+    );
+  }
   const all = [...observed, ...forecast, ...fallback];
   if (all.length === 0) return null;
 
@@ -334,8 +354,8 @@ function TrackGraphic({ feature, driftFeature, dossier }) {
   return (
     <div className="intel-report-graphic">
       <div className="intel-report-graphic__head">
-        <strong>AIS movement reconstruction</strong>
-        <span>observed track and model products</span>
+        <strong>Movement / drift evidence</strong>
+        <span>observed AIS track and model products</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="AIS track reconstruction">
         <defs>
@@ -356,7 +376,7 @@ function TrackGraphic({ feature, driftFeature, dossier }) {
       <div className="intel-report-legend">
         {observed.length >= 2 && <span><i className="is-observed" /> AIS observed · {observed.length} fixes</span>}
         {forecast.length >= 2 && <span><i className="is-forecast" /> simulated drift · {forecast.length} steps</span>}
-        {observed.length < 2 && forecast.length < 2 && <span>Latest reported position</span>}
+
       </div>
     </div>
   );
@@ -608,7 +628,7 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
       )}
 
       <div className="cone-section intel-report-visual">
-        <TrackGraphic feature={panel.feature} driftFeature={driftFeature} dossier={dossier} />
+        <TrackGraphic feature={panel.feature} driftFeature={driftFeature} dossier={dossier} isHumanitarian={isHumanitarian} />
       </div>
 
       {!isAlarmPhone && (!isHumanitarian || mmsi) && <div className="cone-section">

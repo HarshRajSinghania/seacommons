@@ -180,26 +180,61 @@ class MdaWatch:
         )
         by_id = {}
         with session_scope() as db:
+            from sqlalchemy import func
+            from core.db.models import VesselTrackDB
+            from core.intel.lifecycle import parse_utc
+
             anomaly = IntelEventDB.meta["anomaly_type"].as_string()
             for event_type, anomaly_types in families:
-                rows = (
-                    db.query(IntelEventDB)
-                    .filter(
-                        IntelEventDB.timestamp_utc >= cutoff,
-                        IntelEventDB.type == event_type,
-                        anomaly.in_(anomaly_types),
-                    )
-                    .order_by(IntelEventDB.timestamp_utc.desc())
-                    .limit(limit_per_family)
-                    .all()
+                query = db.query(IntelEventDB).filter(
+                    IntelEventDB.timestamp_utc >= cutoff,
+                    IntelEventDB.type == event_type,
+                    anomaly.in_(anomaly_types),
                 )
+                if event_type == "ais_anomaly" and "gap" in anomaly_types:
+                    silent = IntelEventDB.meta["silent_seconds"].as_float()
+                    query = query.order_by(silent.desc().nullslast(), IntelEventDB.timestamp_utc.desc())
+                else:
+                    query = query.order_by(IntelEventDB.timestamp_utc.desc())
+                rows = query.limit(limit_per_family).all()
+
+                latest_track = {}
+                if event_type == "ais_anomaly" and "gap" in anomaly_types:
+                    mmsis = [str(row.linked_mmsi or "") for row in rows if row.linked_mmsi]
+                    if mmsis:
+                        latest_track = dict(
+                            db.query(VesselTrackDB.mmsi, func.max(VesselTrackDB.ts))
+                            .filter(VesselTrackDB.mmsi.in_(mmsis))
+                            .group_by(VesselTrackDB.mmsi)
+                            .all()
+                        )
+
+                now = datetime.now(timezone.utc)
                 for row in rows:
+                    metadata = dict(row.meta or {})
+                    if event_type == "ais_anomaly" and metadata.get("anomaly_type") in {"gap", "long_gap"}:
+                        stored_silent = float(metadata.get("silent_seconds") or 0.0)
+                        emitted_at = parse_utc(row.timestamp_utc)
+                        latest = latest_track.get(str(row.linked_mmsi or ""))
+                        if emitted_at is not None and latest is not None and stored_silent > 0:
+                            original_last = emitted_at - timedelta(seconds=stored_silent)
+                            latest_utc = latest if latest.tzinfo is not None else latest.replace(tzinfo=timezone.utc)
+                            latest_utc = latest_utc.astimezone(timezone.utc)
+                            still_open = latest_utc <= original_last + timedelta(minutes=5)
+                            metadata["gap_still_open"] = bool(still_open)
+                            metadata["current_silent_seconds"] = (
+                                max(0.0, (now - latest_utc).total_seconds())
+                                if still_open else 0.0
+                            )
+                        else:
+                            metadata["gap_still_open"] = False
+                            metadata["current_silent_seconds"] = 0.0
                     by_id[row.id] = IntelEvent(
                         id=row.id, timestamp_utc=row.timestamp_utc, type=row.type or "",
                         severity=row.severity or "", lat=row.lat, lon=row.lon,
                         title=row.title or "", text=row.text or "", url=row.url or "",
                         source=row.source or "", linked_mmsi=row.linked_mmsi or "",
-                        metadata=dict(row.meta or {}),
+                        metadata=metadata,
                     )
         return list(by_id.values())
 

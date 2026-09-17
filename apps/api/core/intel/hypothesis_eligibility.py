@@ -58,7 +58,7 @@ def _event_counter_indicators(events: list[Any]) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
-def _high_specificity_dark_gap_ready(events: list[Any]) -> bool:
+def _high_specificity_dark_gap_ready(events: list[Any], props: dict[str, Any]) -> bool:
     """A long isolated AIS silence can justify collection, not corroboration.
 
     This is deliberately stricter than the base dark-transit gate: it requires
@@ -73,7 +73,12 @@ def _high_specificity_dark_gap_ready(events: list[Any]) -> bool:
         gap = meta.get("gap_reason")
         if not isinstance(gap, dict) or gap.get("hypothesis") != "vessel_gap":
             continue
-        if float(meta.get("silent_seconds") or 0.0) < 4 * 3600:
+        if props.get("gap_still_open") is False:
+            continue
+        effective_silent = props.get("current_silent_seconds")
+        if effective_silent is None:
+            effective_silent = meta.get("silent_seconds")
+        if float(effective_silent or 0.0) < 4 * 3600:
             continue
         if float(gap.get("confidence") or 0.0) < 0.7:
             continue
@@ -193,7 +198,7 @@ def evaluate_hypothesis_eligibility(
     investigation_ready = bool(props.get("cross_modal_investigation_ready"))
     high_specificity_dark_gap = (
         hypothesis_type == "dark_transit"
-        and _high_specificity_dark_gap_ready(events)
+        and _high_specificity_dark_gap_ready(events, props)
     )
     if family in _LOW_SPECIFICITY and not (corroborated or investigation_ready or high_specificity_dark_gap):
         return EligibilityDecision(

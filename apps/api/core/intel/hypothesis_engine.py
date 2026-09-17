@@ -132,6 +132,8 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
             "incident_lifecycle": metadata.get("incident_lifecycle"),
             "behaviour_context": metadata.get("behaviour_context"),
             "alternative_explanations": metadata.get("alternative_explanations"),
+            "gap_still_open": metadata.get("gap_still_open"),
+            "current_silent_seconds": metadata.get("current_silent_seconds"),
         },
     }
 

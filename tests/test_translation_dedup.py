@@ -130,3 +130,15 @@ def test_find_twin_requires_same_distress_class():
         )
         is None
     )
+
+
+def test_westernmed_algiers_alger_translation_pair_matches():
+    english = (
+        "🆘 9 people in distress in the #WesternMed. We were alerted by worried relatives "
+        "to the group who left from Algiers, #Algeria, 2 days ago."
+    )
+    french = (
+        "🆘 9 personnes en détresse en mer. Nous avons été alertés par des proches inquiets "
+        "d’être sans nouvelles du bateau parti il y a 2 jours d’Alger #Algérie."
+    )
+    assert signatures_match(incident_signature(english), incident_signature(french))

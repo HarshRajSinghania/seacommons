@@ -89,6 +89,7 @@ _PLACES: dict[str, tuple[float, float]] = {
     "dodecanese":          (36.50, 28.00),
     "piraeus":             (37.94, 23.65),
     "athens":              (37.98, 23.73),
+    "kalymnos":            (36.9959, 26.9950),
     # Crete's own geometric centroid (35.24, 24.81) lands ON the island's
     # landmass — every real report using this fallback is a boat "south of
     # Crete" (the actual SAR route), so the centroid is placed just off the
@@ -158,6 +159,15 @@ _PLACES: dict[str, tuple[float, float]] = {
     "med sea":             (35.00, 18.00),
     # Western Mediterranean (Algeria/Morocco → Spain route)
     "oran":                (35.70, -0.63),
+    "bordj el bahri":      (36.7906, 3.2497),
+    "bordjelbahri":        (36.7906, 3.2497),
+    "ain taya":            (36.7913, 3.2926),
+    "aïn taya":            (36.7913, 3.2926),
+    "aintaya":             (36.7913, 3.2926),
+    "tipaza":              (36.5897, 2.4489),
+    "tipasa":              (36.5897, 2.4489),
+    "cherchell":           (36.6050, 2.1908),
+    "cherchel":            (36.6050, 2.1908),
     "ibiza":               (38.91, 1.43),
     "balearic islands":    (39.50, 2.80),
     "almeria":             (36.83, -2.46),

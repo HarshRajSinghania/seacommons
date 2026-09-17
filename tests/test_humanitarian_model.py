@@ -41,3 +41,17 @@ def test_alarm_phone_hope_for_safety_is_not_a_resolution() -> None:
     )
     assert case["humanitarian_case_type"] == "distress"
     assert case["humanitarian_status"] == "ongoing"
+
+
+def test_named_evros_border_towns_are_land_humanitarian() -> None:
+    for text in (
+        "🆘 3 people at the police station in #NeaVyssa, #Greece.",
+        "🆘 8 people including children near #NeoCheimonio, #Greece.",
+    ):
+        case = humanitarian_case_metadata(
+            text,
+            incident_id="land-case",
+            source="alarm_phone",
+            distress=True,
+        )
+        assert case["humanitarian_case_type"] == "land_humanitarian"

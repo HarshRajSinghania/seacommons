@@ -101,3 +101,14 @@ def test_distress_functions_exclude_retrospective_commemoration() -> None:
     assert is_direct_distress_call(text) is False
     # A live shipwreck report is unaffected.
     assert is_direct_distress_call("Shipwreck in the WesternMed. We were alerted by relatives.") is True
+
+
+def test_alarm_phone_coastal_place_aliases_are_geolocatable() -> None:
+    for text in (
+        "30 people left Bordj El Bahri, #Algeria",
+        "25 people left Tipaza, #Algeria",
+        "26 people left AinTaya #Algérie",
+        "15 people left #Cherchell, #Algeria",
+        "30 people close to #Kalymnos, #Greece",
+    ):
+        assert extract_coords(text) is not None, text

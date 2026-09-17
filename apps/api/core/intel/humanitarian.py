@@ -41,7 +41,7 @@ def _case_type(text: str, *, distress: bool, resolved: bool) -> str:
         value,
     ):
         return HumanitarianCaseType.MISSING.value
-    if re.search(r"\b(evros|border|reception cent(?:re|er)|reception camp|forest|land border)\b", value):
+    if re.search(r"\b(evros|nea ?vyssa|neo ?cheimonio|border|reception cent(?:re|er)|reception camp|forest|land border)\b", value):
         return HumanitarianCaseType.LAND_HUMANITARIAN.value
     hopeful_outcome = bool(re.search(
         r"\b(?:we\s+)?(?:hope|pray|wish)(?:fully)?\b|\bhopefully\b", value

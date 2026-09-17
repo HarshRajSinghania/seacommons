@@ -527,6 +527,17 @@ export default function PlayTimeline({ apiBase }) {
           </section>
           <section className="play-card">
             <p>Satellite context</p>
+            {satelliteProps.asset_ref ? (
+              <figure className="play-satellite-preview">
+                <img
+                  src={satelliteProps.asset_ref}
+                  alt={`Satellite quicklook ${satelliteProps.mission || ''}`.trim()}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+                <figcaption>Satellite quicklook · {satelliteProps.mission || satellite?.source || 'acquisition'}</figcaption>
+              </figure>
+            ) : null}
             <label className="play-satellite-selector">
               <span>Global imagery</span>
               <select value={satelliteContextMission} onChange={(event) => setSatelliteContextMission(event.target.value)}>

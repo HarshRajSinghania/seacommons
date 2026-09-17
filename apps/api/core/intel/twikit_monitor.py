@@ -91,6 +91,7 @@ from core.intel.geoextract import (
     extract_coords,
     extract_numeric_coords,
     extract_relative_coords,
+    extract_region_coords,
     find_all_place_matches,
     is_direct_distress_call,
     is_resolved_distress,
@@ -947,6 +948,12 @@ class TwikitMonitor:
             extract_coords(combined_text)
             if distress and not (text_coords or relative_coords) else None
         )
+        region_match = (
+            extract_region_coords(combined_text)
+            if distress and not (text_coords or relative_coords or place_coords) else None
+        )
+        region_coords = region_match[0] if region_match else None
+        region_radius_m = region_match[1] if region_match else None
         # A country/sea/strait-scale match ("Libya", "Central Med") implies a
         # far larger "could be anywhere in here" than a specific city or
         # small island does — reporting both at the same flat radius made
@@ -971,13 +978,13 @@ class TwikitMonitor:
 
         coords = (
             text_coords or media_coords or relative_coords
-            or (area_result.centroid if area_result else place_coords)
+            or (area_result.centroid if area_result else place_coords or region_coords)
         )
         coordinate_source = (
             "post_text" if text_coords
             else "media_ocr_text" if media_coords
             else "relative_place_offset" if relative_coords
-            else "region_area" if area_result
+            else "region_area" if (area_result or region_match)
             else "place_centroid" if place_coords
             else "none"
         )
@@ -986,6 +993,7 @@ class TwikitMonitor:
             else 1500 if media_coords
             else 15_000 if relative_coords
             else None if area_result  # the polygon itself is the uncertainty
+            else region_radius_m if region_match
             else (120_000 if place_precision == "imprecise" else 25_000) if place_coords
             else None
         )

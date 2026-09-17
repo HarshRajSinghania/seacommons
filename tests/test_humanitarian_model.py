@@ -29,3 +29,15 @@ def test_humanitarian_resolution_is_an_outcome_not_a_new_distress() -> None:
     assert case["humanitarian_status"] == "resolved"
     assert case["people_reported"] == 47
     assert case["people_precision"] == "exact"
+
+
+def test_alarm_phone_hope_for_safety_is_not_a_resolution() -> None:
+    case = humanitarian_case_metadata(
+        "🆘 9 people in distress in the #WesternMed. We were alerted by worried relatives. "
+        "Since then, there are no news from them. We hope they will be found and brought to safety!",
+        incident_id="westernmed-9",
+        source="alarm_phone",
+        distress=True,
+    )
+    assert case["humanitarian_case_type"] == "distress"
+    assert case["humanitarian_status"] == "ongoing"

@@ -246,3 +246,7 @@
   background: rgba(169,255,218,.035);
   font: 7px var(--font-mono);
 }
+
+.play-satellite-preview { margin: 8px 0 12px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); background: rgba(3,12,18,.55); }
+.play-satellite-preview img { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover; background: #071014; }
+.play-satellite-preview figcaption { padding: 7px 9px; font-size: 10px; letter-spacing: .04em; opacity: .72; }

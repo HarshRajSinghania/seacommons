@@ -353,3 +353,11 @@ test('Play synchronizes global satellite context to archive time and exposes con
   assert.match(source, /play-archive-month/);
   assert.match(source, /evidence_counts/);
 });
+
+
+test('Play case dossier renders the selected satellite quicklook asset', async () => {
+  const source = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
+  assert.match(source, /play-satellite-preview/);
+  assert.match(source, /satelliteProps\.asset_ref/);
+  assert.match(source, /Satellite quicklook/);
+});

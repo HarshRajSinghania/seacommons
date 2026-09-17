@@ -83,3 +83,13 @@ test('movement panel distinguishes real tracks from unavailable movement evidenc
   assert.match(cone, /No observed movement track is available/);
   assert.match(cone, /area-based position cannot originate a drift model/i);
 });
+
+
+test('image-derived humanitarian map pins keep a centre marker plus uncertainty halo', () => {
+  assert.match(main, /media_pin_landmark/);
+  assert.match(main, /id: 'intel-distress-area'/);
+  assert.match(main, /location_uncertainty_m/);
+  const filterBlock = main.slice(main.indexOf('const _PRECISE_POINT_FILTER'), main.indexOf('// CATEGORY', main.indexOf('const _PRECISE_POINT_FILTER')));
+  assert.match(filterBlock, /media_pin_landmark/);
+  assert.match(filterBlock, /media_ocr_consensus/);
+});

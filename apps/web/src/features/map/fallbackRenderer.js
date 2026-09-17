@@ -138,6 +138,19 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
       }
       for (const feature of pointFeatures(incidents)) {
         const [lon, lat] = feature.geometry.coordinates;
+        const uncertaintyM = Number(feature.properties?.location_uncertainty_m || 0);
+        const source = String(feature.properties?.coordinate_source || '');
+        if (uncertaintyM > 20000 && source.startsWith('media_') && L.circle) {
+          const color = semanticColor(feature);
+          L.circle([Number(lat), Number(lon)], {
+            radius: uncertaintyM,
+            color,
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.12,
+            className: `${markerClass(feature)} seacommons-fallback-uncertainty`,
+          }).on('click', () => onFeatureSelect?.(feature)).addTo(markers);
+        }
         const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature)).addTo(markers);
         bindSelection(marker, feature, onFeatureSelect);
       }

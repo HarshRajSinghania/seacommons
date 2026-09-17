@@ -6,6 +6,7 @@ import { createFallbackMap } from './fallbackRenderer.js';
 function fakeLeaflet(log) {
   log.tiles ||= [];
   log.vesselMarkers ||= [];
+  log.circles ||= [];
   const map = {
     setView(latlng, zoom) { log.setView = [latlng, zoom]; return map; },
     flyTo(latlng, zoom) { log.flyTo = [latlng, zoom]; },
@@ -35,6 +36,13 @@ function fakeLeaflet(log) {
       const layer = {
         on(_event, handler) { layer.handler = handler; return layer; },
         addTo() { log.polygons.push({ latlngs, options, layer }); return layer; },
+      };
+      return layer;
+    },
+    circle(latlng, options) {
+      const layer = {
+        on(_event, handler) { layer.handler = handler; return layer; },
+        addTo() { log.circles.push({ latlng, options, layer }); return layer; },
       };
       return layer;
     },
@@ -129,4 +137,21 @@ test('fallback map uses nautical retina layers and heading-shaped moving vessels
   assert.equal(log.vesselMarkers.length, 1);
   assert.match(log.vesselMarkers[0].options.icon.options.html, /72deg/);
   assert.equal(log.vesselMarkers[0].element.attrs['aria-label'], 'Open vessel vessel:123');
+});
+
+
+test('fallback map shows image-derived pin centre together with its uncertainty radius', async () => {
+  const log = { markers: [], polygons: [], circles: [] };
+  const renderer = await createFallbackMap({
+    container: {}, center: [15, 36], zoom: 5, leaflet: fakeLeaflet(log),
+  });
+  const point = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [25.40976, 34.20693] },
+    properties: { incident_id: 'HUM-PIN', domain: 'humanitarian', coordinate_source: 'media_pin_landmark', location_uncertainty_m: 63118 },
+  };
+  renderer.setFeatures([point]);
+  assert.equal(log.markers.length, 1);
+  assert.equal(log.circles.length, 1);
+  assert.equal(log.circles[0].options.radius, 63118);
+  assert.deepEqual(log.circles[0].latlng, [34.20693, 25.40976]);
 });

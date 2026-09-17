@@ -84,14 +84,19 @@ const METERS_TO_PX_RADIUS = [
   22, ['/', ['coalesce', ['get', 'location_uncertainty_m'], 0], (156543.03392 * 0.8) / Math.pow(2, 22)],
 ];
 
-// Same 20km threshold as intel-distress-area's filter, inverted: a report
-// this imprecise gets the area circle instead of a point, never both. A
-// real area polygon (location_uncertainty_m unset, since the polygon IS
-// the uncertainty) is excluded explicitly rather than relying on circle
-// layers implicitly ignoring non-Point geometries.
+// Exact/low-uncertainty points render normally. A coordinate recovered from
+// a source map pin remains a meaningful estimated centre even when its error
+// radius is large, so it renders BOTH the centre marker and the uncertainty
+// halo. Region-only centroids keep the halo-only treatment to avoid implying
+// a precision the source never supplied.
 const _PRECISE_POINT_FILTER = ['all',
   ['==', ['geometry-type'], 'Point'],
-  ['<=', ['coalesce', ['get', 'location_uncertainty_m'], 0], 20000],
+  ['any',
+    ['<=', ['coalesce', ['get', 'location_uncertainty_m'], 0], 20000],
+    ['in', ['coalesce', ['get', 'coordinate_source'], ''], ['literal', [
+      'media_pin_landmark', 'media_ocr_consensus', 'media_ocr_text',
+    ]]],
+  ],
 ];
 
 // CATEGORY determines colour; LIFECYCLE is only secondary styling.
@@ -1861,11 +1866,9 @@ function App() {
         // expression (LIFECYCLE_*); only radius/opacity animate, so the
         // pulse loop never needs to know about color at all.
         //
-        // Mutually exclusive with intel-distress-area above (same >20000
-        // threshold, inverted): a report with only a place/region centroid
-        // gets the translucent area circle and nothing else — drawing a
-        // precise-looking pulsing dot in the middle of it would silently
-        // undo the whole point of having an area indicator at all.
+        // Region-only centroids remain halo-only. Image-derived map pins may
+        // intentionally render this centre marker together with the halo: the
+        // centre is evidence-derived, while the halo communicates uncertainty.
         map.addLayer({
           id: 'intel-distress-pulse', type: 'circle', source: 'intel-distress',
           filter: _PRECISE_POINT_FILTER,

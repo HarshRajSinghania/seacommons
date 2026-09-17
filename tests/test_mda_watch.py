@@ -229,6 +229,34 @@ def test_gap_scan_suppresses_common_port_wide_outage():
     assert not _alerts("ais_anomaly")
 
 
+
+def test_gap_scan_does_not_cross_cue_young_gap(monkeypatch):
+    from core.mda import darkship_cue
+    calls = []
+    monkeypatch.setattr(darkship_cue, "build", lambda **kwargs: calls.append(kwargs) or {})
+    mmsi = "111000061"
+    _feed(mmsi, 37.00, 18.00, sog=8.0)
+    track_store._last[mmsi].ts = time.time() - 90 * 60
+    for k in range(6):
+        _witness(f"11100016{k}", 37.01, 18.01, minutes_ago=100)
+        _witness(f"11100016{k}", 37.01, 18.01, minutes_ago=40)
+    assert MdaWatch().scan_gaps() == 1
+    assert calls == []
+
+
+def test_gap_scan_cross_cues_only_investigation_window(monkeypatch):
+    from core.mda import darkship_cue
+    calls = []
+    monkeypatch.setattr(darkship_cue, "build", lambda **kwargs: calls.append(kwargs) or {"association_status": "no_detection"})
+    mmsi = "111000062"
+    _feed(mmsi, 37.00, 18.00, sog=8.0)
+    track_store._last[mmsi].ts = time.time() - 5 * 3600
+    for k in range(6):
+        _witness(f"11100017{k}", 37.01, 18.01, minutes_ago=310)
+        _witness(f"11100017{k}", 37.01, 18.01, minutes_ago=120)
+    assert MdaWatch().scan_gaps() == 1
+    assert len(calls) == 1
+
 def test_spoofing_circular_ignores_tug_working_the_breakwater():
     import math
 

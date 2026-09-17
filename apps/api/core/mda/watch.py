@@ -556,7 +556,19 @@ class MdaWatch:
             port_or_anchorage = reference.in_port_or_anchorage(last.lat, last.lon)
             pre_gap_course = _last_course(track_store, mmsi)
             cue = None
-            if jam < 0.3:   # not just jamming — worth a satellite cross-cue
+            # Cross-sensor collection follows the local investigation gate.
+            # Do not spend network/SAR queries on every one-hour AIS silence.
+            gap_cross_cue_ready = (
+                gap_reason is not None
+                and gap_reason.hypothesis == "vessel_gap"
+                and gap_reason.confidence >= 0.7
+                and nearby_before >= 5 and nearby_after >= 5
+                and 4 * 3600 <= silent_s <= 12 * 3600
+                and last.sog >= 2.0
+                and jam < 0.3
+                and not port_or_anchorage
+            )
+            if gap_cross_cue_ready:
                 try:
                     from core.mda.darkship_cue import build as _cue
                     course = pre_gap_course

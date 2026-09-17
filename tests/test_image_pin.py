@@ -110,3 +110,27 @@ def test_fixture_pin_only_map_is_detected():
     payload = CASES_BY_NAME["pin_only_red"].render()
     with Image.open(io.BytesIO(payload)) as source:
         assert detect_pin(source.convert("RGB")) is not None
+
+
+def test_unique_dual_detector_teardrop_beats_basemap_circle_clutter():
+    candidates = [
+        PinCandidate(636.5, 219.7, 0.88, "color_mask", "blue", "circle"),
+        PinCandidate(636.5, 219.7, 0.87, "shape_hsv", None, "circle"),
+        PinCandidate(321.4, 629.9, 0.84, "color_mask", "red", "teardrop"),
+        PinCandidate(321.4, 629.9, 0.84, "shape_hsv", None, "teardrop"),
+        PinCandidate(457.3, 142.9, 0.84, "shape_hsv", None, "circle"),
+    ]
+    chosen = select_pin(candidates)
+    assert chosen is not None
+    assert chosen.shape == "teardrop"
+    assert abs(chosen.x - 321.4) < 2 and abs(chosen.y - 629.9) < 2
+
+
+def test_two_dual_detector_teardrops_still_fail_closed():
+    candidates = [
+        PinCandidate(120, 120, 0.82, "color_mask", "red", "teardrop"),
+        PinCandidate(120, 120, 0.80, "shape_hsv", None, "teardrop"),
+        PinCandidate(300, 200, 0.83, "color_mask", "red", "teardrop"),
+        PinCandidate(300, 200, 0.81, "shape_hsv", None, "teardrop"),
+    ]
+    assert select_pin(candidates) is None

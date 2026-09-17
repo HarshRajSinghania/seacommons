@@ -480,16 +480,22 @@ def _extract_coordinate_from_bytes(
             geolocate_pin_from_image,
         )
 
+        pin_boxes = easy_boxes or None
         pin_coord = geolocate_pin_from_image(
-            payload,
-            executable=executable,
-            word_boxes=easy_boxes or None,
-            sea_snap=sea_snap,
+            payload, executable=executable, word_boxes=pin_boxes, sea_snap=sea_snap
         )
-        pin_solution = (
-            geolocate_pin_detailed(
-                payload, executable=executable, word_boxes=easy_boxes or None
+        pin_source = "easyocr" if pin_boxes else "tesseract"
+        # EasyOCR may detect map text yet still miss enough landmarks to fit
+        # the pin. In that case retry the landmark pass with Tesseract instead
+        # of letting a non-empty but incomplete box list suppress the fallback.
+        if pin_coord is None and pin_boxes and executable:
+            pin_coord = geolocate_pin_from_image(
+                payload, executable=executable, word_boxes=None, sea_snap=sea_snap
             )
+            pin_source = "tesseract"
+            pin_boxes = None
+        pin_solution = (
+            geolocate_pin_detailed(payload, executable=executable, word_boxes=pin_boxes)
             if pin_coord is not None
             else None
         )
@@ -509,7 +515,7 @@ def _extract_coordinate_from_bytes(
         return (
             pin_coord,
             True,
-            "easyocr_pin_landmark" if easy_boxes else "tesseract_pin_landmark",
+            "easyocr_pin_landmark" if pin_source == "easyocr" else "tesseract_pin_landmark",
             diagnostics,
         )
     return None, attempted or easy_attempted, "none", {}

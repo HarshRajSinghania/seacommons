@@ -240,3 +240,25 @@ def test_match_landmarks_does_not_use_crete_region_label_as_point_calibration():
     names = {name for name, _px, _py in _match_landmarks(boxes)}
     assert "rethimno" in names
     assert "kriti" not in names
+
+
+def test_match_landmarks_recovers_wrapped_and_slightly_misread_map_labels() -> None:
+    boxes = [
+        _word("AQIOS", 552, 103, 76, 23, block="full-1", line="1", word=6),
+        _word("Nikolaos", 555, 133, 119, 25, block="full-1", line="2", word=6),
+        _word("Aerapetra", 553, 254, 139, 34, block="full-1", line="4", word=4),
+        _word("Chrisi", 488, 393, 77, 24, block="tile0-1", line="10", word=1),
+    ]
+    matches = {name: (px, py) for name, px, py in _match_landmarks(boxes)}
+    assert "agios nikolaos" in matches
+    assert "ierapetra" in matches
+    assert "chrisi" in matches
+
+
+def test_match_landmarks_does_not_fuzzy_match_short_noise() -> None:
+    boxes = [
+        _word("Sea", 100, 80, 40, 15, line="1"),
+        _word("A", 200, 120, 10, 15, line="2"),
+        _word("Niko", 300, 140, 50, 15, line="3"),
+    ]
+    assert _match_landmarks(boxes) == []

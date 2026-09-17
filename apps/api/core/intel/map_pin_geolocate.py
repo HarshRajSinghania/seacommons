@@ -28,6 +28,7 @@ from __future__ import annotations
 import io
 import re
 import shutil
+from difflib import SequenceMatcher
 import subprocess
 import unicodedata
 from typing import Optional
@@ -187,39 +188,93 @@ def _ocr_word_boxes(image, *, executable: str) -> list[dict]:
     return boxes
 
 
-def _match_landmarks(word_boxes: list[dict]) -> list[tuple[str, float, float]]:
-    """Match single words and adjacent-word phrases against the gazetteer.
+def _fuzzy_place_name(text: str) -> Optional[str]:
+    normalized = _normalize_label(text)
+    if not normalized or normalized in _PIN_CALIBRATION_EXCLUSIONS:
+        return None
+    if normalized in PRECISE_PLACES:
+        return normalized
+    if len(normalized) < 6:
+        return None
+    best_name = None
+    best_score = 0.0
+    for name in PRECISE_PLACES:
+        if name in _PIN_CALIBRATION_EXCLUSIONS or abs(len(name) - len(normalized)) > 3:
+            continue
+        score = SequenceMatcher(None, normalized, name).ratio()
+        if score > best_score:
+            best_name, best_score = name, score
+    return best_name if best_score >= 0.82 else None
 
-    Returns (name, pixel_x, pixel_y) for the highest-confidence span per
-    matched landmark name (a name may legitimately be printed once; if it
-    somehow matches twice, only the first occurrence found is kept — better
-    to under-use a duplicate than let it silently corrupt the pixel fit).
-    """
-    by_line: dict[tuple[str, str, str], list[dict]] = {}
+
+def _dedupe_word_boxes(word_boxes: list[dict]) -> list[dict]:
+    out: list[dict] = []
     for box in word_boxes:
-        key = (box["block"], box["par"], box["line"])
-        by_line.setdefault(key, []).append(box)
+        text = _normalize_label(str(box.get("text") or ""))
+        if not text:
+            continue
+        cx = float(box["left"]) + float(box["width"]) / 2
+        cy = float(box["top"]) + float(box["height"]) / 2
+        duplicate = False
+        for previous in out:
+            ptext = _normalize_label(str(previous.get("text") or ""))
+            pcx = float(previous["left"]) + float(previous["width"]) / 2
+            pcy = float(previous["top"]) + float(previous["height"]) / 2
+            if text == ptext and abs(cx - pcx) <= 18 and abs(cy - pcy) <= 18:
+                duplicate = True
+                break
+        if not duplicate:
+            out.append(box)
+    return out
 
+
+def _span_center(boxes: list[dict]) -> tuple[float, float]:
+    left = min(b["left"] for b in boxes)
+    top = min(b["top"] for b in boxes)
+    right = max(b["left"] + b["width"] for b in boxes)
+    bottom = max(b["top"] + b["height"] for b in boxes)
+    return (left + right) / 2, (top + bottom) / 2
+
+
+def _match_landmarks(word_boxes: list[dict]) -> list[tuple[str, float, float]]:
+    """Match noisy, tiled map-label OCR to precise gazetteer points."""
+    boxes = _dedupe_word_boxes(word_boxes)
     matched: dict[str, tuple[float, float]] = {}
-    for boxes in by_line.values():
-        boxes = sorted(boxes, key=lambda b: b["word"])
-        for start in range(len(boxes)):
-            for span in range(1, min(_MAX_PHRASE_WORDS, len(boxes) - start) + 1):
-                span_boxes = boxes[start:start + span]
-                phrase = _normalize_label(" ".join(b["text"] for b in span_boxes))
-                if (
-                    not phrase
-                    or phrase not in PRECISE_PLACES
-                    or phrase in _PIN_CALIBRATION_EXCLUSIONS
-                ):
-                    continue
-                if phrase in matched:
-                    continue
-                left = min(b["left"] for b in span_boxes)
-                top = min(b["top"] for b in span_boxes)
-                right = max(b["left"] + b["width"] for b in span_boxes)
-                bottom = max(b["top"] + b["height"] for b in span_boxes)
-                matched[phrase] = ((left + right) / 2, (top + bottom) / 2)
+
+    # Exact/fuzzy single labels first.
+    for box in boxes:
+        place = _fuzzy_place_name(str(box.get("text") or ""))
+        if place and place not in matched:
+            matched[place] = _span_center([box])
+
+    # Same-line phrases from each OCR pass.
+    by_line: dict[tuple[str, str, str], list[dict]] = {}
+    for box in boxes:
+        by_line.setdefault((box["block"], box["par"], box["line"]), []).append(box)
+    for line_boxes in by_line.values():
+        line_boxes = sorted(line_boxes, key=lambda b: b["left"])
+        for start in range(len(line_boxes)):
+            for span in range(2, min(_MAX_PHRASE_WORDS, len(line_boxes) - start) + 1):
+                group = line_boxes[start:start + span]
+                place = _fuzzy_place_name(" ".join(str(b["text"]) for b in group))
+                if place and place not in matched:
+                    matched[place] = _span_center(group)
+
+    # Map labels frequently wrap vertically (e.g. AGIOS / Nikolaos). Join
+    # nearby boxes with strong horizontal overlap even when Tesseract assigns
+    # them to separate lines.
+    for i, first in enumerate(boxes):
+        for second in boxes[i + 1:]:
+            c1x, c1y = _span_center([first])
+            c2x, c2y = _span_center([second])
+            vertical_gap = abs(c1y - c2y)
+            horizontal_gap = abs(c1x - c2x)
+            if vertical_gap > 55 or horizontal_gap > 90:
+                continue
+            ordered = [first, second] if c1y <= c2y else [second, first]
+            place = _fuzzy_place_name(" ".join(str(b["text"]) for b in ordered))
+            if place and place not in matched:
+                matched[place] = _span_center(ordered)
 
     return [(name, px, py) for name, (px, py) in matched.items()]
 

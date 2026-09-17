@@ -223,35 +223,57 @@ def _agree(a: PinCandidate, b: PinCandidate) -> bool:
 
 
 def select_pin(candidates: list[PinCandidate]) -> Optional[PinCandidate]:
-    """One pin, only when unambiguous.
+    """Select one map pin after spatially clustering detector overlap.
 
-    Accept the top candidate when it clears the confidence floor AND either
-    it is the only candidate, or every other candidate agrees with it in
-    pixel space (the two detectors found the same marker), or it dominates
-    the next distinct candidate by a clear margin. Two confident, spatially
-    separate blobs -> None (fail closed).
+    Real map screenshots contain many saturated POI circles. A drop-pin is
+    stronger evidence when the colour and shape detectors agree on the same
+    teardrop, especially a red one, than a slightly higher-scoring basemap
+    circle. Distinct competing teardrops still fail closed.
     """
     if not candidates:
         return None
-    best = candidates[0]
+    clusters: list[list[PinCandidate]] = []
+    for candidate in candidates:
+        for cluster in clusters:
+            if any(_agree(candidate, member) for member in cluster):
+                cluster.append(candidate)
+                break
+        else:
+            clusters.append([candidate])
+
+    ranked: list[tuple[float, PinCandidate]] = []
+    for cluster in clusters:
+        best = max(cluster, key=lambda c: c.confidence)
+        detectors = {c.detector for c in cluster}
+        colours = {c.color for c in cluster if c.color}
+        shapes = {c.shape for c in cluster}
+        merged = PinCandidate(
+            x=sum(c.x for c in cluster) / len(cluster),
+            y=sum(c.y for c in cluster) / len(cluster),
+            confidence=min(0.9, best.confidence + (0.08 if len(detectors) >= 2 else 0.0)),
+            detector="+".join(sorted(detectors)),
+            color=best.color or next(iter(colours), None),
+            shape="teardrop" if "teardrop" in shapes else best.shape,
+        )
+        score = merged.confidence
+        if merged.shape == "teardrop":
+            score += 0.16
+        if merged.color == "red":
+            score += 0.10
+        if len(detectors) >= 2:
+            score += 0.08
+        ranked.append((score, merged))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    score, best = ranked[0]
     if best.confidence < _MIN_SELECT_CONFIDENCE:
         return None
-    others = candidates[1:]
-    if not others:
+    if len(ranked) == 1:
         return best
-    contenders = [c for c in others if not _agree(c, best)]
-    if not contenders:
-        # every other detection is the same marker -> average the agreeing set
-        agreeing = [best] + [c for c in others if _agree(c, best)]
-        return PinCandidate(
-            x=sum(c.x for c in agreeing) / len(agreeing),
-            y=sum(c.y for c in agreeing) / len(agreeing),
-            confidence=min(0.9, best.confidence + 0.1),
-            detector="+".join(sorted({c.detector for c in agreeing})),
-            color=best.color,
-            shape=best.shape,
-        )
-    if best.confidence - contenders[0].confidence >= _DOMINANCE_MARGIN:
+    next_score, contender = ranked[1]
+    if best.shape == contender.shape == "teardrop" and score - next_score < _DOMINANCE_MARGIN:
+        return None
+    if score - next_score >= _DOMINANCE_MARGIN or (best.shape == "teardrop") != (contender.shape == "teardrop"):
         return best
     return None
 

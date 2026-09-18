@@ -55,6 +55,20 @@ _URL_DEDUP_TYPES = frozenset(
     }
 )
 
+# Machine-derived events intentionally use deterministic IDs so one physical
+# episode can be enriched over time without forking a second marker.
+_MACHINE_REFRESH_TYPES = frozenset(
+    {
+        "ais_anomaly",
+        "ais_rendezvous",
+        "vessel_identity",
+        "vessel_incident",
+        "dark_candidate",
+        "correlated_alert",
+        "ais_spike",
+    }
+)
+
 
 @dataclass
 class IntelEvent:
@@ -378,7 +392,9 @@ class IntelStore:
         content_key = event.content_hash()
         keys = {dedup_key or content_key, content_key}
         url_duplicate: Optional[IntelEvent] = None
+        id_duplicate: Optional[IntelEvent] = None
         metadata_changed = False
+        machine_refresh = False
         with self._lock:
             if event.url and event.type in _URL_DEDUP_TYPES:
                 source_key = _normalised_source(event.source)
@@ -391,6 +407,11 @@ class IntelStore:
                     ),
                     None,
                 )
+            if event.type in _MACHINE_REFRESH_TYPES:
+                id_duplicate = next(
+                    (candidate for candidate in self._events if candidate.id == event.id),
+                    None,
+                )
             if url_duplicate is not None:
                 # A second collector saw the same source item. Keep the
                 # canonical event/id and add only metadata it did not already
@@ -399,6 +420,33 @@ class IntelStore:
                 merged = {**event.metadata, **url_duplicate.metadata}
                 metadata_changed = merged != url_duplicate.metadata
                 url_duplicate.metadata = merged
+                self._seen.update(keys)
+            elif id_duplicate is not None:
+                # Deterministic machine IDs are mutable episode identities.
+                # Refresh the canonical in-memory object and durable row, but
+                # do not treat the refresh as a new event or rebroadcast it.
+                merged = {**id_duplicate.metadata, **event.metadata}
+                machine_refresh = (
+                    merged != id_duplicate.metadata
+                    or id_duplicate.timestamp_utc != event.timestamp_utc
+                    or id_duplicate.lat != event.lat
+                    or id_duplicate.lon != event.lon
+                    or id_duplicate.title != event.title
+                    or id_duplicate.text != event.text
+                    or id_duplicate.severity != event.severity
+                )
+                id_duplicate.timestamp_utc = event.timestamp_utc
+                id_duplicate.type = event.type
+                id_duplicate.severity = event.severity
+                id_duplicate.lat = event.lat
+                id_duplicate.lon = event.lon
+                id_duplicate.title = event.title
+                id_duplicate.text = event.text
+                id_duplicate.url = event.url
+                id_duplicate.source = event.source
+                id_duplicate.linked_mmsi = event.linked_mmsi
+                id_duplicate.metadata = merged
+                event.metadata = merged
                 self._seen.update(keys)
             elif any(key in self._seen for key in keys):
                 return False
@@ -417,6 +465,11 @@ class IntelStore:
                     dict(url_duplicate.metadata),
                     url_duplicate.linked_mmsi,
                 )
+            return False
+
+        if id_duplicate is not None:
+            if machine_refresh:
+                self._persist(event)
             return False
 
         self._fire_broadcast(event)

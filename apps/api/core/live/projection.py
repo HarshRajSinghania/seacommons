@@ -322,6 +322,14 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
             return False
+        if anomaly_type == "impossible_speed":
+            verification = str(props.get("verification_status") or "")
+            evidence_count = int(props.get("evidence_count") or 0)
+            if verification == "single_source_observed" and evidence_count < 2:
+                # A single impossible-speed jump can be one malformed AIS fix.
+                # Keep it in Play/evidence, but require a repeated or otherwise
+                # corroborated observation before it becomes a public Live case.
+                return False
     source = str(props.get("source") or "").lower()
     category = str(props.get("visual_category") or "")
     verification = str(props.get("verification_status") or "")

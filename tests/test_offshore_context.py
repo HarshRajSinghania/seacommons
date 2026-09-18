@@ -141,3 +141,29 @@ def test_zero_interval_position_jump_stays_anomaly(monkeypatch):
         "anomaly_evidence": {"gap_s": 0.2, "computed_kts": 1700},
     }, context)
     assert result["qualified"] is False
+
+
+def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> None:
+    base = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [23.28, 37.70]},
+        "properties": {
+            "type": "ais_anomaly",
+            "anomaly_type": "impossible_speed",
+            "source": "ais",
+            "visual_category": "spoofing",
+            "verification_status": "single_source_observed",
+            "analysis_state": "evidence_candidate",
+            "offshore_anomaly_qualified": True,
+        },
+    }
+    one = {
+        **base,
+        "properties": {**base["properties"], "evidence_count": 1},
+    }
+    repeated = {
+        **base,
+        "properties": {**base["properties"], "evidence_count": 2},
+    }
+    assert is_useful_public_case_feature(one) is False
+    assert is_useful_public_case_feature(repeated) is True

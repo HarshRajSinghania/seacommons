@@ -2126,3 +2126,52 @@ def test_public_signal_collection_collapses_near_simultaneous_alarm_phone_transl
     collection = public_signal_collection(mode="humanitarian", days=1, limit=500)
     audit = [f for f in collection["features"] if f["properties"]["id"] in {"intel:audit-ap-en", "intel:audit-ap-fr"}]
     assert [f["properties"]["id"] for f in audit] == ["intel:audit-ap-en"]
+
+
+def test_sosmed_mayday_report_with_completed_interception_is_not_live_distress() -> None:
+    text = (
+        "Yesterday, following a Mayday relay, the #OceanViking altered course "
+        "towards a rubber boat carrying around 80 people in distress. As our "
+        "team approached, we witnessed the Libyan Coast Guard intercept the "
+        "boat and return those on board to Libya."
+    )
+    assert is_direct_distress_call(text) is False
+    assert lifecycle.is_concluded_incident(text) is True
+
+
+def test_concluded_sosmed_report_is_not_reopened_by_ambiguous_self_reply() -> None:
+    text = (
+        "Yesterday, following a Mayday relay, the #OceanViking altered course "
+        "towards a rubber boat carrying around 80 people in distress. As our "
+        "team approached, we witnessed the Libyan Coast Guard intercept the "
+        "boat and return those on board to Libya."
+    )
+    event = IntelEvent(
+        id="sosmed-interception-regression",
+        type="twitter",
+        severity="critical",
+        title=text[:100],
+        text=text,
+        source="SOSMedIntl",
+        timestamp_utc="2026-09-18T09:46:44+00:00",
+        metadata={
+            "is_distress": True,
+            "thread_reposts": [{
+                "posted_at": "2026-09-18T09:46:47+00:00",
+                "kind": "reply",
+                "note": (
+                    "We were only minutes away. Those few minutes marked the "
+                    "difference between rescue and safety, and a forced return "
+                    "to a place where people face detention, violence and abuse. "
+                    "The #OceanViking is sailing towards its assigned Place of Safety."
+                ),
+            }],
+        },
+    )
+    state = lifecycle.distress_lifecycle(
+        event,
+        now=datetime(2026, 9, 18, 16, 0, tzinfo=timezone.utc),
+        same_source=[],
+    )
+    assert state == "resolved"
+    assert lifecycle.is_directly_concluded(event) is True

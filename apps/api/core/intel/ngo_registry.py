@@ -33,6 +33,7 @@ tagged exactly like a civil NGO asset.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 # ── NGO SAR Fleet (verified 2026) ─────────────────────────────────────────────
@@ -164,6 +165,24 @@ def ngo_mmsi_set() -> frozenset[str]:
     return frozenset(_MMSI_SET)
 
 
+def _position_status(last_seen: Any, *, now: datetime | None = None) -> str:
+    if not last_seen:
+        return "offline"
+    try:
+        observed = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return "offline"
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    age_s = max(0.0, (current.astimezone(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds())
+    if age_s <= 10 * 60:
+        return "live"
+    if age_s <= 60 * 60:
+        return "stale"
+    return "offline"
+
+
 def ngo_vessel_geojson() -> dict[str, Any]:
     """Live NGO/coastguard vessel positions as GeoJSON, enriched from the
     registry above. Shared by the authenticated operator route
@@ -173,9 +192,11 @@ def ngo_vessel_geojson() -> dict[str, Any]:
     """
     from core.vessels.registry import registry  # lazy to avoid circular import
 
-    geojson = registry.get_geojson()
+    geojson = registry.get_last_known_geojson(ngo_mmsi_set())
     ngo_features = []
-    seen_mmsi: set[str] = set()
+    positioned_mmsi: set[str] = set()
+    live_mmsi: set[str] = set()
+    stale_mmsi: set[str] = set()
 
     for feat in geojson.get("features", []):
         props = feat.get("properties") or {}
@@ -183,27 +204,35 @@ def ngo_vessel_geojson() -> dict[str, Any]:
         if not is_ngo(mmsi):
             continue
         info = get_ngo_info(mmsi) or {}
-        seen_mmsi.add(mmsi)
+        positioned_mmsi.add(mmsi)
         operator_type = info.get("operator_type", "civil_ngo")
+        ais_status = _position_status(props.get("last_seen"))
+        if ais_status == "live":
+            live_mmsi.add(mmsi)
+        elif ais_status == "stale":
+            stale_mmsi.add(mmsi)
         ngo_features.append({
             **feat,
             "properties": {
                 **props,
+                # Canonical registry identity wins over a stale AIS display
+                # name. The persisted coordinates remain explicitly timestamped.
+                "ship_name": info.get("name") or props.get("ship_name") or mmsi,
+                "flag": info.get("flag", ""),
                 "intel_type": "ngo_vessel",
                 "org": info.get("org", ""),
                 "role": info.get("role", ""),
+                "ais_status": ais_status,
+                "position_policy": "last_known",
                 "operator_type": operator_type,
-                # A state coastguard/navy asset must never render as "ngo" --
-                # docs/deep-research-report.md #28, docs/deep-research-report
-                # (2).md's Civil SAR Registry finding. "ngo" kept unchanged
-                # for civil_ngo (existing value, no known consumer breaks).
                 "vessel_class": "ngo" if operator_type == "civil_ngo" else "coastguard",
             },
         })
 
-    # Known NGO vessels not currently seen in AIS — surfaced as "last known"/offline.
+    # Vessels never observed by our registry remain in the fleet list, but
+    # without invented coordinates.
     for mmsi, info in NGO_VESSELS.items():
-        if mmsi in seen_mmsi:
+        if mmsi in positioned_mmsi:
             continue
         operator_type = info.get("operator_type", "civil_ngo")
         ngo_features.append({
@@ -217,6 +246,7 @@ def ngo_vessel_geojson() -> dict[str, Any]:
                 "flag": info.get("flag", ""),
                 "intel_type": "ngo_vessel",
                 "ais_status": "offline",
+                "position_policy": "never_seen",
                 "operator_type": operator_type,
                 "vessel_class": "ngo" if operator_type == "civil_ngo" else "coastguard",
             },
@@ -232,7 +262,10 @@ def ngo_vessel_geojson() -> dict[str, Any]:
             "total_registered": len(NGO_VESSELS),
             "civil_ngo_registered": civil_ngo_count,
             "state_authority_registered": len(NGO_VESSELS) - civil_ngo_count,
-            "live_ais": len(seen_mmsi),
-            "offline": len(NGO_VESSELS) - len(seen_mmsi),
+            "live_ais": len(live_mmsi),
+            "stale_ais": len(stale_mmsi),
+            "last_known_position": len(positioned_mmsi),
+            "never_seen": len(NGO_VESSELS) - len(positioned_mmsi),
+            "offline": len(NGO_VESSELS) - len(live_mmsi) - len(stale_mmsi),
         },
     }

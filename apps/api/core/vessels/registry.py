@@ -20,7 +20,7 @@ from typing import Any
 
 _GEOJSON_CACHE_TTL_S = 10.0  # serve cached GeoJSON for up to 10 s even when dirty
 
-_DB_PATH = Path("core/data/vessels.db")
+_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "vessels.db"
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS vessels (
@@ -330,6 +330,67 @@ class VesselRegistry:
             if not self._dirty or (now_ts - self._geojson_cache_ts) < _GEOJSON_CACHE_TTL_S:
                 return self._geojson_json
         return None
+
+    def get_last_known_geojson(self, mmsis: set[str] | frozenset[str] | None = None) -> dict:
+        """Return persisted last-known vessel positions without a freshness cutoff.
+
+        This is intentionally separate from get_geojson(), whose full snapshot
+        represents current traffic and drops fixes older than two hours. Stable
+        tracked fleets such as civil SAR need the last observed position even
+        when AIS is temporarily unavailable, provided the timestamp remains
+        explicit so callers never present a stale fix as live.
+        """
+        wanted = {str(value) for value in mmsis} if mmsis is not None else None
+        with self._lock:
+            vessels = [
+                dict(value)
+                for key, value in self._cache.items()
+                if wanted is None or str(key) in wanted
+            ]
+
+        features = []
+        for v in vessels:
+            if v.get("last_lat") is None or v.get("last_lon") is None:
+                continue
+            mmsi = str(v["mmsi"])
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [v["last_lon"], v["last_lat"]],
+                },
+                "properties": {
+                    "vessel_id": mmsi,
+                    "mmsi": mmsi,
+                    "ship_name": v.get("ship_name") or mmsi,
+                    "imo": v.get("imo"),
+                    "ship_type": v.get("ship_type"),
+                    "ais_class": v.get("ais_class", "A"),
+                    "destination": v.get("destination") or "",
+                    "course": v.get("last_course"),
+                    "speed": v.get("last_speed"),
+                    "heading": v.get("last_heading"),
+                    "nav_status": v.get("nav_status"),
+                    "last_seen": v.get("last_seen"),
+                    "position_timestamp_utc": v.get("last_seen"),
+                    "sources": self._source_context.get(mmsi, {}).get("sources", ["aisstream"]),
+                    "upstream_sources": self._source_context.get(mmsi, {}).get(
+                        "upstream_sources", ["aisstream"]
+                    ),
+                    "stations": self._source_context.get(mmsi, {}).get("stations", []),
+                    **_vessel_visual_contract(v),
+                },
+            })
+
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "meta": {
+                "total": len(features),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "position_policy": "last_known",
+            },
+        }
 
     def stats(self) -> dict:
         # Snapshot values list outside the lock scan to minimise hold time.

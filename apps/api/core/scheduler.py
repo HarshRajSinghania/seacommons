@@ -450,9 +450,18 @@ def _job_reconcile_humanitarian_incidents() -> None:
     left unchanged and simply stops projecting to Live after the 24h window.
     """
     try:
-        from core.intel.humanitarian_incident import reconcile_stale_incidents
+        from core.intel.humanitarian_incident import (
+            reconcile_recent_incident_lifecycles,
+            reconcile_stale_incidents,
+        )
 
+        reconciled = reconcile_recent_incident_lifecycles()
         changed = reconcile_stale_incidents()
+        if reconciled:
+            logger.info(
+                "Scheduler: reconciled %d recent humanitarian incident lifecycle(s)",
+                reconciled,
+            )
         if changed:
             logger.info("Scheduler: retired %d stale humanitarian incident(s) to Play", changed)
     except Exception as exc:

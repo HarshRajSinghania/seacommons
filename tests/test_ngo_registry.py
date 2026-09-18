@@ -57,17 +57,25 @@ def test_ngo_vessel_geojson_never_tags_coastguard_as_ngo_vessel_class(monkeypatc
             {
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [12.5, 37.0]},
-                "properties": {"mmsi": _COASTGUARD_MMSI},
+                "properties": {
+                    "mmsi": _COASTGUARD_MMSI,
+                    "last_seen": "2026-09-18T16:00:00+00:00",
+                },
             },
             {
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [12.6, 37.1]},
-                "properties": {"mmsi": _CIVIL_NGO_MMSI},
+                "properties": {
+                    "mmsi": _CIVIL_NGO_MMSI,
+                    "last_seen": "2026-09-18T16:00:00+00:00",
+                },
             },
         ],
     }
     monkeypatch.setattr(
-        vessel_registry_module.registry, "get_geojson", lambda: fake_geojson
+        vessel_registry_module.registry,
+        "get_last_known_geojson",
+        lambda _mmsis: fake_geojson,
     )
 
     result = ngo_vessel_geojson()
@@ -80,3 +88,37 @@ def test_ngo_vessel_geojson_never_tags_coastguard_as_ngo_vessel_class(monkeypatc
     assert result["meta"]["civil_ngo_registered"] + result["meta"]["state_authority_registered"] == (
         result["meta"]["total_registered"]
     )
+
+
+def test_ngo_vessel_geojson_keeps_stale_last_known_position(monkeypatch):
+    from core.vessels import registry as vessel_registry_module
+
+    fake_geojson = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [0.25784, 40.04419]},
+            "properties": {
+                "mmsi": "224772000",
+                "ship_name": "OPEN ARMS",
+                "last_seen": "2026-09-16T12:18:34+00:00",
+                "position_timestamp_utc": "2026-09-16T12:18:34+00:00",
+            },
+        }],
+    }
+    monkeypatch.setattr(
+        vessel_registry_module.registry,
+        "get_last_known_geojson",
+        lambda _mmsis: fake_geojson,
+    )
+
+    result = ngo_vessel_geojson()
+    feature = next(
+        item for item in result["features"]
+        if item["properties"]["mmsi"] == "224772000"
+    )
+    assert feature["geometry"] == {
+        "type": "Point", "coordinates": [0.25784, 40.04419]
+    }
+    assert feature["properties"]["ais_status"] == "offline"
+    assert feature["properties"]["position_policy"] == "last_known"

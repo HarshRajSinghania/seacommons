@@ -142,15 +142,20 @@ def _latest_activity_time(event: IntelEvent) -> Optional[datetime]:
 def is_directly_concluded(event: IntelEvent) -> bool:
     """Whether this incident carries its own structurally reliable conclusion.
 
-    This deliberately excludes fuzzy cross-post matching because callers that
-    only have one event cannot safely infer relationships to other incidents.
-    The latest same-author self-reply overrides the original post, so a later
-    danger update can reopen a case and an ambiguous one can request review.
+    A later explicit danger update can reopen a concluded case. An ambiguous
+    self-reply cannot erase a final outcome already stated in the founding
+    report; it only requests review when the founding report itself remains
+    open or ambiguous.
     """
+    original_outcome = _outcome_from_text(event.text or event.title)
     reply_outcome = latest_own_reply_outcome(event)
-    if reply_outcome is not None:
-        return reply_outcome == IncidentLifecycle.RESOLVED.value
-    return _outcome_from_text(event.text or event.title) == IncidentLifecycle.RESOLVED.value
+    if reply_outcome == IncidentLifecycle.ACTIVE.value:
+        return False
+    if reply_outcome == IncidentLifecycle.RESOLVED.value:
+        return True
+    if original_outcome == IncidentLifecycle.RESOLVED.value:
+        return True
+    return False
 
 
 def distress_lifecycle(event: IntelEvent, *, now: datetime, same_source: list[IntelEvent]) -> str:
@@ -168,10 +173,17 @@ def distress_lifecycle(event: IntelEvent, *, now: datetime, same_source: list[In
     recomputing from the event's own text keeps this consistent across
     sources and self-healing across classifier fixes.
     """
-    state = _outcome_from_text(event.text or event.title) or IncidentLifecycle.ACTIVE.value
+    original_outcome = _outcome_from_text(event.text or event.title)
+    state = original_outcome or IncidentLifecycle.ACTIVE.value
     reply_outcome = latest_own_reply_outcome(event)
-    if reply_outcome is not None:
-        state = reply_outcome
+    if reply_outcome == IncidentLifecycle.ACTIVE.value:
+        state = IncidentLifecycle.ACTIVE.value
+    elif reply_outcome == IncidentLifecycle.RESOLVED.value:
+        state = IncidentLifecycle.RESOLVED.value
+    elif reply_outcome == IncidentLifecycle.NEEDS_REVIEW.value:
+        # Do not let a non-decisive comment overwrite a known final outcome.
+        if original_outcome != IncidentLifecycle.RESOLVED.value:
+            state = IncidentLifecycle.NEEDS_REVIEW.value
     elif has_resolution_signal(event, same_source):
         state = IncidentLifecycle.RESOLVED.value
     if state in {IncidentLifecycle.RESOLVED.value, IncidentLifecycle.NEEDS_REVIEW.value}:

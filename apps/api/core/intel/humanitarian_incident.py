@@ -170,6 +170,67 @@ def sync_incident_for_event(
         pass
 
 
+def reconcile_recent_incident_lifecycles(
+    *, now: Optional[datetime] = None, limit: int = 200, max_age_hours: int = 48
+) -> int:
+    """Re-evaluate recent non-terminal incidents against current lifecycle rules.
+
+    Canonical incident state is persisted at ingestion time. Classifier fixes,
+    late self-replies, or newly threaded source updates therefore need a small
+    bounded reconciliation pass so Live does not keep showing a case whose own
+    source already reported a final outcome. This never infers an outcome from
+    vessel movement alone.
+    """
+    from core.db.models import HumanitarianIncidentDB
+    from core.db.session import session_scope
+    from core.intel.lifecycle import distress_lifecycle, parse_utc
+    from core.intel.store import intel_store
+
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+
+    with session_scope() as db:
+        rows = (
+            db.query(HumanitarianIncidentDB)
+            .filter(HumanitarianIncidentDB.lifecycle.in_(("active", "needs_review")))
+            .order_by(HumanitarianIncidentDB.state_changed_at.desc())
+            .limit(limit)
+            .all()
+        )
+        candidates = [
+            (row.incident_id, row.lifecycle, row.last_update_at or row.reported_at)
+            for row in rows
+        ]
+
+    changed = 0
+    same_source_cache: dict[str, list[IntelEvent]] = {}
+    for incident_id, current_lifecycle, activity_at in candidates:
+        activity = parse_utc(activity_at or "")
+        if activity is not None and (now_utc - activity).total_seconds() > max_age_hours * 3600:
+            continue
+        event = intel_store.get_durable(incident_id)
+        if event is None:
+            continue
+        same_source = same_source_cache.get(event.source)
+        if same_source is None:
+            same_source = intel_store.persisted_events(
+                source_in=[event.source], max_age_days=10, limit=500
+            )
+            same_source_cache[event.source] = same_source
+        lifecycle = distress_lifecycle(event, now=now_utc, same_source=same_source)
+        if lifecycle == current_lifecycle:
+            continue
+        sync_incident_for_event(
+            event,
+            lifecycle=lifecycle,
+            case_type=event.metadata.get("humanitarian_case_type")
+            or event.metadata.get("case_type"),
+        )
+        changed += 1
+    return changed
+
+
 def reconcile_stale_incidents(*, now: Optional[datetime] = None, limit: int = 500) -> int:
     """Persist silent active incidents as outcome_unknown for Play.
 

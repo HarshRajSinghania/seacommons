@@ -13,7 +13,6 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-
 from core.intel.humanitarian_incident import (
     _on_intel_event,
     get_incident,
@@ -244,9 +243,8 @@ def test_last_update_at_never_moves_backward_on_an_out_of_order_update():
 
 
 def test_humanitarian_incident_route_reconstructs_the_timer_from_api_fields() -> None:
-    from fastapi.testclient import TestClient
-
     from core.api.main import app
+    from fastapi.testclient import TestClient
 
     event = _distress_event("p6-4", "MAYDAY people aboard", timestamp="2026-09-04T08:00:00+00:00")
     sync_incident_for_event(event, lifecycle="active")
@@ -260,9 +258,8 @@ def test_humanitarian_incident_route_reconstructs_the_timer_from_api_fields() ->
 
 
 def test_humanitarian_incident_route_404s_for_an_unknown_incident() -> None:
-    from fastapi.testclient import TestClient
-
     from core.api.main import app
+    from fastapi.testclient import TestClient
 
     response = TestClient(app).get("/api/v1/audit/humanitarian-incidents/does-not-exist")
     assert response.status_code == 404
@@ -362,3 +359,53 @@ def test_alarm_phone_operational_origin_still_opens_humanitarian_incident():
     event.metadata["transport"] = "email"
     _on_intel_event(event)
     assert get_incident(event.id) is not None
+
+
+def test_recent_reconcile_updates_stale_needs_review_after_classifier_fix(monkeypatch):
+    from core.intel.humanitarian_incident import reconcile_recent_incident_lifecycles
+
+    text = (
+        "Yesterday, following a Mayday relay, the #OceanViking altered course "
+        "towards a rubber boat carrying around 80 people in distress. As our "
+        "team approached, we witnessed the Libyan Coast Guard intercept the "
+        "boat and return those on board to Libya."
+    )
+    event = IntelEvent(
+        id="sosmed-reconcile",
+        type="twitter",
+        severity="critical",
+        lat=32.0,
+        lon=16.8,
+        title=text[:80],
+        text=text,
+        source="SOSMedIntl",
+        timestamp_utc="2026-09-18T09:46:44+00:00",
+        metadata={
+            "is_distress": True,
+            "humanitarian_case_type": "interception",
+            "thread_reposts": [{
+                "posted_at": "2026-09-18T09:46:47+00:00",
+                "note": (
+                    "We were only minutes away. The Ocean Viking is sailing "
+                    "towards its assigned Place of Safety."
+                ),
+            }],
+        },
+    )
+    sync_incident_for_event(event, lifecycle="needs_review", case_type="interception")
+    monkeypatch.setattr(intel_store, "get_durable", lambda _event_id: event)
+    monkeypatch.setattr(
+        intel_store,
+        "persisted_events",
+        lambda **_kwargs: [event],
+    )
+
+    changed = reconcile_recent_incident_lifecycles(
+        now=datetime(2026, 9, 18, 16, 0, tzinfo=timezone.utc)
+    )
+
+    incident = get_incident(event.id)
+    assert changed == 1
+    assert incident["lifecycle"] == "resolved"
+    assert incident["incident_status"] == "resolved"
+    assert incident["case_type"] == "interception"

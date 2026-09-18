@@ -406,6 +406,13 @@ _CONCLUDED_OUTCOME_PATTERNS = tuple(
         r"\bstill\s+missing\b",
         r"\bconfirmed\s+dead\b",
         r"\bbod(?:y|ies)\s+(?:were|was)?\s*recovered\b",
+        # A known interception / forced-return outcome is terminal for the
+        # immediate SAR call even when it is a harmful outcome rather than a
+        # safe rescue. Real production case: SOS Mediterranee reported a
+        # Mayday relay, then in the same post stated that it witnessed the
+        # Libyan Coast Guard intercept the boat and return those on board.
+        r"\bwitnessed\b.{0,160}\bintercept\w*\b.{0,160}\b(?:and\s+)?return\w*\b.{0,100}\b(?:to|back\s+to)\b",
+        r"\bintercept(?:ed|ion)\b.{0,160}\b(?:returned|forced\s+back|taken\s+back|brought\s+back)\b.{0,100}\b(?:to|towards?)\b",
         # Retrospective/aftermath reports: past-tense rescue/tragedy write-ups
         # (e.g. "⚫️ Massacre in the Atlantic ... brought ashore 38 people ...
         # after drifting at sea for 25 days"). The active variant "drifting at
@@ -459,8 +466,10 @@ def is_concluded_incident(text: str) -> bool:
         return False
     if is_resolved_distress(normalised):
         return True
-    if _SOS_MARKER_RE.search(normalised):
-        return False
+    # SOS / Mayday is evidence that a call existed, not proof that it remains
+    # open after the same report gives a final outcome. Ongoing-language is
+    # checked first above, so "🆘 ... found by police; since then no news"
+    # still remains active while a completed interception/return does not.
     return any(pattern.search(normalised) for pattern in _CONCLUDED_OUTCOME_PATTERNS)
 
 
@@ -863,20 +872,12 @@ def is_direct_distress_call(text: str) -> bool:
     # was marked with a vigil in Lampedusa" (docs/ALERT_RECOGNITION_BASELINE.md).
     if _RETROSPECTIVE_COMMEMORATION_RE.search(normalised):
         return False
-    # An explicit SOS marker (🆘 / mayday / sos) is the operator's active-call
-    # signal and overrides concluded-outcome wording: "🆘 ... They were found
-    # by the police. Since then we have no news" is an ACTIVE call even though
-    # "were found" is also a concluded-outcome marker. A resolved outcome is
-    # still demoted above, so "🆘 ... everyone is safe" cannot become distress.
-    has_sos = bool(_SOS_MARKER_RE.search(normalised))
-    # A report that states a final outcome (survivors found/hospitalised,
-    # bodies recovered, confirmed dead, still/remain missing) is a concluded
-    # retrospective, not an active call — e.g. the mourning posts Alarm Phone
-    # opens with ⚫ (a shipwreck already reported days earlier). These must
-    # not become operational distress. "Survivors found" is a concluded
-    # outcome; "people are missing" on its own is not (it can be the opener
-    # of an active search, and stays distress when 🆘 is present).
-    if not has_sos and any(pattern.search(normalised) for pattern in _CONCLUDED_OUTCOME_PATTERNS):
+    # A Mayday/SOS marker establishes that an emergency call existed, but a
+    # final outcome in the same report retires it from the operational Live
+    # surface. Explicit ongoing language takes precedence in
+    # is_concluded_incident(), so "🆘 ... found by police; since then no news"
+    # is still active while "Mayday ... intercepted and returned" is not.
+    if is_concluded_incident(normalised):
         return False
     return any(pattern.search(normalised) for pattern in _DIRECT_DISTRESS_PATTERNS)
 

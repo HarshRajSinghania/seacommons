@@ -129,10 +129,9 @@ test('fallback map uses nautical retina layers and heading-shaped moving vessels
     properties: { id: 'vessel:123', mmsi: '123', entity_kind: 'vessel', report_type: 'vessel', motion_state: 'moving', latest_heading: 72 },
   };
   renderer.setFeatures({ incidents: [], vessels: [vessel] });
-  assert.equal(log.tiles.length, 3);
-  assert.match(log.tiles[0].url, /World_Ocean_Base/);
-  assert.match(log.tiles[1].url, /World_Ocean_Reference/);
-  assert.match(log.tiles[2].url, /openseamap/);
+  assert.equal(log.tiles.length, 2);
+  assert.match(log.tiles[0].url, /tile\.openstreetmap\.org/);
+  assert.match(log.tiles[1].url, /openseamap/);
   assert.equal(log.tiles[0].options.detectRetina, true);
   assert.equal(log.vesselMarkers.length, 1);
   assert.match(log.vesselMarkers[0].options.icon.options.html, /72deg/);

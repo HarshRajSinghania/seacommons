@@ -30,7 +30,9 @@ test('public Live is case-first and does not expose raw AIS vessel layers', () =
   assert.match(main, /id: 'vessels-stationary-layer'/); // operator console still owns raw AIS
   assert.match(main, /id: 'selected-vessel-track'/);
   assert.match(main, /openVesselReport/);
+  assert.match(main, /isTrackedResponder[\s\S]{0,180}if \(!isTrackedResponder\) return/);
   assert.match(main, /isPublicLiveHost[\s\S]{0,120}Promise\.resolve\(\{ type: 'FeatureCollection', features: \[\] \}\)/);
+  assert.match(main, /isPublicLiveHost[\s\S]{0,220}proximity-vessels[\s\S]{0,120}features: \[\]/);
 });
 
 test('public Live exposes the radio receiver mesh and decoded DSC without making Radio a third macro category', () => {

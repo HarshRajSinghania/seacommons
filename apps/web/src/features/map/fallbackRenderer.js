@@ -120,8 +120,10 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
   // interaction and accessibility even when the map prefers Canvas globally.
   const incidentRenderer = typeof L.svg === 'function' ? L.svg({ padding: 0.5 }) : undefined;
   const retinaTiles = { detectRetina: true, maxZoom: 19, maxNativeZoom: 16, crossOrigin: true };
-  L.tileLayer(PUBLIC_BASEMAP_TILE_URL, retinaTiles).addTo(map);
-  L.tileLayer(PUBLIC_BASEMAP_LABEL_URL, { ...retinaTiles, opacity: 0.9 }).addTo(map);
+  L.tileLayer(PUBLIC_BASEMAP_TILE_URL, { ...retinaTiles, maxNativeZoom: 19 }).addTo(map);
+  if (PUBLIC_BASEMAP_LABEL_URL) {
+    L.tileLayer(PUBLIC_BASEMAP_LABEL_URL, { ...retinaTiles, opacity: 0.9 }).addTo(map);
+  }
   L.tileLayer(PUBLIC_SEAMARK_TILE_URL, { detectRetina: true, maxZoom: 19, maxNativeZoom: 18, opacity: 0.95, crossOrigin: true }).addTo(map);
   const markers = L.layerGroup().addTo(map);
 

@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from core.intel import vessel_incident_monitor as vim
 from core.intel.service_taxonomy import classify_service
 
@@ -105,10 +105,49 @@ def test_beacon_appears_in_the_safety_live_feed(monitor) -> None:
 
     mmsi = f"974{uuid.uuid4().int % 1_000_000:06d}"
     monitor.on_position(mmsi, "", 35.1, 14.2, 0.0, 0)
+    from core.intel.store import intel_store
+
+    event = next(e for e in intel_store.events(limit=50) if e.linked_mmsi == mmsi)
+    event.metadata["last_observed_at"] = datetime.now(timezone.utc).isoformat()
 
     collection = public_signal_collection(mode="safety", limit=500, days=1)
     ids = {f["properties"].get("id") for f in collection["features"]}
     assert any(mmsi in str(i) for i in ids if i)
+
+
+def test_stale_beacon_leaves_public_live_case_surface() -> None:
+    from core.live.projection import is_useful_public_case_feature
+
+    now = datetime.now(timezone.utc)
+    base = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [14.2, 35.1]},
+        "properties": {
+            "type": "distress",
+            "ais_nav_status_kind": "distress_beacon",
+            "linked_mmsi": "970123456",
+            "mmsi": "970123456",
+            "source": "ais_sart",
+            "visual_category": "distress",
+            "verification_status": "ais_transponder",
+        },
+    }
+    stale = {
+        **base,
+        "properties": {
+            **base["properties"],
+            "last_observed_at": (now - timedelta(hours=3)).isoformat(),
+        },
+    }
+    fresh = {
+        **base,
+        "properties": {
+            **base["properties"],
+            "last_observed_at": (now - timedelta(minutes=10)).isoformat(),
+        },
+    }
+    assert is_useful_public_case_feature(stale) is False
+    assert is_useful_public_case_feature(fresh) is True
 
 
 def test_beacon_alone_never_creates_a_humanitarian_incident(monitor) -> None:

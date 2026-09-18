@@ -308,6 +308,17 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         beacon_mmsi = str(props.get("linked_mmsi") or props.get("mmsi") or "")
         if not beacon_mmsi.startswith(("970", "972", "974")):
             return False
+        last_seen = lifecycle.parse_utc(str(
+            props.get("last_observed_at")
+            or props.get("source_timestamp_utc")
+            or props.get("timestamp_utc")
+            or ""
+        ))
+        if last_seen is None or datetime.now(UTC) - last_seen > timedelta(hours=2):
+            # A dedicated AIS-SART/MOB/EPIRB transmission is operational only
+            # while it is still being observed. A lone historical ping remains
+            # available in Play but must not sit in Live indefinitely.
+            return False
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
             return False

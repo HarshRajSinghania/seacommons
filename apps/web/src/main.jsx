@@ -812,6 +812,15 @@ function App() {
 
   function openVesselReport(feature) {
     if (!feature) return;
+    if (isPublicLiveHost) {
+      const props = feature.properties || {};
+      const isTrackedResponder = (
+        props.intel_type === 'ngo_vessel'
+        || props.vessel_class === 'ngo'
+        || props.vessel_class === 'coastguard'
+      );
+      if (!isTrackedResponder) return;
+    }
     const reportFeature = vesselReportFeature(feature);
     setSelectedVessel(null);
     setMapPanel({ type: 'intel', feature: reportFeature });
@@ -2390,6 +2399,11 @@ function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !map.isStyleLoaded()) return;
+    if (isPublicLiveHost) {
+      map.getSource('proximity-vessels')?.setData({ type: 'FeatureCollection', features: [] });
+      map.getSource('proximity-lines')?.setData({ type: 'FeatureCollection', features: [] });
+      return;
+    }
     const { vessels: vfc, lines: lfc } = buildProximityGeojson(nearestVessels, selectedLat, selectedLon);
     map.getSource('proximity-vessels')?.setData(vfc);
     map.getSource('proximity-lines')?.setData(lfc);

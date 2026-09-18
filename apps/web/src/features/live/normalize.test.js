@@ -6,7 +6,6 @@ import {
   edgeSnapshotToFeatures,
   mergeIntelDriftUpdate,
   receivedSignalFeatures,
-  usefulPublicLiveFeatures,
 } from './normalize.js';
 
 function edgeEvent(overrides = {}) {
@@ -112,51 +111,4 @@ test('replaces stale drift features when an operator event update arrives', () =
   assert.equal(result.features[1].properties.intel_event_id, 'event-1');
   assert.equal(result.features[1].properties.intel_title, 'Updated drift');
   assert.equal(result.features[1].properties.version, undefined);
-});
-
-
-test('public Live keeps actionable humanitarian/beacon cases and removes raw AIS-only casualty noise', () => {
-  const feature = (id, properties, coordinates = [14, 35]) => ({
-    type: 'Feature', geometry: { type: 'Point', coordinates }, properties: { id, ...properties },
-  });
-  const humanitarian = feature('intel:h1', { type: 'twitter', source: 'alarm_phone', visual_category: 'humanitarian_alarm_phone' });
-  const sart = feature('intel:sart', { type: 'distress', source: 'ais_sart', visual_category: 'distress', verification_status: 'ais_transponder' });
-  const aground = feature('intel:aground', { type: 'distress', source: 'ais', visual_category: 'navigation_casualty', verification_status: 'ais_transponder', title: 'Vessel ran aground — TEST' });
-  const publishedHypothesis = feature('intel:hyp', { type: 'investigation', source: 'SeaCommons evidence engine', hypothesis_state: 'published', evidence_stage: 'assessed' });
-
-  assert.deepEqual(
-    usefulPublicLiveFeatures([humanitarian, sart, aground, publishedHypothesis]).map((item) => item.properties.id),
-    ['intel:h1', 'intel:sart', 'intel:hyp'],
-  );
-});
-
-test('public Live collapses near-simultaneous Alarm Phone translations of the same regional case', () => {
-  const make = (id, title, timestamp) => ({
-    type: 'Feature', geometry: { type: 'Point', coordinates: [3.5, 36.79492] },
-    properties: { id, type: 'twitter', source: 'alarm_phone', visual_category: 'humanitarian_alarm_phone', coordinate_source: 'region_area', title, timestamp_utc: timestamp },
-  });
-  const result = usefulPublicLiveFeatures([
-    make('intel:en', '@alarm_phone: Where are they? A boat with 27 people left Boumerdes', '2026-09-17T14:45:26Z'),
-    make('intel:fr', '@alarm_phone: Porté·es disparu·es! bateau de 27 personnes', '2026-09-17T14:45:59Z'),
-  ]);
-  assert.equal(result.length, 1);
-});
-
-
-test('published assessed intelligence survives the public Live useful-case filter', () => {
-  const feature = {
-    type: 'Feature',
-    geometry: { type: 'Point', coordinates: [14.1, 35.1] },
-    properties: {
-      id: 'hyp:v1:position_spoofing:test',
-      type: 'ais_anomaly',
-      source: 'SeaCommons assessed intelligence',
-      publication_status: 'published',
-      hypothesis_type: 'position_spoofing',
-      evidence_stage: 'corroborated',
-      visual_category: 'spoofing',
-      timestamp_utc: '2026-09-17T12:00:00Z',
-    },
-  };
-  assert.deepEqual(usefulPublicLiveFeatures([feature]), [feature]);
 });

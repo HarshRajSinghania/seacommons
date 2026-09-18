@@ -123,61 +123,6 @@ export function receivedSignalFeatures(features) {
   });
 }
 
-
-function alarmPhoneSemanticCount(title) {
-  const match = String(title || '').match(/\b(\d{1,3})\b/);
-  return match ? match[1] : '';
-}
-
-function alarmPhoneDuplicate(a, b) {
-  const pa = a?.properties || {};
-  const pb = b?.properties || {};
-  if (String(pa.source || '').toLowerCase() !== 'alarm_phone' || String(pb.source || '').toLowerCase() !== 'alarm_phone') return false;
-  const countA = alarmPhoneSemanticCount(pa.title);
-  const countB = alarmPhoneSemanticCount(pb.title);
-  if (!countA || countA !== countB) return false;
-  const ca = a?.geometry?.type === 'Point' ? a.geometry.coordinates : null;
-  const cb = b?.geometry?.type === 'Point' ? b.geometry.coordinates : null;
-  if (!Array.isArray(ca) || !Array.isArray(cb)) return false;
-  if (Math.abs(Number(ca[0]) - Number(cb[0])) > 0.01 || Math.abs(Number(ca[1]) - Number(cb[1])) > 0.01) return false;
-  const ta = Date.parse(pa.timestamp_utc || pa.source_timestamp_utc || '');
-  const tb = Date.parse(pb.timestamp_utc || pb.source_timestamp_utc || '');
-  return Number.isFinite(ta) && Number.isFinite(tb) && Math.abs(ta - tb) <= 10 * 60 * 1000;
-}
-
-function usefulPublicLiveFeature(feature) {
-  const props = feature?.properties || {};
-  const source = String(props.source || '').toLowerCase();
-  const category = String(props.visual_category || '');
-  const verification = String(props.verification_status || '');
-  const hypothesisState = String(props.hypothesis_state || props.investigation_state || '');
-  const evidenceStage = String(props.evidence_stage || '');
-
-  if (source === 'ais' && category === 'navigation_casualty' && verification === 'ais_transponder') {
-    const independentlySupported = Number(props.independent_source_count || 0) >= 2
-      || ['corroborated', 'assessed', 'confirmed'].includes(evidenceStage);
-    if (!independentlySupported) return false;
-  }
-  if (['ais_anomaly', 'dark_candidate', 'vessel_identity', 'correlated_alert'].includes(String(props.type || ''))) {
-    return hypothesisState === 'published'
-      || (String(props.publication_status || '') === 'published' && Boolean(props.hypothesis_type));
-  }
-  return true;
-}
-
-export function usefulPublicLiveFeatures(features = []) {
-  const candidates = (Array.isArray(features) ? features : []).filter(usefulPublicLiveFeature);
-  const ordered = [...candidates].sort((a, b) => Date.parse(a?.properties?.timestamp_utc || '') - Date.parse(b?.properties?.timestamp_utc || ''));
-  const duplicateIds = new Set();
-  for (let i = 0; i < ordered.length; i += 1) {
-    if (duplicateIds.has(ordered[i]?.properties?.id)) continue;
-    for (let j = i + 1; j < ordered.length; j += 1) {
-      if (alarmPhoneDuplicate(ordered[i], ordered[j])) duplicateIds.add(ordered[j]?.properties?.id);
-    }
-  }
-  return candidates.filter((feature) => !duplicateIds.has(feature?.properties?.id));
-}
-
 /** Replace the rendered drift for one Intel event without duplicating stale versions. */
 export function mergeIntelDriftUpdate(collection, message) {
   if (!isRecord(message)

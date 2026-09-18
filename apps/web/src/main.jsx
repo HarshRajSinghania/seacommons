@@ -34,7 +34,7 @@ import { computeDriftInWorker } from './simulation/workerClient.js';
 import { fetchJson } from './services/api/client.js';
 import { useLiveFeed } from './hooks/useLiveFeed.js';
 import { FEED_STATUS_LABEL, FEED_STATUS_TONE, liveSignalTotal } from './features/live/feedStatus.js';
-import { mergeIntelDriftUpdate, usefulPublicLiveFeatures } from './features/live/normalize.js';
+import { mergeIntelDriftUpdate } from './features/live/normalize.js';
 import { receiverChannelLabel } from './features/live/pipelineStatus.js';
 import { initialLayerVisibility, layerVisibilityStorageKey } from './features/live/layerDefaults.js';
 import { splitObservedTrackSegments } from './features/live/observedTrack.js';
@@ -660,10 +660,6 @@ function App() {
       setIntelDrifts((previous) => mergeIntelDriftUpdate(previous, message));
     },
   });
-  const displayIntelEvents = useMemo(
-    () => (isPublicLiveHost ? usefulPublicLiveFeatures(intelEvents) : intelEvents),
-    [intelEvents, isPublicLiveHost],
-  );
   const [liveEstimateClock, setLiveEstimateClock] = useState(Date.now());
   const [intelFilter, setIntelFilter] = useState('all');
   const [signalsExpanded, setSignalsExpanded] = useState(false);
@@ -696,7 +692,7 @@ function App() {
     setTriggeringDrift((prev) => {
       let changed = false;
       const next = new Set(prev);
-      for (const feat of displayIntelEvents) {
+      for (const feat of intelEvents) {
         const id = feat.properties?.id;
         const status = feat.properties?.drift_status;
         if (id && status && status !== 'computing' && next.has(id)) {
@@ -706,14 +702,14 @@ function App() {
       }
       return changed ? next : prev;
     });
-  }, [displayIntelEvents, triggeringDrift]);
+  }, [intelEvents, triggeringDrift]);
 
   // Flash + chime when a NEW correlated_alert appears (the poll transport does
   // not push per-event, so detect it from the feed array). The first pass just
   // seeds the seen-set so existing alerts never re-fire on reload.
   useEffect(() => {
     if (isPublicLiveHost) return;
-    const ids = displayIntelEvents
+    const ids = intelEvents
       .filter((f) => f.properties?.type === 'correlated_alert')
       .map((f) => f.properties?.id)
       .filter(Boolean);
@@ -721,7 +717,7 @@ function App() {
       seenAlertIdsRef.current = new Set(ids);
       return;
     }
-    const fresh = displayIntelEvents.find((f) => f.properties?.type === 'correlated_alert'
+    const fresh = intelEvents.find((f) => f.properties?.type === 'correlated_alert'
       && !seenAlertIdsRef.current.has(f.properties?.id));
     ids.forEach((id) => seenAlertIdsRef.current.add(id));
     if (fresh) {
@@ -729,7 +725,7 @@ function App() {
       playAlertBeep();
       window.setTimeout(() => setAlertFlash(null), 8000);
     }
-  }, [displayIntelEvents, isPublicLiveHost]);
+  }, [intelEvents, isPublicLiveHost]);
   const caseEventIdRef = useRef(null);
   const caseStatusRef = useRef('idle');
   const simParamsRef = useRef({});
@@ -754,10 +750,10 @@ function App() {
     () => mergeLiveDrifts(
       intelDrifts,
       null,
-      displayIntelEvents,
+      intelEvents,
       new Date(liveEstimateClock),
     ),
-    [intelDrifts, displayIntelEvents, liveEstimateClock],
+    [intelDrifts, intelEvents, liveEstimateClock],
   );
   const selectedIntelEventId = mapPanel?.type === 'intel'
     ? mapPanel.feature?.properties?.id
@@ -765,11 +761,11 @@ function App() {
   const resolvedMapPanel = useMemo(() => {
     if (mapPanel?.type !== 'intel') return mapPanel;
     const selectedId = String(mapPanel.feature?.properties?.id || '').replace(/^intel:/, '');
-    const canonicalFeature = displayIntelEvents.find((feature) => (
+    const canonicalFeature = intelEvents.find((feature) => (
       String(feature.properties?.id || '').replace(/^intel:/, '') === selectedId
     ));
     return canonicalFeature ? { ...mapPanel, feature: canonicalFeature } : mapPanel;
-  }, [displayIntelEvents, mapPanel]);
+  }, [intelEvents, mapPanel]);
 
   function panelFocusCoordinates(panel) {
     const geometry = panel?.feature?.geometry;
@@ -1138,7 +1134,7 @@ function App() {
 
   useEffect(() => {
     const map = mapRef.current;
-    const features = displayIntelEvents || [];
+    const features = intelEvents || [];
     if (!isPublicLiveHost || !map || !mapReady || liveSignalsFramedRef.current || !features.length) return;
     let west = Infinity;
     let south = Infinity;
@@ -1175,7 +1171,7 @@ function App() {
       duration: 1100,
       essential: true,
     });
-  }, [displayIntelEvents, mapReady, sidebarOpen]);
+  }, [intelEvents, mapReady, sidebarOpen]);
 
   // ── Map init ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -2468,19 +2464,19 @@ function App() {
   }
 
   // Live per-category counts for the Signals selector — recomputed on every
-  // displayIntelEvents update (WS push / poll), independent of which categories are
+  // intelEvents update (WS push / poll), independent of which categories are
   // currently toggled on, so switching one off never zeroes its own count.
   const signalCategoryCounts = useMemo(() => {
     const counts = {};
-    for (const feature of displayIntelEvents) {
+    for (const feature of intelEvents) {
       const key = signalCategoryOf(feature?.properties || {});
       counts[key] = (counts[key] || 0) + 1;
     }
     return counts;
-  }, [displayIntelEvents]);
+  }, [intelEvents]);
   const alarmPhoneCount = useMemo(
-    () => displayIntelEvents.filter((f) => isAlarmPhoneSource(f?.properties?.source)).length,
-    [displayIntelEvents],
+    () => intelEvents.filter((f) => isAlarmPhoneSource(f?.properties?.source)).length,
+    [intelEvents],
   );
 
   // 'other' has no dedicated toggle (see SIGNALS_TOGGLE_CATEGORIES) and stays
@@ -2496,7 +2492,7 @@ function App() {
   }, [layerVis]);
 
   const visibleLivePointFeatures = useMemo(() => {
-    let positioned = displayIntelEvents.filter((feature) => (
+    let positioned = intelEvents.filter((feature) => (
       (feature.geometry?.type === 'Point' || feature.geometry?.type === 'Polygon')
       && feature.geometry?.coordinates
     ));
@@ -2509,7 +2505,7 @@ function App() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayIntelEvents, activeSignalCategories, layerVis.alarm_phone]);
+  }, [intelEvents, activeSignalCategories, layerVis.alarm_phone]);
 
   const fallbackVesselFeatures = useMemo(() => {
     const byId = new Map();
@@ -2581,7 +2577,7 @@ function App() {
     map.getSource('intel-fused')?.setData({ type: 'FeatureCollection', features: fused });
     map.getSource('intel-spike')?.setData({ type: 'FeatureCollection', features: spikes });
     map.getSource('intel-vessels')?.setData({ type: 'FeatureCollection', features: vesselEpisodes });
-    const observedTracks = displayIntelEvents.flatMap((feature) => {
+    const observedTracks = intelEvents.flatMap((feature) => {
       const p = feature.properties || {};
       const points = Array.isArray(p.observed_track) ? p.observed_track : [];
       return splitObservedTrackSegments(points).map((segment, segmentIndex) => ({
@@ -2597,7 +2593,7 @@ function App() {
       }));
     });
     map.getSource('intel-observed-tracks')?.setData({ type: 'FeatureCollection', features: observedTracks });
-  }, [displayIntelEvents, mapReady, visibleLivePointFeatures]);
+  }, [intelEvents, mapReady, visibleLivePointFeatures]);
 
   // MDA layer data
   useEffect(() => {
@@ -2638,7 +2634,7 @@ function App() {
     let timer = null;
 
     async function refresh() {
-      const points = displayIntelEvents
+      const points = intelEvents
         .filter((f) => {
           const p = f.properties || {};
           return (p.tier === 'operational' || p.type === 'distress') && f.geometry?.coordinates;
@@ -2687,7 +2683,7 @@ function App() {
     refresh();
     timer = window.setInterval(refresh, LIVE_VESSEL_REFRESH_MS);
     return () => { alive = false; if (timer) window.clearInterval(timer); };
-  }, [displayIntelEvents, mapReady, apiBase]);
+  }, [intelEvents, mapReady, apiBase]);
 
   // Receiver mesh is provenance/infrastructure, not a third public content
   // compartment. Poll a bounded public-safe snapshot and render only coarse
@@ -2854,7 +2850,7 @@ function App() {
       if (mmsi && f.geometry?.coordinates) vesselByMmsi[String(mmsi)] = f.geometry.coordinates;
     }
     const features = [];
-    for (const ev of displayIntelEvents) {
+    for (const ev of intelEvents) {
       const p = ev.properties || {};
       const evCoords = ev.geometry?.coordinates;
       if (!evCoords || !p.linked_mmsi) continue;
@@ -2872,7 +2868,7 @@ function App() {
     }
     map.getSource('intel-vessel-links')?.setData({ type: 'FeatureCollection', features });
     map.setLayoutProperty('intel-vessel-links-layer', 'visibility', 'visible');
-  }, [showVesselLinks, displayIntelEvents, vessels, mapReady]);
+  }, [showVesselLinks, intelEvents, vessels, mapReady]);
 
   // ── Initial data load + polling ──────────────────────────────────────────────
   useEffect(() => {
@@ -2986,12 +2982,12 @@ function App() {
     const openAlerts = stats?.sar?.open_alerts ?? 0;
     return [
       { label: 'AIS',      value: summary.traffic?.registry?.active_30m ?? '—', tone: 'ok' },
-      { label: 'Signals',  value: liveSignalTotal(liveModeCounts, displayIntelEvents.length || stats?.signals?.recent_event_count || 0), tone: 'info' },
+      { label: 'Signals',  value: liveSignalTotal(liveModeCounts, intelEvents.length || stats?.signals?.recent_event_count || 0), tone: 'info' },
       { label: 'Feed',     value: FEED_STATUS_LABEL[feedStatus] || 'sync', tone: FEED_STATUS_TONE[feedStatus] || 'info' },
       { label: 'Alerts',   value: openAlerts,                                    tone: openAlerts > 0 ? 'warn' : 'default' },
       { label: 'Forensics',value: stats?.sar?.forensic_packets ?? '—',           tone: 'default' },
     ];
-  }, [summary, stats, displayIntelEvents.length, feedStatus, liveModeCounts]);
+  }, [summary, stats, intelEvents.length, feedStatus, liveModeCounts]);
 
   const serviceRows = useMemo(() => {
     if (!summary) return [];
@@ -3296,13 +3292,13 @@ function App() {
   const intelStats = useMemo(() => {
     const by_type = {};
     const by_sev = {};
-    for (const f of displayIntelEvents) {
+    for (const f of intelEvents) {
       const p = f.properties || {};
       if (p.type) by_type[p.type] = (by_type[p.type] || 0) + 1;
       if (p.severity) by_sev[p.severity] = (by_sev[p.severity] || 0) + 1;
     }
-    return { total: displayIntelEvents.length, by_type, by_sev };
-  }, [displayIntelEvents]);
+    return { total: intelEvents.length, by_type, by_sev };
+  }, [intelEvents]);
 
   const isOnSim = APP_PROFILE === 'demo' && (activePanel === 'sim' || selectionMode);
   const simulationRunning = caseStatus.startsWith('starting') || caseStatus.startsWith('queued') || caseStatus.startsWith('computing');
@@ -3374,7 +3370,7 @@ function App() {
         {!play3D ? <Legend /> : null}
         {!play3D && !isPublicLiveHost ? (
           <AlertRail
-            displayIntelEvents={displayIntelEvents}
+            intelEvents={intelEvents}
             onFocus={(lat, lon) => mapRef.current?.flyTo({ center: [Number(lon), Number(lat)], zoom: 8, duration: 800 })}
             onOpenCase={() => setActivePanel('cases')}
           />
@@ -3640,7 +3636,7 @@ function App() {
                       SIGNALS_TOGGLE_CATEGORIES.every((c) => isLayerGroupOn(c.groupKey)) ? 'is-active' : ''
                     }`}
                     onClick={(event) => { event.preventDefault(); toggleAllSignals(); }}
-                  >All<span className="signals-selector__count">{liveSignalTotal(liveModeCounts, displayIntelEvents.length)}</span></a>
+                  >All<span className="signals-selector__count">{liveSignalTotal(liveModeCounts, intelEvents.length)}</span></a>
                   <button
                     type="button"
                     className={`signals-selector__chevron ${signalsExpanded ? 'is-open' : ''}`}
@@ -3656,7 +3652,8 @@ function App() {
                       const sampledMacroCount = macro.categories.reduce(
                         (sum, c) => sum + (signalCategoryCounts[c.key] || 0), 0,
                       );
-                      const macroCount = sampledMacroCount;
+                      const canonicalMacroCount = Number(liveModeCounts?.[macro.key]);
+                      const macroCount = Number.isFinite(canonicalMacroCount) ? canonicalMacroCount : sampledMacroCount;
                       const macroExpanded = expandedMacros.has(macro.key);
                       return (
                         <div key={macro.key} className="signals-selector__macro">
@@ -3727,7 +3724,7 @@ function App() {
               <IntelDashboard
                 apiBase={apiBase}
                 publicMode
-                displayIntelEvents={displayIntelEvents}
+                intelEvents={intelEvents}
                 intelStats={intelStats}
                 liveModeCounts={liveModeCounts}
                 intelFilter={intelFilter}
@@ -3789,7 +3786,7 @@ function App() {
             <button className={activePanel === 'cases' ? 'is-active' : ''} onClick={() => setActivePanel('cases')}>Cases</button>
             <button className={activePanel === 'live'     ? 'is-active' : ''} onClick={() => setActivePanel('live')}>Live</button>
             <button className={activePanel === 'osint'    ? 'is-active' : ''} onClick={() => setActivePanel('osint')}>
-              OSINT{displayIntelEvents.length > 0 && <span className="tab-badge">{displayIntelEvents.length}</span>}
+              OSINT{intelEvents.length > 0 && <span className="tab-badge">{intelEvents.length}</span>}
             </button>
             <button className={activePanel === 'mda'      ? 'is-active' : ''} onClick={() => setActivePanel('mda')}>
               MDA{mdaAnomalies.length > 0 && <span className="tab-badge">{mdaAnomalies.length}</span>}
@@ -3858,7 +3855,7 @@ function App() {
             <IntelDashboard
               apiBase={apiBase}
               publicMode={isPublicLiveHost}
-              displayIntelEvents={displayIntelEvents}
+              intelEvents={intelEvents}
               intelStats={intelStats}
               liveModeCounts={liveModeCounts}
               liveMode={liveMode}

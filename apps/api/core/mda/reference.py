@@ -23,13 +23,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from shapely.geometry import LineString, Point, Polygon, shape
-from shapely.strtree import STRtree
+from shapely.geometry import LineString, Point, Polygon, shape  # type: ignore[import-untyped]
+from shapely.strtree import STRtree  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
 _DIR = Path(__file__).resolve().parents[1] / "data" / "reference"
 _BUNDLE = _DIR / "med_reference.json"
+_LAND_BUNDLE = _DIR / "med_land_lowres.geojson"
 _REFRESHED = _DIR / "refreshed"  # datasets pulled by refresh() land here as *.geojson
 
 _NM_PER_DEG = 60.0
@@ -70,6 +71,7 @@ class ReferenceIndex:
         self._infra_tree: Optional[STRtree] = None
         self._ports: list[tuple[float, float, str, float]] = []   # lon, lat, name, radius_nm
         self._chokepoints: list[dict[str, Any]] = []
+        self._land_geom: Any = None
         self.load()
 
     # ── build ────────────────────────────────────────────────────────────────
@@ -97,6 +99,15 @@ class ReferenceIndex:
 
         ports = [(lon, lat, name, float(r_nm)) for lon, lat, name, r_nm in data.get("ports", [])]
         chokepoints = list(data.get("chokepoints", []))
+        land_geom = None
+        try:
+            land_data = json.loads(_LAND_BUNDLE.read_text(encoding="utf-8"))
+            land_features = [shape(feat["geometry"]) for feat in land_data.get("features", []) if feat.get("geometry")]
+            if land_features:
+                from shapely.ops import unary_union  # type: ignore[import-untyped]
+                land_geom = unary_union(land_features)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("reference: coastline bundle load failed: %s", exc)
 
         # merge any refreshed datasets (EEZ, MPA, real cables/pipelines)
         refreshed = self._load_refreshed()
@@ -107,6 +118,7 @@ class ReferenceIndex:
                                     if f.kind in ("cable", "pipeline", "platform", "sts_zone", "mpa")]
             self._ports = ports
             self._chokepoints = chokepoints
+            self._land_geom = land_geom
             self._tree = STRtree([f.geom for f in self._features]) if self._features else None
             self._infra_tree = (STRtree([f.geom for f in self._infra_features])
                                 if self._infra_features else None)
@@ -188,6 +200,26 @@ class ReferenceIndex:
             if d < best_km:
                 best_name, best_km = name, d
         return best_name, round(best_km, 1)
+
+    def distance_from_coast_km(self, lat: float, lon: float) -> Optional[float]:
+        """Approximate distance to the nearest coastline from bundled Natural Earth land.
+
+        This is contextual evidence only. Low-resolution land geometry is intentionally
+        deterministic/offline and must never be treated as a navigational product.
+        """
+        with self._lock:
+            land = self._land_geom
+        if land is None:
+            return None
+        pt = Point(lon, lat)
+        if land.contains(pt):
+            return 0.0
+        return round(_geom_distance_km(pt, land.boundary, lat), 1)
+
+    def is_land(self, lat: float, lon: float) -> bool:
+        with self._lock:
+            land = self._land_geom
+        return bool(land is not None and land.contains(Point(lon, lat)))
 
     def in_port_or_anchorage(self, lat: float, lon: float) -> Optional[str]:
         """True (port name) when the point is inside a port's approach radius —

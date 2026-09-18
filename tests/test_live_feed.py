@@ -1382,6 +1382,13 @@ def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> No
     assert security_feed["meta"]["mode_counts"] == expected_counts
     assert small_feed["meta"]["mode_counts"] == expected_counts
     assert incremental_feed["meta"]["mode_counts"] == expected_counts
+    assert humanitarian_feed["meta"]["role_counts"] == {
+        "humanitarian_case": 3,
+        "maritime_episode": 0,
+        "maritime_evidence": 0,
+        "operational_signal": 0,
+        "maritime_signal": 0,
+    }
     assert len(small_feed["features"]) == 1
     assert incremental_feed["features"] == []
 

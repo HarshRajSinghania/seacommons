@@ -331,6 +331,24 @@ class AISAnomalyDetector:
                     f"AIS-derived {label}; confidence {event.confidence:.0%}. "
                     "This is an indicator, not proof of intent."
                 )
+            from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
+            offshore_context = build_offshore_context(
+                float(event.position.get("lat") or 0.0),
+                float(event.position.get("lon") or 0.0),
+            )
+            offshore_metadata = {
+                "anomaly_confidence": event.confidence,
+                "anomaly_evidence": event.evidence,
+                "silent_seconds": (event.evidence or {}).get("silent_seconds"),
+                "gap_reason": event.evidence if event.anomaly_type in {"gap", "long_gap"} else None,
+            }
+            offshore_qualification = qualify_offshore_anomaly(
+                event.anomaly_type, offshore_metadata, offshore_context
+            ) if not is_coverage else {"qualified": False, "reason_codes": [], "rationale": None}
+            canonical_live_integrity = (
+                bool(offshore_qualification.get("qualified"))
+                and event.anomaly_type in {"impossible_speed", "position_jump", "teleport"}
+            )
             intel_store.add(
                 IntelEvent(
                     id=ev_id,
@@ -353,13 +371,18 @@ class AISAnomalyDetector:
                         "transport": "ais_stream",
                         "verification_status": "ais_transponder",
                         "is_distress": False,
-                        "publication_status": "internal",
+                        "publication_status": "published" if canonical_live_integrity else "internal",
+                        "analysis_state": "evidence_candidate" if offshore_qualification.get("qualified") else "anomaly",
                         "report_kind": "coverage_outage" if is_coverage else "ais_anomaly",
                         "coordinate_source": "ais_position",
                         "anomaly_type": event.anomaly_type,
                         "maritime_domain": domain,
                         "anomaly_confidence": event.confidence,
                         "anomaly_evidence": event.evidence,
+                        "offshore_context": offshore_context,
+                        "offshore_anomaly_qualified": bool(offshore_qualification.get("qualified")),
+                        "offshore_reason_codes": list(offshore_qualification.get("reason_codes") or ()),
+                        "offshore_rationale": offshore_qualification.get("rationale"),
                         "vessel_name": event.vessel_name or None,
                         "detection_reason": reason,
                     },

@@ -344,7 +344,16 @@ class MdaWatch:
                          "ship_type": st, "flag": v.get("flag")})
         zone = reference.in_sts_zone(lat, lon)
         dark = self._either_had_gap(key)
-        severity = "high" if (tanker or zone or dark) else "medium"
+        from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
+        offshore_context = build_offshore_context(lat, lon)
+        rendezvous_meta = {
+            "duration_min": round(dur_min, 1),
+            "sts_zone": zone,
+            "tanker": tanker,
+            "dark": dark,
+        }
+        offshore_qualification = qualify_offshore_anomaly("ais_rendezvous", rendezvous_meta, offshore_context)
+        severity = "high" if (tanker or zone or dark or offshore_qualification["qualified"]) else "medium"
         title = "STS rendezvous"
         if tanker:
             title = "Tanker STS rendezvous"
@@ -379,12 +388,17 @@ class MdaWatch:
                 "lane": "intelligence",
                 "observation_type": "rendezvous",
                 "is_distress": False,
-                "publication_status": "internal",
+                "publication_status": "published" if offshore_qualification["qualified"] else "internal",
+                "analysis_state": "evidence_candidate" if offshore_qualification["qualified"] else "anomaly",
                 "source_policy": "official_api",
                 "verification_status": "ais_transponder",
                 "coordinate_source": "ais_position",
                 "vessels": info, "duration_min": round(dur_min, 1),
                 "sts_zone": zone, "tanker": tanker, "dark": dark,
+                "offshore_context": offshore_context,
+                "offshore_anomaly_qualified": offshore_qualification["qualified"],
+                "offshore_reason_codes": offshore_qualification["reason_codes"],
+                "offshore_rationale": offshore_qualification["rationale"],
             },
         ), dedup_key=f"sts:{key[0]}:{key[1]}:{int(time.time() // 21600)}")
         logger.warning("MDA: STS rendezvous %s <-> %s (%dmin, tanker=%s dark=%s zone=%s)",
@@ -594,6 +608,26 @@ class MdaWatch:
                 coverage_quality=confidence_mod.coverage_quality(jam),
                 location_precision=confidence_mod.location_precision_score("ais_position"),
             )
+            behaviour_context = _behaviour_context_for(mmsi)
+            from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
+            anomaly_type = "long_gap" if (time.time() - last.ts) > 6 * 3600 else "gap"
+            gap_meta = {
+                "silent_seconds": int(time.time() - last.ts),
+                "jamming_score": jam,
+                "gap_reason": (
+                    {
+                        "hypothesis": gap_reason.hypothesis,
+                        "confidence": gap_reason.confidence,
+                        "coverage_ratio": gap_reason.coverage_ratio,
+                        "nearby_vessels_reporting_before": nearby_before,
+                        "nearby_vessels_reporting_after": nearby_after,
+                    }
+                    if gap_reason is not None else None
+                ),
+                "behaviour_context": behaviour_context,
+            }
+            offshore_context = build_offshore_context(last.lat, last.lon)
+            offshore_qualification = qualify_offshore_anomaly(anomaly_type, gap_meta, offshore_context)
             intel_store.add(IntelEvent(
                 id=f"aisgap:{mmsi}",
                 type="ais_anomaly",
@@ -605,16 +639,22 @@ class MdaWatch:
                       + (" Inside an active GNSS-jamming zone (likely reception loss)." if jam > 0.3 else "")),
                 source="mda", linked_mmsi=mmsi,
                 metadata={
-                    "anomaly_type": "long_gap" if (time.time() - last.ts) > 6 * 3600 else "gap",
+                    "anomaly_type": anomaly_type,
                     # A reporting gap is a traffic anomaly.  It becomes
                     # sanctions context only when identity screening finds a
                     # real list match on this vessel.
                     "maritime_domain": "grey_zone",
-                    "is_distress": False, "publication_status": "internal",
+                    "is_distress": False,
+                    "publication_status": "published" if offshore_qualification["qualified"] else "internal",
+                    "analysis_state": "evidence_candidate" if offshore_qualification["qualified"] else "anomaly",
                     "source_policy": "official_api", "verification_status": "ais_transponder",
                     "coordinate_source": "ais_position",
                     "silent_seconds": int(time.time() - last.ts),
                     "jamming_score": jam, "anomaly_confidence": confidence,
+                    "offshore_context": offshore_context,
+                    "offshore_anomaly_qualified": offshore_qualification["qualified"],
+                    "offshore_reason_codes": offshore_qualification["reason_codes"],
+                    "offshore_rationale": offshore_qualification["rationale"],
                     "port_or_anchorage": port_or_anchorage,
                     "pre_gap_speed_kn": last.sog,
                     "pre_gap_course_deg": pre_gap_course,

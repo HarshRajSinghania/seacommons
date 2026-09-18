@@ -3287,6 +3287,14 @@ h2, h3, .sidebar-header h2, .panel-block h3 {
   padding-top: 9px;
   border-top: 1px solid rgba(255,255,255,.08);
 }
+.signals-selector__role-summary {
+  padding: 1px 0 6px;
+  color: rgba(225,242,237,.46);
+  font-size: 9px;
+  line-height: 1.45;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
 .signals-selector__macro + .signals-selector__macro {
   margin-top: 4px;
   padding-top: 4px;

@@ -55,6 +55,7 @@ export function useLiveFeed({
     () => loadCachedEvents(isPublicLiveHost, liveMode),
   );
   const [liveModeCounts, setLiveModeCounts] = useState({ humanitarian: null, maritime: null });
+  const [liveRoleCounts, setLiveRoleCounts] = useState({});
   const [pipelineSources, setPipelineSources] = useState([]);
   const [intelConnected, setIntelConnected] = useState(false);
   const [intelMode, setIntelMode] = useState('offline');
@@ -137,6 +138,7 @@ export function useLiveFeed({
           markFeedSuccess(snapshotFeatures.length);
           if (isPublicLiveHost && message.meta?.mode_counts) {
             setLiveModeCounts(message.meta.mode_counts);
+            if (message.meta?.role_counts) setLiveRoleCounts(message.meta.role_counts);
           }
         } else if (message.type === 'Feature') {
           const incoming = isPublicLiveHost ? receivedSignalFeatures([message]) : [message];
@@ -178,6 +180,7 @@ export function useLiveFeed({
           if (isPublicLiveHost) {
             const counts = data.meta?.mode_counts;
             if (counts) setLiveModeCounts(counts);
+            if (data.meta?.role_counts) setLiveRoleCounts(data.meta.role_counts);
           }
           setIntelConnected(true);
           setIntelMode((previous) => previous === 'ws' ? 'ws' : 'poll');
@@ -286,6 +289,7 @@ export function useLiveFeed({
         setIntelEvents(features);
         storeCachedEvents(true, features, 'humanitarian');
         if (data.meta?.mode_counts) setLiveModeCounts(data.meta.mode_counts);
+        if (data.meta?.role_counts) setLiveRoleCounts(data.meta.role_counts);
         setIntelConnected(true);
         setIntelMode('poll');
         markFeedSuccess(features.length);
@@ -304,6 +308,7 @@ export function useLiveFeed({
           5000,
         );
         if (alive && data.meta?.mode_counts) setLiveModeCounts(data.meta.mode_counts);
+        if (alive && data.meta?.role_counts) setLiveRoleCounts(data.meta.role_counts);
       } catch {
         // The current edge snapshot remains usable even when count enrichment fails.
       }
@@ -399,6 +404,7 @@ export function useLiveFeed({
     intelMode,
     feedStatus,
     liveModeCounts,
+    liveRoleCounts,
     pipelineSources,
   };
 }

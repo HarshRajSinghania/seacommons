@@ -685,6 +685,20 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
         ) : (
           <p className="intel-report-note">{props.detection_reason || props.detail || descriptionOf(props.type)}</p>
         )}
+        {props.offshore_context?.offshore && (
+          <div className="intel-report-warning">
+            <strong>Offshore context</strong>
+            <span>
+              {Number.isFinite(Number(props.offshore_context.distance_from_coast_km))
+                ? `${Number(props.offshore_context.distance_from_coast_km).toFixed(0)} km from coast`
+                : 'Distance from coast unavailable'}
+              {Number.isFinite(Number(props.offshore_context.distance_from_port_km))
+                ? ` · ${Number(props.offshore_context.distance_from_port_km).toFixed(0)} km from ${props.offshore_context.nearest_port || 'nearest port'}`
+                : ''}
+            </span>
+            <small>{props.offshore_rationale || 'Offshore context raises investigative relevance but does not establish intent.'}</small>
+          </div>
+        )}
         {props.infrastructure && (
           <div className="intel-report-warning">
             <strong>Infrastructure proximity context</strong>

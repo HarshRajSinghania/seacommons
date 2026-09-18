@@ -484,6 +484,17 @@ def public_signal_collection(
         "safety": len(features_by_mode["safety"]),
         "security": len(features_by_mode["security"]),
     }
+    role_counts = {
+        "humanitarian_case": 0,
+        "maritime_episode": 0,
+        "maritime_evidence": 0,
+        "operational_signal": 0,
+        "maritime_signal": 0,
+    }
+    for feature in [*features_by_mode["humanitarian"], *maritime_features]:
+        role = str((feature.get("properties") or {}).get("live_role") or "")
+        if role in role_counts:
+            role_counts[role] += 1
     if selected_mode == "all":
         # The public transport cap protects the browser from Maritime volume;
         # it must never hide an eligible humanitarian distress. Humanitarian
@@ -527,6 +538,7 @@ def public_signal_collection(
             "mode": selected_mode,
             "mode_counts": mode_counts,
             "domain_counts": domain_counts,
+            "role_counts": role_counts,
             "memory_candidates": len(memory_events),
             "durable_alarm_phone_candidates": len(durable_alarm_phone),
             "durable_sanction_port_call_candidates": len(durable_sanction_port_calls),

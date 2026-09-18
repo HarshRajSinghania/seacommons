@@ -645,7 +645,7 @@ function App() {
   // NGO, fused...) had plenty of eligible content sitting on the VM.
   const [liveMode] = useState(() => (isPublicLiveHost ? 'all' : 'humanitarian'));
   const seenAlertIdsRef = useRef(null);
-  const { intelEvents, setIntelEvents, feedStatus, liveModeCounts, pipelineSources } = useLiveFeed({
+  const { intelEvents, setIntelEvents, feedStatus, liveModeCounts, liveRoleCounts, pipelineSources } = useLiveFeed({
     apiBase,
     edgeBase: LIVE_EDGE_BASE,
     isPublicLiveHost,
@@ -3650,6 +3650,9 @@ function App() {
                 </div>
                 {signalsExpanded && (
                   <div className="signals-selector__macros" role="group" aria-label="Signal categories">
+                    <div className="signals-selector__role-summary">
+                      Cases {Number(liveRoleCounts?.humanitarian_case || 0)} · Episodes {Number(liveRoleCounts?.maritime_episode || 0)} · Evidence {Number(liveRoleCounts?.maritime_evidence || 0)} · Operational signals {Number(liveRoleCounts?.operational_signal || 0)}
+                    </div>
                     {SIGNALS_MACRO_GROUPS.map((macro) => {
                       const macroOn = macro.categories.every((c) => isLayerGroupOn(c.groupKey));
                       const sampledMacroCount = macro.categories.reduce(

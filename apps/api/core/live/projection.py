@@ -45,7 +45,7 @@ _PUBLIC_INTEL_TYPES = frozenset({"distress", "twitter", "mastodon", "ngo_activit
 # speed) — and the fused alert it may feed are eligible.
 _PUBLIC_CONTEXT_TYPES = frozenset(
     {"news", "bluesky", "gdacs", "vessel_incident", "iom_incident",
-     "ais_anomaly", "correlated_alert", "oil_spill",
+     "ais_anomaly", "ais_rendezvous", "correlated_alert", "oil_spill",
      # vessel_identity (sanctions/identity findings) and dark_candidate
      # (satellite-vs-AIS mismatch) are Security-mode content -- eligible
      # here, actually reachable only when mode=security opens their domain
@@ -151,6 +151,10 @@ _PUBLIC_METADATA = frozenset(
         "detail",
         "public_summary",
         "live_role",
+        "offshore_context",
+        "offshore_anomaly_qualified",
+        "offshore_reason_codes",
+        "offshore_rationale",
         "drift_eligible",
         "drift_event_id",
         "drift_vessel_type",
@@ -305,7 +309,8 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         if not beacon_mmsi.startswith(("970", "972", "974")):
             return False
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
-        return False
+        if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
+            return False
     source = str(props.get("source") or "").lower()
     category = str(props.get("visual_category") or "")
     verification = str(props.get("verification_status") or "")
@@ -355,8 +360,7 @@ def _public_intel_feature(
     publication = str(event.metadata.get("publication_status") or "").lower()
     source_policy = str(event.metadata.get("source_policy") or "").lower()
     if publication == "internal":
-        # Explicitly internal analytical episodes never cross the public boundary,
-        # including SeaCommons-derived events that would otherwise be eligible.
+        # Explicitly internal analytical episodes never cross the public boundary.
         return None
     if is_blocked_source(event.metadata):
         # Old scraper records may still be persisted; they must never re-enter Live.
@@ -374,14 +378,21 @@ def _public_intel_feature(
     # public case. Grey-zone/sanctions AIS anomalies, fused alerts, identity
     # flags and satellite dark candidates can reach public Live only after
     # they have become a published InvestigationHypothesis.
+    offshore_evidence = bool(
+        event.metadata.get("offshore_anomaly_qualified")
+        and str(event.metadata.get("analysis_state") or "") == "evidence_candidate"
+        and publication == "published"
+        and event.type in {"ais_anomaly", "ais_rendezvous"}
+    )
     if (
         resolved_domain in {"grey_zone", "sanctions"}
-        and event.type in {"ais_anomaly", "correlated_alert", "vessel_identity", "dark_candidate"}
+        and event.type in {"ais_anomaly", "ais_rendezvous", "correlated_alert", "vessel_identity", "dark_candidate"}
         and not (
-            resolved_domain == "sanctions"
-            and event.type == "vessel_identity"
-            and str(event.metadata.get("anomaly_type") or "") == "sanctioned_port_call"
-            and publication == "published"
+            (resolved_domain == "sanctions"
+             and event.type == "vessel_identity"
+             and str(event.metadata.get("anomaly_type") or "") == "sanctioned_port_call"
+             and publication == "published")
+            or offshore_evidence
         )
     ):
         return None
@@ -623,6 +634,8 @@ def _public_intel_feature(
     anomaly_type = str(metadata.get("anomaly_type") or "")
     if anomaly_type == "sanctioned_port_call":
         metadata["live_role"] = "maritime_episode"
+    elif metadata.get("offshore_anomaly_qualified") and metadata.get("analysis_state") == "evidence_candidate":
+        metadata["live_role"] = "maritime_evidence"
     elif str(metadata.get("ais_nav_status_kind") or "") == "distress_beacon":
         metadata["live_role"] = "operational_signal"
     elif compartment_for_domain(resolved_domain) == "humanitarian":
@@ -652,6 +665,8 @@ def _public_intel_feature(
                 f"Dedicated {beacon_kind} identity {beacon_mmsi or 'unknown'} is transmitting a distress signal. "
                 "This is an operational AIS safety signal, not independent confirmation of a casualty."
             )
+        elif metadata.get("offshore_anomaly_qualified"):
+            metadata["public_summary"] = str(metadata.get("offshore_rationale") or metadata.get("detection_reason") or "Offshore anomaly retained for investigation.")[:600]
         elif assessment_block is not None:
             metadata["public_summary"] = assessment_block.get("observation") or assessment_block.get("interpretation")
         elif metadata.get("detection_reason"):

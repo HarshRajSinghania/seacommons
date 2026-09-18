@@ -31,7 +31,10 @@ def test_impossible_speed_becomes_an_operator_only_intel_event(detector) -> None
     assert event.type == "ais_anomaly"
     assert event.metadata["anomaly_type"] == "impossible_speed"
     assert event.metadata["is_distress"] is False
-    assert event.metadata["publication_status"] == "internal"
+    assert event.metadata["publication_status"] == "published"
+    assert event.metadata["analysis_state"] == "evidence_candidate"
+    assert event.metadata["offshore_anomaly_qualified"] is True
+    assert event.metadata["offshore_context"]["offshore"] is True
 
 
 def test_sdn_match_is_high_severity(detector) -> None:
@@ -134,3 +137,19 @@ def test_position_hook_adapter_forwards_to_process_position(detector, monkeypatc
     monkeypatch.setattr(detector, "process_position", lambda *a: seen.append(a))
     detector._on_feed_position("333", "NAME", 35.0, 14.0, 8.0, 0)
     assert seen == [("333", "NAME", 35.0, 14.0, 8.0, "")]
+
+
+def test_impossible_speed_near_coast_stays_internal(monkeypatch, detector) -> None:
+    from core.mda.reference import reference
+    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 3.0)
+    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 5.0))
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
+    detector._last_seen["247012346"] = {
+        "lat": 35.0, "lon": 14.0, "ts": time.time() - 60, "speed": 10, "type": "", "name": "Y",
+    }
+    detector.process_position("247012346", "Y", 36.0, 15.0, 300.0, "")
+    event = detector._added[-1]
+    assert event.metadata["publication_status"] == "internal"
+    assert event.metadata["offshore_anomaly_qualified"] is False

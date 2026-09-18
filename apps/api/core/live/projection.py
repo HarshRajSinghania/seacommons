@@ -336,6 +336,9 @@ def _public_intel_feature(
     pass a different set to open sanctions/grey_zone content instead,
     without touching the default behaviour.
     """
+    from core.intel.analysis_state import annotate_event_analysis
+
+    annotate_event_analysis(event)
     if (
         event.type == "sar_model"
         or (event.title or "").strip().lower() == "computed sar drift product"
@@ -636,6 +639,18 @@ def _public_intel_feature(
                 f"{int(call.get('ais_fixes') or 0)} AIS fixes over {dwell_text}. "
                 "The vessel identity matches a sanctions list on a strong identifier. "
                 "This does not by itself establish sanctions evasion."
+            )
+        elif str(metadata.get("ais_nav_status_kind") or "") == "distress_beacon":
+            beacon_mmsi = str(metadata.get("linked_mmsi") or metadata.get("mmsi") or event.linked_mmsi or "")
+            beacon_kind = (
+                "AIS-SART" if beacon_mmsi.startswith("970")
+                else "AIS-MOB" if beacon_mmsi.startswith("972")
+                else "AIS-EPIRB" if beacon_mmsi.startswith("974")
+                else "AIS safety"
+            )
+            metadata["public_summary"] = (
+                f"Dedicated {beacon_kind} identity {beacon_mmsi or 'unknown'} is transmitting a distress signal. "
+                "This is an operational AIS safety signal, not independent confirmation of a casualty."
             )
         elif assessment_block is not None:
             metadata["public_summary"] = assessment_block.get("observation") or assessment_block.get("interpretation")

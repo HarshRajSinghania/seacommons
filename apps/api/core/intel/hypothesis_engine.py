@@ -103,6 +103,9 @@ def _attach_cross_modal_evidence(
 
 def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]]:
     """Build the internal feature used by the bounded episode builder."""
+    from core.intel.analysis_state import annotate_event_analysis
+
+    annotate_event_analysis(event)
     mmsis = _event_mmsis(event)
     if not mmsis:
         return None
@@ -127,11 +130,23 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
             "episode_family": metadata.get("episode_family"),
             "severity": event.severity,
             "source": event.source,
+            "maritime_domain": event.maritime_domain(),
+            "verification_status": metadata.get("verification_status"),
+            "sanctions_matched": metadata.get("sanctions_matched"),
+            "sanctions": metadata.get("sanctions"),
+            "port_call": metadata.get("port_call"),
+            "contributing_independence_groups": metadata.get(
+                "contributing_independence_groups"
+            ),
             "observation_ids": list(parent_ids or (event.id,)),
             "feature_ids": [event.id] if parent_ids else [],
             "incident_lifecycle": metadata.get("incident_lifecycle"),
             "behaviour_context": metadata.get("behaviour_context"),
             "alternative_explanations": metadata.get("alternative_explanations"),
+            "analysis_state": metadata.get("analysis_state"),
+            "publication_state": metadata.get("publication_state"),
+            "resolution_state": metadata.get("resolution_state"),
+            "lineage_ids": metadata.get("lineage_ids"),
             "gap_still_open": metadata.get("gap_still_open"),
             "current_silent_seconds": metadata.get("current_silent_seconds"),
         },

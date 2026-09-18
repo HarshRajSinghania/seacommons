@@ -223,6 +223,11 @@ class IntelEvent:
         return VerificationStatus.UNVERIFIED_PUBLIC_SOURCE.value
 
     def to_geojson_feature(self) -> dict[str, Any]:
+        # Historical rows pre-date analysis-state metadata. Derive it lazily
+        # at projection time so the archive is coherent without rewriting raw
+        # observations or requiring a destructive migration.
+        from core.intel.analysis_state import annotate_event_analysis
+        annotate_event_analysis(self)
         geo = (
             {"type": "Point", "coordinates": [self.lon, self.lat]}
             if self.lat is not None and self.lon is not None
@@ -368,6 +373,8 @@ class IntelStore:
         Add an event.  Returns True if stored, False if duplicate.
         Thread-safe.
         """
+        from core.intel.analysis_state import annotate_event_analysis
+        annotate_event_analysis(event)
         content_key = event.content_hash()
         keys = {dedup_key or content_key, content_key}
         url_duplicate: Optional[IntelEvent] = None

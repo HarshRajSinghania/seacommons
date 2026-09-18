@@ -158,8 +158,11 @@ const SIGNALS_MACRO_GROUPS = [
       { key: 'hazard', label: 'Maritime context', groupKey: 'intel_hazard' },
       { key: 'news', label: 'Context reports', groupKey: 'intel_news' },
       { key: 'social', label: 'Public observations', groupKey: 'intel_social' },
-      { key: 'fused', label: 'Reviewed intelligence', groupKey: 'fused' },
-      { key: 'ais', label: 'AIS anomaly', groupKey: 'spikes' },
+      { key: 'sanctions', label: 'Sanctions / compliance', groupKey: 'signal_sanctions' },
+      { key: 'dark_activity', label: 'Dark activity / AIS integrity', groupKey: 'signal_dark_activity' },
+      { key: 'rendezvous', label: 'Rendezvous / STS', groupKey: 'signal_rendezvous' },
+      { key: 'identity', label: 'Identity integrity', groupKey: 'signal_identity' },
+      { key: 'fused', label: 'Reviewed investigation', groupKey: 'signal_investigation' },
     ],
   },
 ];

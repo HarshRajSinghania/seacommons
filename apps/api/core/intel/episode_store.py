@@ -60,6 +60,13 @@ def save_episode(feature: dict[str, Any]):
         last_observed_at=last_at,
         method_version=method_version,
     )
+    behaviour_context = dict(props.get("behaviour_context") or {})
+    behaviour_context["analysis"] = {
+        "analysis_state": str(props.get("analysis_state") or "observation"),
+        "publication_state": str(props.get("publication_state") or "internal"),
+        "resolution_state": str(props.get("resolution_state") or "open"),
+        "lineage_ids": list(props.get("lineage_ids") or props.get("independence_groups") or ()),
+    }
     values = {
         "episode_family": family,
         "subject_ids": list(subject_ids),
@@ -70,7 +77,7 @@ def save_episode(feature: dict[str, Any]):
         "feature_ids": list(props.get("feature_ids") or ()),
         "independence_groups": list(props.get("independence_groups") or ()),
         "verification_status": str(props.get("verification_status") or "single_source_observed"),
-        "behaviour_context": dict(props.get("behaviour_context") or {}),
+        "behaviour_context": behaviour_context,
         "alternative_explanations": list(props.get("alternative_explanations") or ()),
         "evidence_fingerprint": fingerprint,
         "method_version": method_version,

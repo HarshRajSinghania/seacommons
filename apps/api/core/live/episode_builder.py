@@ -78,6 +78,7 @@ _FAMILY_BY_ANOMALY_TYPE: dict[str, str] = {
     "loiter": "infrastructure_proximity_episode",  # core.mda.watch.scan_infra_loiter / gfw_monitor
     "cable_proximity": "infrastructure_proximity_episode",  # core.mda.watch.scan_infra_loiter
     "sanctions_bunkering_loiter": "infrastructure_proximity_episode",  # core.mda.watch.scan_infra_loiter
+    "sanctioned_port_call": "port_call_episode",
     "not_under_command": "safety_episode",
     "sudden_stop": "safety_episode",
 }

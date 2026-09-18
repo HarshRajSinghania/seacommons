@@ -140,6 +140,13 @@ _PUBLIC_METADATA = frozenset(
         "anomaly_confidence",
         "confidence_v2",
         "sanctions_matched",
+        "sanctions",
+        "port_call",
+        "episode_family",
+        "analysis_state",
+        "publication_state",
+        "resolution_state",
+        "lineage_ids",
         "detection_reason",
         "detail",
         "drift_eligible",
@@ -277,7 +284,10 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         return False
     props = feature.get("properties") or {}
     event_type = str(props.get("type") or "")
-    if event_type in {"correlated_alert", "dark_candidate", "vessel_identity"}:
+    anomaly_type = str(props.get("anomaly_type") or "")
+    if event_type in {"correlated_alert", "dark_candidate"}:
+        return False
+    if event_type == "vessel_identity" and anomaly_type != "sanctioned_port_call":
         return False
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         return False
@@ -349,6 +359,12 @@ def _public_intel_feature(
     if (
         resolved_domain in {"grey_zone", "sanctions"}
         and event.type in {"ais_anomaly", "correlated_alert", "vessel_identity", "dark_candidate"}
+        and not (
+            resolved_domain == "sanctions"
+            and event.type == "vessel_identity"
+            and str(event.metadata.get("anomaly_type") or "") == "sanctioned_port_call"
+            and publication == "published"
+        )
     ):
         return None
     # Security correlated alerts are derived interpretations, not raw facts.

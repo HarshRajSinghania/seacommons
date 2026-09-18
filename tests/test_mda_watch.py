@@ -444,3 +444,75 @@ def test_coincident_teleport_peers_detect_same_area_and_time():
         "111000103": [p(35.0, 15.0, 0), p(39.0, 20.0, 60)],
     }
     assert MdaWatch._coincident_teleport_peers(tracks, "111000101") == ("111000102",)
+
+
+
+def test_sanctioned_port_call_requires_strong_identity_and_qualified_stay(monkeypatch):
+    from core.api.routes import mda as mda_routes
+    from core.mda import identity
+    from core.mda.reference import reference
+    from core.vessels.registry import registry
+
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: "Augusta")
+    mmsi = "244123456"
+    registry._cache[mmsi] = {"imo": "1234567", "ship_name": "LISTED SHIP", "flag": "NL"}
+    rows = [
+        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": "2026-09-18T05:00:00+00:00"},
+        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": "2026-09-18T06:00:00+00:00"},
+    ]
+    monkeypatch.setattr(track_store, "positions_between", lambda *a, **k: rows)
+    monkeypatch.setattr(
+        mda_routes, "_derive_recent_port_calls",
+        lambda track, limit=2: [{
+            "port": "Augusta", "arrived_at": rows[0]["ts"],
+            "last_seen_at": rows[-1]["ts"], "ais_fixes": 2,
+            "evidence_level": "derived", "method": "ais_port_approach",
+        }],
+    )
+
+    monkeypatch.setattr(identity, "screen", lambda **kwargs: {
+        "risk_flags": ["sanctions_hit"],
+        "sanctions": [{
+            "list": "OFAC_SDN", "program": "TEST",
+            "matched_on": ["imo"], "imo": "1234567",
+        }],
+    })
+
+    w = MdaWatch()
+    assert w.scan_sanctioned_port_calls() == 1
+    events = _alerts("vessel_identity")
+    assert len(events) == 1
+    event = events[0]
+    assert event.metadata["anomaly_type"] == "sanctioned_port_call"
+    assert event.metadata["publication_status"] == "published"
+    assert event.metadata["analysis_state"] == "evidence"
+    assert event.metadata["port_call"]["port"] == "Augusta"
+    assert "evasion" in event.text
+
+
+def test_sanctioned_port_call_rejects_name_only_match(monkeypatch):
+    from core.api.routes import mda as mda_routes
+    from core.mda import identity
+    from core.mda.reference import reference
+    from core.vessels.registry import registry
+
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: "Augusta")
+    mmsi = "244654321"
+    registry._cache[mmsi] = {"ship_name": "SAME NAME"}
+    rows = [{"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": "2026-09-18T05:00:00+00:00"}]
+    monkeypatch.setattr(track_store, "positions_between", lambda *a, **k: rows)
+    monkeypatch.setattr(
+        mda_routes, "_derive_recent_port_calls",
+        lambda track, limit=2: [{
+            "port": "Augusta", "arrived_at": rows[0]["ts"],
+            "method": "ais_port_approach",
+        }],
+    )
+    monkeypatch.setattr(identity, "screen", lambda **kwargs: {
+        "risk_flags": ["sanctions_hit"],
+        "sanctions": [{"list": "OFAC_SDN", "matched_on": ["name"]}],
+    })
+
+    w = MdaWatch()
+    assert w.scan_sanctioned_port_calls() == 0
+    assert not _alerts("vessel_identity")

@@ -101,11 +101,15 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     geometry = None
     if event.lat is not None and event.lon is not None:
         geometry = {"type": "Point", "coordinates": [event.lon, event.lat]}
+    meta = dict(event.meta or {})
     return {
         "incident_id": event.id,
         "incident_status": _generic_maritime_status(event),
         "surface": "play",
         "case_type": event.type,
+        "anomaly_type": str(meta.get("anomaly_type") or ""),
+        "analysis_state": str(meta.get("analysis_state") or ""),
+        "verification_status": str(meta.get("verification_status") or ""),
         "reported_at": event.timestamp_utc,
         "last_update_at": event.timestamp_utc,
         "state_changed_at": None,

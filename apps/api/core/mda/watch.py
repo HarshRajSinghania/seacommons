@@ -141,6 +141,7 @@ class MdaWatch:
             "infra_loiter": self.scan_infra_loiter(),
             "gap": self.scan_gaps(),
             "identity": self.scan_identity(),
+            "sanctioned_port_call": self.scan_sanctioned_port_calls(),
             "mmsi_duplicate": self.scan_mmsi_duplicate(),
             "spoofing": self.scan_spoofing(),
         }
@@ -740,6 +741,126 @@ class MdaWatch:
                     "identity_fingerprint": self._identity_fingerprint(result),
                 },
             ), dedup_key=f"vesselid:{mmsi}:{int(time.time() // 86400)}")
+            emitted += 1
+        return emitted
+
+    def scan_sanctioned_port_calls(self) -> int:
+        """Emit a factual Maritime compliance signal only when an exact
+        IMO/MMSI sanctions-list match meets a qualified AIS-derived port call.
+        Name-only matches and fast geofence transits remain internal.
+        """
+        import hashlib
+
+        from core.api.routes.mda import _derive_recent_port_calls
+        from core.mda.identity import screen
+        from core.mda.reference import reference
+        from core.vessels.registry import registry
+        from core.vessels.track_store import track_store
+
+        now = datetime.now(timezone.utc)
+        rows = track_store.positions_between(
+            now - timedelta(hours=48), now, bbox=_MED_BLACK_SEA, limit=150_000
+        )
+        by_mmsi: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            mmsi = str(row.get("mmsi") or "")
+            if mmsi:
+                by_mmsi.setdefault(mmsi, []).append(row)
+
+        cache = getattr(registry, "_cache", {}) or {}
+        emitted = 0
+        for mmsi, track in by_mmsi.items():
+            vessel = cache.get(mmsi, {}) or {}
+            identity = screen(
+                mmsi=mmsi,
+                imo=vessel.get("imo"),
+                name=vessel.get("ship_name") or "",
+                flag=vessel.get("flag") or "",
+            )
+            strong_hits = [
+                hit for hit in (identity.get("sanctions") or [])
+                if set(hit.get("matched_on") or ()) & {"imo", "mmsi"}
+            ]
+            if not strong_hits:
+                continue
+            calls = _derive_recent_port_calls(track, limit=2)
+            if not calls:
+                continue
+            call = calls[0]
+            arrived = str(call.get("arrived_at") or "")
+            port = str(call.get("port") or "").strip()
+            if not arrived or not port:
+                continue
+            stable = hashlib.blake2s(
+                f"{mmsi}|{port}|{arrived}".encode(), digest_size=8
+            ).hexdigest()
+            dedup = f"sanction-port:{stable}"
+            if self._recently_emitted(dedup, 48 * 3600):
+                continue
+
+            # Keep the signal at an observed AIS fix inside this port,
+            # never at a later post-departure fix and never at a port centroid.
+            port_points = []
+            for candidate in track:
+                try:
+                    candidate_port = reference.in_port_or_anchorage(
+                        float(candidate["lat"]), float(candidate["lon"])
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if candidate_port == port:
+                    port_points.append(candidate)
+            if not port_points:
+                continue
+            point = port_points[-1]
+            hit = strong_hits[0]
+            vessel_name = vessel.get("ship_name") or mmsi
+            intel_store.add(
+                IntelEvent(
+                    id=f"sanport:{stable}",
+                    type="vessel_identity",
+                    severity="high",
+                    lat=float(point["lat"]),
+                    lon=float(point["lon"]),
+                    title=f"Sanctioned vessel port call — {vessel_name} · {port}",
+                    text=(
+                        f"AIS-derived qualified port call at {port}. Vessel identity "
+                        f"matches {hit.get('list') or 'sanctions list'} on "
+                        f"{', '.join(hit.get('matched_on') or ())}. This is an observed "
+                        "identity + movement fact, not an allegation of sanctions evasion."
+                    ),
+                    source="SeaCommons MDA",
+                    linked_mmsi=mmsi,
+                    metadata={
+                        "anomaly_type": "sanctioned_port_call",
+                        "episode_family": "port_call_episode",
+                        "maritime_domain": "sanctions",
+                        "is_distress": False,
+                        "publication_status": "published",
+                        "source_policy": "official_api",
+                        "verification_status": "multi_source_corroborated",
+                        "coordinate_source": "ais_position",
+                        "sanctions_matched": True,
+                        "sanctions": strong_hits,
+                        "port_call": call,
+                        "identity": identity,
+                        "contributing_sources": [
+                            "ais", str(hit.get("list") or "sanctions_list")
+                        ],
+                        "contributing_independence_groups": [
+                            "ais_sensor_lineage",
+                            f"sanctions_list:{hit.get('list') or 'unknown'}",
+                        ],
+                        "alternative_explanations": [],
+                        "detection_reason": (
+                            "Exact IMO/MMSI sanctions-list match plus qualified AIS "
+                            "port stay; fast geofence transit and name-only matching "
+                            "are excluded."
+                        ),
+                    },
+                ),
+                dedup_key=dedup,
+            )
             emitted += 1
         return emitted
 

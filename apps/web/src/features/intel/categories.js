@@ -175,10 +175,12 @@ export function signalCategoryOf(properties = {}) {
     distress: 'distress',
     navigation_casualty: 'incident',
     environmental: 'hazard',
-    spoofing: 'ais',
-    ais_gap: 'ais',
-    loitering: 'ais',
-    identity: 'ais',
+    spoofing: 'dark_activity',
+    ais_gap: 'dark_activity',
+    loitering: 'dark_activity',
+    rendezvous: 'rendezvous',
+    sanctions: 'sanctions',
+    identity: 'identity',
   };
   return byVisual[visual] || categoryOf(properties.type);
 }

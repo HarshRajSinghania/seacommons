@@ -240,6 +240,38 @@ def _build_episode_feature(
     feature_ids = list(dict.fromkeys(feature_ids))
     from core.intel.fusion import verification_for_event_ids
     verification_status, independence_groups, evidence_count = verification_for_event_ids(observation_ids)
+    # Only producer-supplied, already-validated independence groups may
+    # override the resolver. Generic lineage_ids are provenance labels, not
+    # proof of independence (e.g. GFW AIS gaps and local AIS gaps share the
+    # same underlying AIS lineage).
+    explicit_groups = sorted({
+        str(group)
+        for p in item_props
+        for group in (p.get("contributing_independence_groups") or ())
+        if str(group).strip()
+    })
+    if len(explicit_groups) >= 2:
+        independence_groups = explicit_groups
+        verification_status = "multi_source_corroborated"
+        evidence_count = max(evidence_count, len(explicit_groups))
+    analysis_states = {str(p.get("analysis_state") or "observation") for p in item_props}
+    episode_analysis_state = (
+        "evidence"
+        if verification_status == "multi_source_corroborated" or "evidence" in analysis_states
+        else "evidence_candidate"
+        if analysis_states & {"anomaly", "evidence_candidate"}
+        else "observation"
+    )
+    resolution_states = {str(p.get("resolution_state") or "open") for p in item_props}
+    episode_resolution_state = "open" if "open" in resolution_states else (
+        "explained" if "explained" in resolution_states else "superseded"
+    )
+    publication_states = {str(p.get("publication_state") or "internal") for p in item_props}
+    episode_publication_state = (
+        "published" if "published" in publication_states
+        else "reviewed" if "reviewed" in publication_states
+        else "internal"
+    )
     update_count = max(
         len(track),
         sum(max(1, int(p.get("episode_update_count") or 1)) for p in item_props),
@@ -250,6 +282,14 @@ def _build_episode_feature(
     )
     infrastructure_source = next(
         (p for p in reversed(item_props) if isinstance(p.get("infrastructure"), dict)),
+        None,
+    )
+    port_call_source = next(
+        (p for p in reversed(item_props) if isinstance(p.get("port_call"), dict)),
+        None,
+    )
+    sanctions_source = next(
+        (p for p in reversed(item_props) if isinstance(p.get("sanctions"), list) and p.get("sanctions")),
         None,
     )
     source_records: list[dict[str, Any]] = []
@@ -320,6 +360,10 @@ def _build_episode_feature(
             "independence_groups": independence_groups,
             "independent_source_count": len(independence_groups),
             "verification_status": verification_status,
+            "analysis_state": episode_analysis_state,
+            "publication_state": episode_publication_state,
+            "resolution_state": episode_resolution_state,
+            "lineage_ids": independence_groups,
             "behaviour_context": behaviour_context,
             "alternative_explanations": alternative_explanations,
             "alert_types": sorted({str(p.get("type")) for p in item_props if p.get("type")}),
@@ -335,6 +379,16 @@ def _build_episode_feature(
             "latest_nav_status": track[-1].get("nav_status") if track else None,
             "updates": updates,
             "drift_eligible": bool(drift_source),
+            **(
+                {"port_call": dict(port_call_source.get("port_call") or {})}
+                if port_call_source
+                else {}
+            ),
+            **(
+                {"sanctions": list(sanctions_source.get("sanctions") or [])}
+                if sanctions_source
+                else {}
+            ),
             **(
                 {
                     "infrastructure": infrastructure_source.get("infrastructure"),

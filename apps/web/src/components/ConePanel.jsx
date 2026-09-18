@@ -561,7 +561,7 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
   const color = visual.color;
   const when = props.timestamp_utc || props.source_timestamp_utc;
   const eventType = isVesselReport ? 'Live AIS position' : eventAnomalyLabel(props);
-  const sanctions = dossier?.identity?.sanctions || [];
+  const sanctions = props.sanctions || dossier?.identity?.sanctions || [];
   // docs/fixes.md M0.2: a case-specific EventAssessment (when the backend
   // has one for this event kind) takes priority over the older flat
   // confidence/evidence_level fields.
@@ -592,6 +592,8 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
         <Row label="Event" value={eventType} />
         <Row label="Status" value={lifecycle} color={color} />
         {props.verification_status && <Row label="Verification" value={String(props.verification_status).replace(/_/g, ' ')} />}
+        {props.analysis_state && <Row label="Analysis" value={String(props.analysis_state).replace(/_/g, ' ')} />}
+        {props.resolution_state && <Row label="Resolution" value={String(props.resolution_state).replace(/_/g, ' ')} />}
         <Row label="Reported" value={when ? new Date(when).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—'} />
         {coords && <Row label="Coordinates" value={`${Number(coords[1]).toFixed(5)}, ${Number(coords[0]).toFixed(5)}`} mono />}
       </div>
@@ -639,6 +641,8 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
         <Row label="Flag" value={dossier?.static?.flag || dossier?.identity?.mid_flag || props.flag || '—'} />
         <Row label="Vessel type" value={shipTypeLabel(dossier?.static?.ship_type ?? props.ship_type)} />
         {dossier?.static?.destination && <Row label="AIS destination" value={dossier.static.destination} />}
+        {props.port_call?.port && <Row label="Observed port call" value={props.port_call.port} />}
+        {props.port_call?.arrived_at && <Row label="Port arrival" value={new Date(props.port_call.arrived_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} />}
         {props.latest_nav_status != null && <Row label="Navigation" value={AIS_NAV_STATUS[props.latest_nav_status] || `status ${props.latest_nav_status}`} />}
         <Row
           label="Latest AIS speed"

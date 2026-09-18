@@ -258,6 +258,24 @@ def public_signal_collection(
             limit=_LIVE_DURABLE_TYPE_SCAN_LIMIT,
         ):
             durable_public_by_id[event.id] = event
+    # Factual sanctions port calls are a low-volume Maritime case family,
+    # but their transport type is vessel_identity, which is intentionally not
+    # in _PUBLIC_DURABLE_TYPES because the vast majority of identity rows are
+    # internal evidence. Recover only this explicitly-published subtype so it
+    # survives in-memory AIS/MDA churn without opening the raw identity stream.
+    durable_sanction_port_calls: list[IntelEvent] = []
+    for event in intel_store.persisted_events(
+        types=["vessel_identity"],
+        max_age_days=days,
+        limit=_LIVE_DURABLE_TYPE_SCAN_LIMIT,
+    ):
+        meta = event.metadata or {}
+        if (
+            meta.get("anomaly_type") == "sanctioned_port_call"
+            and str(meta.get("publication_status") or "").lower() == "published"
+        ):
+            durable_public_by_id[event.id] = event
+            durable_sanction_port_calls.append(event)
     durable_public = list(durable_public_by_id.values())
     by_id = {event.id: event for event in durable_alarm_phone}
     by_id.update(durable_public_by_id)
@@ -511,6 +529,7 @@ def public_signal_collection(
             "domain_counts": domain_counts,
             "memory_candidates": len(memory_events),
             "durable_alarm_phone_candidates": len(durable_alarm_phone),
+            "durable_sanction_port_call_candidates": len(durable_sanction_port_calls),
             "with_coords": sum(1 for feature in features if feature.get("geometry") is not None),
             "generated_at": datetime.now(UTC).isoformat(),
             "privacy": "published signals only; private identifiers and raw messages excluded",

@@ -403,6 +403,20 @@ def _job_mda_daily() -> None:
         except Exception as exc:
             logger.info("MDA daily %s skipped: %s", label, exc)
     try:
+        from core.mda.watch import mda_watch
+
+        report = mda_watch.refresh_darkship_cues(limit=6)
+        if report["refreshed"] or report["with_unmatched_sar"]:
+            logger.info(
+                "MDA daily darkship SAR refresh: scanned=%d refreshed=%d "
+                "with_unmatched_sar=%d hypotheses=%d",
+                report["scanned"], report["refreshed"],
+                report["with_unmatched_sar"], report["hypotheses_evaluated"],
+            )
+    except Exception as exc:
+        logger.info("MDA daily darkship SAR refresh skipped: %s", exc)
+
+    try:
         from core.vessels.track_store import track_store
 
         track_store.prune()

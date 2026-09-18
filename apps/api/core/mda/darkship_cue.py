@@ -71,14 +71,20 @@ def _bbox_of(poly: dict[str, Any]) -> tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _recent_s1_scenes(bbox: tuple[float, float, float, float], since: datetime) -> list[dict[str, Any]]:
+def _recent_s1_scenes(
+    bbox: tuple[float, float, float, float],
+    since: datetime,
+    *,
+    until: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
     try:
         import httpx
 
+        end = until or datetime.now(timezone.utc)
         body = {
             "collections": ["SENTINEL-1"],
             "bbox": list(bbox),
-            "datetime": f"{since.isoformat()}/{datetime.now(timezone.utc).isoformat()}",
+            "datetime": f"{since.isoformat()}/{end.isoformat()}",
             "limit": 20,
         }
         # docs/fixes.md M0.5: the old catalogue.dataspace.copernicus.eu/stac
@@ -104,42 +110,165 @@ def _recent_s1_scenes(bbox: tuple[float, float, float, float], since: datetime) 
         return []
 
 
-def _gfw_sar_in_area(bbox: tuple[float, float, float, float], since: datetime) -> list[dict[str, Any]]:
+def _bbox_feature_collection(
+    bbox: tuple[float, float, float, float],
+) -> dict[str, Any]:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [min_lon, min_lat],
+                    [max_lon, min_lat],
+                    [max_lon, max_lat],
+                    [min_lon, max_lat],
+                    [min_lon, min_lat],
+                ]],
+            },
+        }],
+    }
+
+
+def _gfw_sar_in_area(
+    bbox: tuple[float, float, float, float],
+    since: datetime,
+    *,
+    until: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Return GFW SAR presence cells for a bounded place/time window.
+
+    GFW's legacy dataset-specific detections URL was removed. SAR presence is
+    exposed through the v3 4Wings report API. The documented matched filter has
+    intermittently failed server-side because the current dataset stores that
+    field as a string, so this fetches the bounded report and classifies
+    matched/unmatched locally from vessel identity fields instead.
+    """
     from core.config import config
 
     token = getattr(config, "GFW_API_TOKEN", "") or ""
     if not token:
         return []
+
+    end = until or datetime.now(timezone.utc)
+    if end < since:
+        return []
     try:
         import httpx
 
-        r = httpx.get(
-            "https://gateway.api.globalfishingwatch.org/v3/datasets/"
-            "public-global-sar-presence:latest/detections",
-            params={"start-date": since.date().isoformat(),
-                    "end-date": datetime.now(timezone.utc).date().isoformat(),
-                    "bbox": ",".join(str(x) for x in bbox), "limit": 50},
-            headers={"Authorization": f"Bearer {token}"}, timeout=45)
-        r.raise_for_status()
-        entries = r.json().get("entries", r.json().get("detections", []))
-        return [{"lat": d.get("lat"), "lon": d.get("lon"), "matched": d.get("matched"),
-                 "timestamp": d.get("timestamp")} for d in entries]
+        response = httpx.post(
+            "https://gateway.api.globalfishingwatch.org/v3/4wings/report",
+            params={
+                "spatial-resolution": "HIGH",
+                "temporal-resolution": "HOURLY",
+                "datasets[0]": "public-global-sar-presence:latest",
+                "date-range": f"{since.date().isoformat()},{end.date().isoformat()}",
+                "format": "JSON",
+                "spatial-aggregation": "false",
+            },
+            json={"geojson": _bbox_feature_collection(bbox)},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=90,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows: list[dict[str, Any]] = []
+        for entry in payload.get("entries") or ():
+            if not isinstance(entry, dict):
+                continue
+            for dataset_key, detections in entry.items():
+                if not str(dataset_key).startswith("public-global-sar-presence:"):
+                    continue
+                if not isinstance(detections, list):
+                    continue
+                for detection in detections:
+                    if not isinstance(detection, dict):
+                        continue
+                    lat, lon = detection.get("lat"), detection.get("lon")
+                    if lat is None or lon is None:
+                        continue
+                    timestamp = (
+                        detection.get("entryTimestamp")
+                        or detection.get("date")
+                        or detection.get("exitTimestamp")
+                    )
+                    if not timestamp:
+                        continue
+                    try:
+                        observed_at = datetime.fromisoformat(
+                            str(timestamp).replace("Z", "+00:00")
+                        )
+                        if observed_at.tzinfo is None:
+                            observed_at = observed_at.replace(tzinfo=timezone.utc)
+                        observed_at = observed_at.astimezone(timezone.utc)
+                    except (TypeError, ValueError):
+                        continue
+                    if not (since <= observed_at <= end):
+                        continue
+                    vessel_id = str(detection.get("vesselId") or "").strip()
+                    mmsi = str(detection.get("mmsi") or "").strip()
+                    matched = bool(vessel_id or mmsi)
+                    rows.append({
+                        "lat": float(lat),
+                        "lon": float(lon),
+                        "matched": matched,
+                        "timestamp": timestamp,
+                        "mmsi": mmsi or None,
+                        "vessel_id": vessel_id or None,
+                        "dataset": str(dataset_key),
+                    })
+        return rows
     except Exception as exc:
         logger.info("darkship_cue: GFW SAR query skipped: %s", exc)
         return []
 
 
+def _point_in_polygon(lon: float, lat: float, polygon: dict[str, Any]) -> bool:
+    """Small dependency-free point-in-polygon check for the reachable ring."""
+    try:
+        ring = polygon["coordinates"][0]
+    except (KeyError, IndexError, TypeError):
+        return False
+    inside = False
+    j = len(ring) - 1
+    for i, point in enumerate(ring):
+        xi, yi = float(point[0]), float(point[1])
+        xj, yj = float(ring[j][0]), float(ring[j][1])
+        intersects = ((yi > lat) != (yj > lat)) and (
+            lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
 def build(*, lat: float, lon: float, course_deg: Optional[float] = None,
-          speed_kn: Optional[float] = None, gap_start: Optional[datetime] = None) -> dict[str, Any]:
+          speed_kn: Optional[float] = None, gap_start: Optional[datetime] = None,
+          max_search_hours: float = 12.0, include_s1: bool = True) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     start = gap_start or now
-    hours = max(0.25, (now - start).total_seconds() / 3600.0)
-    poly = reachable_polygon(lat, lon, course_deg, speed_kn, hours)
+    elapsed_hours = max(0.25, (now - start).total_seconds() / 3600.0)
+    search_hours = min(elapsed_hours, max(0.25, float(max_search_hours)))
+    search_until = min(now, start + timedelta(hours=search_hours))
+    poly = reachable_polygon(lat, lon, course_deg, speed_kn, search_hours)
     bbox = _bbox_of(poly)
     since = start - timedelta(hours=2)
 
-    s1 = _recent_s1_scenes(bbox, since)
-    gfw = _gfw_sar_in_area(bbox, since)
+    s1 = (
+        _recent_s1_scenes(bbox, since, until=search_until)
+        if include_s1 else []
+    )
+    gfw = [
+        detection
+        for detection in _gfw_sar_in_area(bbox, since, until=search_until)
+        if _point_in_polygon(
+            float(detection["lon"]), float(detection["lat"]), poly
+        )
+    ]
     unmatched = [d for d in gfw if d.get("matched") is False]
 
     next_pass_h = _S1_REVISIT_HOURS
@@ -155,7 +284,9 @@ def build(*, lat: float, lon: float, course_deg: Optional[float] = None,
     return {
         "generated_at": now.isoformat(),
         "last_known": {"lat": lat, "lon": lon, "course_deg": course_deg, "speed_kn": speed_kn},
-        "dark_for_hours": round(hours, 1),
+        "dark_for_hours": round(elapsed_hours, 1),
+        "search_window_hours": round(search_hours, 1),
+        "search_until": search_until.isoformat(),
         "search_area": poly,
         "search_bbox": list(bbox),
         "radius_km": poly["_radius_km"],
@@ -174,7 +305,7 @@ def build(*, lat: float, lon: float, course_deg: Optional[float] = None,
         "association_status": "unmatched_candidate" if unmatched else "no_detection",
         "recommendation": (
             f"{len(unmatched)} unmatched SAR detection(s) inside the reachable search area "
-            f"({poly['_radius_km']} km radius, {round(hours, 1)}h since last known position) "
+            f"({poly['_radius_km']} km radius, {round(search_hours, 1)}h search window) "
             "-- a candidate for the dark vessel, not a confirmed match. No acquisition-time "
             "AIS propagation or distance/uncertainty scoring has been run against it yet; "
             "the detection could belong to another vessel transiting the same area."

@@ -76,13 +76,8 @@
   },
   {
     "path": "apps/api/core/mda/darkship_cue.py",
-    "callee": "httpx.get",
-    "count": 1
-  },
-  {
-    "path": "apps/api/core/mda/darkship_cue.py",
     "callee": "httpx.post",
-    "count": 1
+    "count": 2
   },
   {
     "path": "apps/api/core/mda/identity.py",

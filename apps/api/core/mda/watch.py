@@ -244,7 +244,239 @@ class MdaWatch:
                     )
         return list(by_id.values())
 
-    def scan_hypotheses(self) -> int:
+    @staticmethod
+    def _retrospective_darkship_candidates(
+        *,
+        limit: int = 6,
+        min_age_hours: float = 72.0,
+        max_age_days: int = 10,
+        recheck_hours: float = 24.0,
+    ) -> list[dict[str, Any]]:
+        """Select a bounded set of old, high-quality offshore AIS gaps.
+
+        This is only candidate selection for the existing hypothesis engine.
+        It does not create a second event stream and never publishes anything.
+        """
+        from core.db.models import IntelEventDB, VesselTrackDB
+        from core.db.session import session_scope
+        from core.intel.lifecycle import parse_utc
+        from core.mda.offshore_context import (
+            build_offshore_context,
+            qualify_offshore_anomaly,
+        )
+
+        now = datetime.now(timezone.utc)
+        oldest = (now - timedelta(days=max_age_days)).isoformat()
+        newest = (now - timedelta(hours=min_age_hours)).isoformat()
+        candidates: list[dict[str, Any]] = []
+        with session_scope() as db:
+            anomaly = IntelEventDB.meta["anomaly_type"].as_string()
+            rows = (
+                db.query(IntelEventDB)
+                .filter(
+                    IntelEventDB.type == "ais_anomaly",
+                    anomaly.in_(("gap", "long_gap")),
+                    IntelEventDB.timestamp_utc >= oldest,
+                    IntelEventDB.timestamp_utc <= newest,
+                )
+                .order_by(IntelEventDB.timestamp_utc.desc())
+                .limit(max(1000, limit * 200))
+                .all()
+            )
+            for row in rows:
+                if row.lat is None or row.lon is None or not row.linked_mmsi:
+                    continue
+                metadata = dict(row.meta or {})
+                cue = metadata.get("darkship_cue") or {}
+                if (
+                    isinstance(cue, dict)
+                    and cue.get("association_status") == "unmatched_candidate"
+                    and cue.get("gfw_unmatched_in_area")
+                ):
+                    continue
+
+                last_checked = parse_utc(
+                    str(metadata.get("darkship_cue_refreshed_at") or "")
+                )
+                if (
+                    last_checked is not None
+                    and (now - last_checked).total_seconds() < recheck_hours * 3600
+                ):
+                    continue
+
+                gap_reason = metadata.get("gap_reason") or {}
+                silent_seconds = float(metadata.get("silent_seconds") or 0.0)
+                if (
+                    not isinstance(gap_reason, dict)
+                    or gap_reason.get("hypothesis") != "vessel_gap"
+                    or float(gap_reason.get("confidence") or 0.0) < 0.7
+                    or int(gap_reason.get("nearby_vessels_reporting_before") or 0) < 5
+                    or int(gap_reason.get("nearby_vessels_reporting_after") or 0) < 5
+                    or not (4 * 3600 <= silent_seconds <= 12 * 3600)
+                    or float(metadata.get("jamming_score") or 0.0) >= 0.3
+                ):
+                    continue
+
+                context = build_offshore_context(float(row.lat), float(row.lon))
+                qualification = qualify_offshore_anomaly(
+                    str(metadata.get("anomaly_type") or "gap"),
+                    metadata,
+                    context,
+                )
+                if not qualification.get("qualified"):
+                    continue
+
+                emitted_at = parse_utc(row.timestamp_utc)
+                if emitted_at is None:
+                    continue
+                gap_start = emitted_at - timedelta(seconds=silent_seconds)
+                pre = (
+                    db.query(VesselTrackDB)
+                    .filter(
+                        VesselTrackDB.mmsi == str(row.linked_mmsi),
+                        VesselTrackDB.ts >= gap_start - timedelta(hours=2),
+                        VesselTrackDB.ts <= gap_start + timedelta(minutes=5),
+                    )
+                    .order_by(VesselTrackDB.ts.desc())
+                    .first()
+                )
+                if pre is None:
+                    continue
+                speed_kn = float(pre.sog or metadata.get("pre_gap_speed_kn") or 0.0)
+                if speed_kn < 2.0:
+                    continue
+                course_deg = (
+                    float(pre.cog)
+                    if pre.cog is not None
+                    else float(pre.heading)
+                    if pre.heading is not None
+                    else None
+                )
+                candidates.append({
+                    "event_id": row.id,
+                    "mmsi": str(row.linked_mmsi),
+                    "lat": float(pre.lat),
+                    "lon": float(pre.lon),
+                    "speed_kn": speed_kn,
+                    "course_deg": course_deg,
+                    "gap_start": gap_start,
+                    "search_hours": silent_seconds / 3600.0,
+                    "last_checked": last_checked,
+                    "offshore_context": context,
+                })
+
+        candidates.sort(key=lambda item: (
+            item["last_checked"] is not None,
+            item["last_checked"] or item["gap_start"],
+        ))
+        return candidates[:max(0, int(limit))]
+
+    @staticmethod
+    def _persist_darkship_cue_refresh(
+        candidate: dict[str, Any],
+        cue: dict[str, Any],
+        *,
+        checked_at: datetime,
+    ) -> Optional[IntelEvent]:
+        """Update the same deterministic AIS-gap row without rebroadcasting it."""
+        from core.db.models import IntelEventDB
+        from core.db.session import session_scope
+
+        with session_scope() as db:
+            row = db.get(IntelEventDB, candidate["event_id"])
+            if row is None:
+                return None
+            metadata = dict(row.meta or {})
+            metadata["darkship_cue"] = cue
+            metadata["darkship_cue_refreshed_at"] = checked_at.isoformat()
+            metadata["darkship_cue_refresh_source"] = "gfw_4wings"
+            metadata["darkship_cue_refresh_attempts"] = (
+                int(metadata.get("darkship_cue_refresh_attempts") or 0) + 1
+            )
+            if cue.get("gfw_unmatched_in_area"):
+                metadata["analysis_state"] = "evidence_candidate"
+            row.meta = metadata
+            db.flush()
+            return IntelEvent(
+                id=row.id,
+                timestamp_utc=row.timestamp_utc,
+                type=row.type or "",
+                severity=row.severity or "",
+                lat=row.lat,
+                lon=row.lon,
+                title=row.title or "",
+                text=row.text or "",
+                url=row.url or "",
+                source=row.source or "",
+                linked_mmsi=row.linked_mmsi or "",
+                metadata=metadata,
+            )
+
+    def refresh_darkship_cues(
+        self,
+        *,
+        limit: int = 6,
+        min_age_hours: float = 72.0,
+        max_age_days: int = 10,
+        recheck_hours: float = 24.0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Revisit delayed GFW SAR evidence for existing offshore AIS gaps."""
+        from core.mda.darkship_cue import build as build_darkship_cue
+
+        candidates = self._retrospective_darkship_candidates(
+            limit=limit,
+            min_age_hours=min_age_hours,
+            max_age_days=max_age_days,
+            recheck_hours=recheck_hours,
+        )
+        report: dict[str, Any] = {
+            "scanned": len(candidates),
+            "refreshed": 0,
+            "with_unmatched_sar": 0,
+            "hypotheses_evaluated": 0,
+            "details": [],
+        }
+        refreshed_events: list[IntelEvent] = []
+        for candidate in candidates:
+            cue = build_darkship_cue(
+                lat=candidate["lat"],
+                lon=candidate["lon"],
+                course_deg=candidate["course_deg"],
+                speed_kn=candidate["speed_kn"],
+                gap_start=candidate["gap_start"],
+                max_search_hours=candidate["search_hours"],
+                include_s1=False,
+            )
+            unmatched_count = len(cue.get("gfw_unmatched_in_area") or ())
+            report["details"].append({
+                "event_id": candidate["event_id"],
+                "association_status": cue.get("association_status"),
+                "unmatched_sar": unmatched_count,
+                "search_window_hours": cue.get("search_window_hours"),
+            })
+            if unmatched_count:
+                report["with_unmatched_sar"] += 1
+            if dry_run:
+                continue
+            updated = self._persist_darkship_cue_refresh(
+                candidate,
+                cue,
+                checked_at=datetime.now(timezone.utc),
+            )
+            if updated is not None:
+                refreshed_events.append(updated)
+                report["refreshed"] += 1
+
+        if refreshed_events and not dry_run:
+            report["hypotheses_evaluated"] = self.scan_hypotheses(
+                extra_events=refreshed_events
+            )
+        return report
+
+    def scan_hypotheses(
+        self, *, extra_events: Optional[list[IntelEvent]] = None,
+    ) -> int:
         from core.intel.hypothesis_engine import (
             event_to_episode_input_feature,
             evaluate_episode,
@@ -266,6 +498,8 @@ class MdaWatch:
         ):
             by_id[event.id] = event
         for event in intel_store.events(limit=1200, max_age_days=7):
+            by_id[event.id] = event
+        for event in extra_events or ():
             by_id[event.id] = event
 
         features = []

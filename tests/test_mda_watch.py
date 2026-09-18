@@ -10,7 +10,6 @@ os.environ["SEACOMMONS_TRACK_STORE_SYNC"] = "1"
 from datetime import datetime, timezone
 
 import pytest
-
 from core.intel.store import intel_store
 from core.mda.watch import MdaWatch
 from core.vessels.track_store import track_store
@@ -516,3 +515,68 @@ def test_sanctioned_port_call_rejects_name_only_match(monkeypatch):
     w = MdaWatch()
     assert w.scan_sanctioned_port_calls() == 0
     assert not _alerts("vessel_identity")
+
+
+def test_retrospective_darkship_refresh_reuses_canonical_hypothesis_scan(monkeypatch):
+    from datetime import timedelta
+
+    from core.intel.store import IntelEvent
+    from core.mda import darkship_cue
+
+    now = datetime.now(timezone.utc)
+    candidate = {
+        "event_id": "aisgap:111000099",
+        "mmsi": "111000099",
+        "lat": 35.0,
+        "lon": 18.0,
+        "speed_kn": 8.0,
+        "course_deg": 90.0,
+        "gap_start": now - timedelta(days=4),
+        "search_hours": 6.0,
+        "last_checked": None,
+        "offshore_context": {"offshore": True},
+    }
+    cue = {
+        "association_status": "unmatched_candidate",
+        "gfw_unmatched_in_area": [{
+            "lat": 35.1, "lon": 18.4,
+            "timestamp": (candidate["gap_start"] + timedelta(hours=3)).isoformat(),
+            "matched": False,
+        }],
+        "search_window_hours": 6.0,
+    }
+    updated = IntelEvent(
+        id=candidate["event_id"],
+        timestamp_utc=(candidate["gap_start"] + timedelta(hours=6)).isoformat(),
+        type="ais_anomaly",
+        severity="high",
+        lat=35.0,
+        lon=18.0,
+        title="AIS gap",
+        source="mda",
+        linked_mmsi=candidate["mmsi"],
+        metadata={"anomaly_type": "long_gap", "darkship_cue": cue},
+    )
+    scan_calls = []
+
+    monkeypatch.setattr(
+        MdaWatch, "_retrospective_darkship_candidates",
+        staticmethod(lambda **kwargs: [candidate]),
+    )
+    monkeypatch.setattr(darkship_cue, "build", lambda **kwargs: cue)
+    monkeypatch.setattr(
+        MdaWatch, "_persist_darkship_cue_refresh",
+        staticmethod(lambda candidate, cue, checked_at: updated),
+    )
+    monkeypatch.setattr(
+        MdaWatch, "scan_hypotheses",
+        lambda self, *, extra_events=None: scan_calls.append(extra_events) or 1,
+    )
+
+    report = MdaWatch().refresh_darkship_cues(limit=1)
+
+    assert report["scanned"] == 1
+    assert report["refreshed"] == 1
+    assert report["with_unmatched_sar"] == 1
+    assert report["hypotheses_evaluated"] == 1
+    assert scan_calls == [[updated]]

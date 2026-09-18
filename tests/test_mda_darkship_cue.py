@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from core.mda.darkship_cue import _recent_s1_scenes, build, reachable_polygon
+from core.mda.darkship_cue import (
+    _gfw_sar_in_area,
+    _recent_s1_scenes,
+    build,
+    reachable_polygon,
+)
 
 
 def test_s1_stac_query_uses_the_current_copernicus_endpoint(monkeypatch):
@@ -27,6 +32,59 @@ def test_s1_stac_query_uses_the_current_copernicus_endpoint(monkeypatch):
     _recent_s1_scenes((13.0, 34.0, 14.0, 35.0), datetime.now(timezone.utc))
 
     assert calls == ["https://stac.dataspace.copernicus.eu/v1/search"]
+
+
+def test_gfw_sar_query_uses_4wings_and_classifies_unmatched_locally(monkeypatch):
+    calls = []
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "entries": [{
+                    "public-global-sar-presence:v4.0": [
+                        {
+                            "lat": 35.77,
+                            "lon": 13.47,
+                            "entryTimestamp": "2026-09-11T17:03:35Z",
+                            "mmsi": "",
+                            "vesselId": "",
+                        },
+                        {
+                            "lat": 35.46,
+                            "lon": 13.31,
+                            "entryTimestamp": "2026-09-11T05:12:50Z",
+                            "mmsi": "224165270",
+                            "vesselId": "vessel-1",
+                        },
+                    ],
+                }],
+            }
+
+    def fake_post(url, params=None, json=None, headers=None, timeout=None):
+        calls.append({
+            "url": url, "params": params, "json": json,
+            "headers": headers, "timeout": timeout,
+        })
+        return _FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    monkeypatch.setattr("core.config.config.GFW_API_TOKEN", "test-token")
+
+    since = datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc)
+    until = datetime(2026, 9, 12, 0, 0, tzinfo=timezone.utc)
+    rows = _gfw_sar_in_area((13.0, 35.0, 14.0, 36.0), since, until=until)
+
+    assert calls[0]["url"] == "https://gateway.api.globalfishingwatch.org/v3/4wings/report"
+    assert calls[0]["params"]["datasets[0]"] == "public-global-sar-presence:latest"
+    assert calls[0]["params"]["date-range"] == "2026-09-11,2026-09-12"
+    assert calls[0]["json"]["geojson"]["type"] == "FeatureCollection"
+    assert rows[0]["matched"] is False
+    assert rows[0]["timestamp"] == "2026-09-11T17:03:35Z"
+    assert rows[1]["matched"] is True
+    assert rows[1]["mmsi"] == "224165270"
 
 
 def test_reachable_polygon_grows_with_time():
@@ -61,9 +119,14 @@ def test_unmatched_sar_detection_is_worded_as_a_candidate_not_a_confirmation(mon
     uncertainty scoring -- docs/fixes.md M7.2, not built yet)."""
     monkeypatch.setattr(
         "core.mda.darkship_cue._gfw_sar_in_area",
-        lambda bbox, since: [{"lat": 34.5, "lon": 13.0, "matched": False, "timestamp": "x"}],
+        lambda bbox, since, **kwargs: [
+            {"lat": 34.5, "lon": 13.0, "matched": False, "timestamp": "x"}
+        ],
     )
-    monkeypatch.setattr("core.mda.darkship_cue._recent_s1_scenes", lambda bbox, since: [])
+    monkeypatch.setattr(
+        "core.mda.darkship_cue._recent_s1_scenes",
+        lambda bbox, since, **kwargs: [],
+    )
 
     cue = build(lat=34.5, lon=13.0, course_deg=270.0, speed_kn=10.0,
                 gap_start=datetime.now(timezone.utc) - timedelta(hours=3))

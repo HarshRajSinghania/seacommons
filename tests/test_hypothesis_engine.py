@@ -60,6 +60,9 @@ def _episode(family, *, subject="subj:mmsi:211879870", signal_ids, episode_id="h
         "verification_status": status,
         "independence_groups": ["ais_sensor_lineage"],
         "independent_source_count": 1,
+        "signal_count": len(signal_ids),
+        "evidence_count": len(signal_ids),
+        "analysis_state": "evidence_candidate",
     }}
 
 
@@ -161,8 +164,8 @@ def test_infrastructure_pattern_requires_more_than_bare_proximity():
     assert hyp is None  # sanctions flag on the same lineage is not corroboration
 
 
-def test_end_to_end_isolated_gap_persists_episode_without_hypothesis():
-    """V1 keeps an isolated single-lineage AIS gap at Episode level."""
+def test_end_to_end_isolated_gap_stays_raw_without_materialized_episode():
+    """A lone AIS gap remains durable raw evidence, not an Episode wrapper."""
     from core.mda.watch import MdaWatch
     from core.vessels.track_store import track_store
 
@@ -200,8 +203,7 @@ def test_end_to_end_isolated_gap_persists_episode_without_hypothesis():
     from core.db.models import MaritimeEpisodeDB
     with session_scope() as db:
         episodes = db.query(MaritimeEpisodeDB).filter(MaritimeEpisodeDB.episode_family == "gap_episode").all()
-        assert len(episodes) == 1
-        assert episodes[0].verification_status == "single_source_observed"
+        assert episodes == []
 
 
 def test_v1_single_gap_does_not_create_dark_transit_hypothesis() -> None:

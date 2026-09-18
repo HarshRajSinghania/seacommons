@@ -783,16 +783,27 @@ class MdaWatch:
             ]
             if not strong_hits:
                 continue
+            track = sorted(track, key=lambda point: str(point.get("ts") or ""))
             calls = _derive_recent_port_calls(track, limit=2)
             if not calls:
                 continue
             call = calls[0]
             arrived = str(call.get("arrived_at") or "")
             port = str(call.get("port") or "").strip()
-            if not arrived or not port:
+            last_seen = str(call.get("last_seen_at") or "")
+            if not arrived or not port or int(call.get("ais_fixes") or 0) < 2:
+                continue
+            from core.intel.lifecycle import parse_utc
+
+            arrived_dt = parse_utc(arrived)
+            activity_dt = parse_utc(str(call.get("departed_at") or last_seen or arrived))
+            if arrived_dt is None or activity_dt is None:
+                continue
+            if now - activity_dt > timedelta(hours=24):
                 continue
             stable = hashlib.blake2s(
-                f"{mmsi}|{port}|{arrived}".encode(), digest_size=8
+                f"{mmsi}|{port}|{arrived_dt.date().isoformat()}".encode(),
+                digest_size=8,
             ).hexdigest()
             dedup = f"sanction-port:{stable}"
             if self._recently_emitted(dedup, 48 * 3600):
@@ -831,6 +842,7 @@ class MdaWatch:
                     ),
                     source="SeaCommons MDA",
                     linked_mmsi=mmsi,
+                    timestamp_utc=activity_dt.isoformat(),
                     metadata={
                         "anomaly_type": "sanctioned_port_call",
                         "episode_family": "port_call_episode",

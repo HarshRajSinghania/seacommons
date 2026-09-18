@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Live Observation → persisted Episode → InvestigationHypothesis wiring.
 
-V1 persists every bounded maritime episode before hypothesis evaluation.
+V1 persists only meaningful maritime episodes before hypothesis evaluation.
+Single-observation detector wrappers remain durable as IntelEvent /
+SourceObservation until corroboration or aggregation promotes them.
 Low-specificity hypotheses require the episode-level independent-evidence
 gate; detector count never substitutes for source independence. High-
 specificity spoofing may remain a candidate on one lineage but cannot
@@ -153,6 +155,25 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
     }
 
 
+
+def _should_persist_episode(props: dict[str, Any]) -> bool:
+    """Persist aggregation, not one-detector wrappers. Raw signals stay durable."""
+    family = str(props.get("episode_family") or "unclassified_episode")
+    signal_count = int(props.get("signal_count") or 0)
+    evidence_count = int(props.get("evidence_count") or 0)
+    independent = int(props.get("independent_source_count") or 0)
+    verification = str(props.get("verification_status") or "")
+    analysis_state = str(props.get("analysis_state") or "")
+    if family in {"safety_episode", "port_call_episode"} and analysis_state in {"signal", "evidence"}:
+        return True
+    if bool(props.get("cross_modal_investigation_ready")):
+        return True
+    if verification == "multi_source_corroborated" or independent >= 2:
+        return True
+    if signal_count >= 2 and evidence_count >= 2:
+        return True
+    return False
+
 def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesis]:
     """Persist the episode, then create/update a v1 hypothesis only when eligible."""
     props = episode.get("properties") or {}
@@ -167,8 +188,10 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
         episode = _attach_cross_modal_evidence(episode, events)
         props = episode.get("properties") or {}
 
-    # Persistence precedes interpretation: the enriched episode remains
-    # auditable even when it is benign, Safety-only, or hypothesis-ineligible.
+    # SourceObservation/IntelEvent are the durable anomaly archive. An episode
+    # is materialised only when it adds aggregation or corroboration.
+    if not _should_persist_episode(props):
+        return None
     save_episode(episode)
     from core.observability import record_maritime_episode_evaluation
 

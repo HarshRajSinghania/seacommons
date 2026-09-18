@@ -218,11 +218,13 @@ class VesselIncidentMonitor:
 
     @staticmethod
     def _beacon_source(mmsi: str, nav_status: int | None) -> str | None:
+        # AIS nav-status 14 alone is not enough to prove a SAR transponder.
+        # Only dedicated AIS-SART / MOB / EPIRB identity prefixes are
+        # promoted as distress beacons; ordinary vessel MMSIs reporting 14
+        # remain raw AIS observations for review.
         for prefix, source in _BEACON_SOURCE.items():
             if mmsi.startswith(prefix):
                 return source
-        if nav_status == _BEACON_STATUS:
-            return "ais_sart"
         return None
 
     def _emit(
@@ -287,7 +289,7 @@ class VesselIncidentMonitor:
         # fired, not just the resulting label. Anyone can check this against
         # the thresholds in this file's own _INCIDENT_STATUS table.
         rule_reason = None
-        if reports is not None and sustained_s is not None:
+        if reports is not None and sustained_s is not None and min_span_s is not None:
             rule_reason = (
                 f"Flagged after {reports} report(s) over {sustained_s}s "
                 f"(rule: ≥{min_reports} reports and ≥{int(min_span_s)}s sustained)."

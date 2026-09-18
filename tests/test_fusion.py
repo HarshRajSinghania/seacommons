@@ -643,9 +643,7 @@ def test_your_wisdom_benign_service_fixture_stays_internal_without_case() -> Non
     with session_scope() as db:
         rows = db.query(MaritimeEpisodeDB).all()
         derived = [row for row in rows if alert.id in (row.feature_ids or [])]
-        assert len(derived) == 1
-        row = derived[0]
-        assert set(row.observation_ids or []) == {o["id"] for o in case["observations"]}
-        assert row.independence_groups == expected["independence_groups"]
-        assert row.verification_status == expected["verification_status"]
+        # Single-lineage detector output remains durable in IntelEvent/SourceObservation
+        # but is not materialised as a MaritimeEpisode.
+        assert derived == []
         assert db.query(InvestigationHypothesisDB).count() == 0

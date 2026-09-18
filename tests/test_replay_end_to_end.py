@@ -70,8 +70,8 @@ def _witness(mmsi: str, lat: float, lon: float, minutes_ago: float) -> None:
     track_store._last_write_epoch[mmsi] = 0.0
 
 
-def test_e2e_isolated_ais_gap_stops_at_persisted_episode():
-    """A single-lineage AIS gap is an Episode, not an Intelligence hypothesis."""
+def test_e2e_isolated_ais_gap_stays_raw_without_materialized_episode():
+    """A single-lineage AIS gap stays archived raw, not a MaritimeEpisode."""
     from core.db.models import MaritimeEpisodeDB
     from core.db.session import session_scope
 
@@ -90,8 +90,7 @@ def test_e2e_isolated_ais_gap_stops_at_persisted_episode():
     assert w.scan_hypotheses() == 0
     with session_scope() as db:
         rows = db.query(MaritimeEpisodeDB).filter_by(episode_family="gap_episode").all()
-        assert len(rows) == 1
-        assert rows[0].verification_status == "single_source_observed"
+        assert rows == []
     assert client.get("/api/v1/live/hypotheses").json()["features"] == []
 
 

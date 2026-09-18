@@ -197,8 +197,9 @@ def _derive_recent_port_calls(track: list[dict], *, limit: int = 8) -> list[dict
     """Conservatively infer port stays from AIS fixes inside known approaches.
 
     These are explicitly model-derived calls, not official port-authority
-    records. A group is retained only if at least one fix is slow, anchored,
-    or moored; a fast transit through an approach polygon is discarded.
+    records. A group is retained only if it has at least two AIS fixes, at
+    least one fix is slow/anchored/moored, and the observed dwell is at least
+    20 minutes. A single fix or fast transit is never a port call.
     """
     from core.mda.reference import reference
 
@@ -222,7 +223,8 @@ def _derive_recent_port_calls(track: list[dict], *, limit: int = 8) -> list[dict
         except (TypeError, ValueError):
             slow = False
         try:
-            stationary_status = int(point.get("nav_status")) in {1, 5}
+            nav_status = point.get("nav_status")
+            stationary_status = nav_status is not None and int(nav_status) in {1, 5}
         except (TypeError, ValueError):
             stationary_status = False
         if current is None or current["port"] != port:
@@ -244,7 +246,23 @@ def _derive_recent_port_calls(track: list[dict], *, limit: int = 8) -> list[dict
             current["_qualified"] = current["_qualified"] or slow or stationary_status
     if current is not None and current.pop("_qualified", False):
         groups.append(current)
-    return list(reversed(groups[-limit:]))
+
+    from core.intel.lifecycle import parse_utc
+
+    qualified: list[dict] = []
+    for group in groups:
+        if int(group.get("ais_fixes") or 0) < 2:
+            continue
+        start = parse_utc(str(group.get("arrived_at") or ""))
+        end = parse_utc(str(group.get("last_seen_at") or ""))
+        if start is None or end is None:
+            continue
+        dwell_s = max(0.0, (end - start).total_seconds())
+        if dwell_s < 20 * 60:
+            continue
+        group["dwell_minutes"] = round(dwell_s / 60.0, 1)
+        qualified.append(group)
+    return list(reversed(qualified[-limit:]))
 
 
 @router.get("/chokepoints")

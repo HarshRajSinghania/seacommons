@@ -80,16 +80,13 @@ def test_beacon_event_classifies_maritime_safety_never_humanitarian(monitor, mms
     assert classification.service != "humanitarian"
 
 
-def test_nav_status_14_beacon_also_classifies_maritime_safety(monitor) -> None:
+def test_nav_status_14_on_normal_vessel_does_not_become_distress_beacon(monitor) -> None:
     mmsi = f"211{uuid.uuid4().int % 1_000_000:06d}"
     monitor.on_position(mmsi, "MV TEST", 34.0, 13.0, 0.0, 14)
 
     from core.intel.store import intel_store
 
-    event = next(e for e in intel_store.events(limit=50) if e.linked_mmsi == mmsi)
-    assert event.metadata["ais_nav_status_kind"] == "distress_beacon"
-    assert event.metadata["maritime_domain"] == "safety"
-    assert classify_service(event).service == "maritime"
+    assert not any(e.linked_mmsi == mmsi for e in intel_store.events(limit=50))
 
 
 def test_beacon_never_appears_in_the_humanitarian_live_feed(monitor) -> None:

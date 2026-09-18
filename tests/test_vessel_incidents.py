@@ -49,9 +49,9 @@ def test_sart_mmsi_emits_a_distress_immediately(monitor) -> None:
     assert event.linked_mmsi == "972123456"
 
 
-def test_nav_status_14_is_treated_as_a_beacon(monitor) -> None:
+def test_nav_status_14_on_normal_vessel_is_not_a_beacon(monitor) -> None:
     monitor.on_position("211456789", "MV TEST", 34.0, 13.0, 0.0, 14)
-    assert monitor._added and monitor._added[0].metadata["ais_nav_status_kind"] == "distress_beacon"
+    assert monitor._added == []
 
 
 def test_aground_emits_only_once_sustained(monitor) -> None:

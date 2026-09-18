@@ -587,12 +587,15 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
           <span style={{ background: color }} />
           <strong>{props.display_name || props.vessel_name || props.ship_name || dossier?.static?.name || props.title || 'Maritime signal'}</strong>
         </div>
-        {props.text && <p className="intel-report-summary">{props.text}</p>}
+        {(props.public_summary || props.text) && (
+          <p className="intel-report-summary">{props.public_summary || props.text}</p>
+        )}
         <Row label="Category" value={isVesselReport ? 'Maritime · AIS vessel' : visual.label} color={isVesselReport ? '#38bdf8' : color} />
         <Row label="Event" value={eventType} />
         <Row label="Status" value={lifecycle} color={color} />
         {props.verification_status && <Row label="Verification" value={String(props.verification_status).replace(/_/g, ' ')} />}
-        {props.analysis_state && <Row label="Analysis" value={String(props.analysis_state).replace(/_/g, ' ')} />}
+        {props.live_role && <Row label="Live level" value={String(props.live_role).replace(/_/g, ' ')} />}
+        {props.analysis_state && <Row label="Evidence stage" value={String(props.analysis_state).replace(/_/g, ' ')} />}
         {props.resolution_state && <Row label="Resolution" value={String(props.resolution_state).replace(/_/g, ' ')} />}
         <Row label="Reported" value={when ? new Date(when).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—'} />
         {coords && <Row label="Coordinates" value={`${Number(coords[1]).toFixed(5)}, ${Number(coords[0]).toFixed(5)}`} mono />}

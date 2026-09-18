@@ -7,7 +7,7 @@ import hashlib
 import logging
 import math
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -149,6 +149,8 @@ _PUBLIC_METADATA = frozenset(
         "lineage_ids",
         "detection_reason",
         "detail",
+        "public_summary",
+        "live_role",
         "drift_eligible",
         "drift_event_id",
         "drift_vessel_type",
@@ -290,6 +292,18 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         return False
     if event_type == "vessel_identity" and anomaly_type != "sanctioned_port_call":
         return False
+    if event_type == "vessel_identity" and anomaly_type == "sanctioned_port_call":
+        raw_call = props.get("port_call")
+        call: dict[str, Any] = raw_call if isinstance(raw_call, dict) else {}
+        if int(call.get("ais_fixes") or 0) < 2:
+            return False
+        activity = lifecycle.parse_utc(str(call.get("departed_at") or call.get("last_seen_at") or ""))
+        if activity is None or datetime.now(UTC) - activity > timedelta(hours=24):
+            return False
+    if event_type == "distress" and str(props.get("ais_nav_status_kind") or "") == "distress_beacon":
+        beacon_mmsi = str(props.get("linked_mmsi") or props.get("mmsi") or "")
+        if not beacon_mmsi.startswith(("970", "972", "974")):
+            return False
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         return False
     source = str(props.get("source") or "").lower()
@@ -603,6 +617,32 @@ def _public_intel_feature(
     )
     operational_label = _operational_label(event, resolved_domain=resolved_domain)
     input_modality = _input_modality(event, source_policy=canonical_source_policy)
+    anomaly_type = str(metadata.get("anomaly_type") or "")
+    if anomaly_type == "sanctioned_port_call":
+        metadata["live_role"] = "maritime_episode"
+    elif str(metadata.get("ais_nav_status_kind") or "") == "distress_beacon":
+        metadata["live_role"] = "operational_signal"
+    elif compartment_for_domain(resolved_domain) == "humanitarian":
+        metadata["live_role"] = "humanitarian_case"
+    else:
+        metadata.setdefault("live_role", "maritime_signal")
+    if not metadata.get("public_summary"):
+        if anomaly_type == "sanctioned_port_call" and isinstance(metadata.get("port_call"), dict):
+            call = metadata["port_call"]
+            dwell = call.get("dwell_minutes")
+            dwell_text = f"{dwell:g} minutes" if isinstance(dwell, (int, float)) else "a sustained period"
+            metadata["public_summary"] = (
+                f"AIS-derived port stay at {call.get('port') or 'a known port'}; "
+                f"{int(call.get('ais_fixes') or 0)} AIS fixes over {dwell_text}. "
+                "The vessel identity matches a sanctions list on a strong identifier. "
+                "This does not by itself establish sanctions evasion."
+            )
+        elif assessment_block is not None:
+            metadata["public_summary"] = assessment_block.get("observation") or assessment_block.get("interpretation")
+        elif metadata.get("detection_reason"):
+            metadata["public_summary"] = str(metadata.get("detection_reason"))[:600]
+        elif event.type in {"twitter", "mastodon", "bluesky", "ngo_activity"}:
+            metadata["public_summary"] = str(event.title or "")[:600]
     feature = {
         "type": "Feature",
         "id": f"intel:{event.id}",

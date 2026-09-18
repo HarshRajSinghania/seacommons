@@ -245,5 +245,21 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
         hyp = transition(hyp, "collecting", actor="hypothesis_engine_v1")
         record_hypothesis_transition(hyp.hypothesis_type, hyp.state)
 
+    # Crossing into review_ready is deliberately narrower than entering
+    # collection. High-specificity single-lineage AIS cues and unmatched SAR
+    # candidates may justify investigation, but only independently
+    # corroborated evidence can become a reviewable public case.
+    distinct_evidence = {str(value) for value in hyp.evidence_links if value}
+    if (
+        hyp.state == "collecting"
+        and decision.evidence_stage in {"corroborated", "assessed", "confirmed"}
+        and len(distinct_evidence) >= 2
+        and bool(hyp.reason_codes)
+    ):
+        from core.observability import record_hypothesis_transition
+
+        hyp = transition(hyp, "review_ready", actor="hypothesis_engine_v1")
+        record_hypothesis_transition(hyp.hypothesis_type, hyp.state)
+
     save_hypothesis(hyp)
     return hyp

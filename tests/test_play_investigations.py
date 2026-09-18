@@ -4,12 +4,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
-from fastapi.testclient import TestClient
-
 from core.api.main import app
 from core.intel.episode_store import save_episode
 from core.intel.hypothesis import new_hypothesis, transition
 from core.intel.hypothesis_store import save_hypothesis
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -25,8 +24,8 @@ def _fresh_investigations():
         db.query(MaritimeEpisodeDB).delete()
 
 
-def _seed_investigation(*, state="collecting", kind="dark_transit"):
-    episode_id = f"episode:test:{kind}:{state}"
+def _seed_investigation(*, state="collecting", kind="dark_transit", evidence_stage=None):
+    episode_id = f"episode:test:{kind}:{state}:{evidence_stage or 'auto'}"
     save_episode({
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [14.1, 35.5]},
@@ -42,28 +41,50 @@ def _seed_investigation(*, state="collecting", kind="dark_transit"):
         f"hyp:v1:{kind}:{episode_id}", kind, ("subj:mmsi:211879870",),
         episode_id=episode_id,
     )
+    stage = evidence_stage or (
+        "corroborated" if state in {"review_ready", "assessed", "published"} else "derived"
+    )
     hyp = replace(
         hyp,
         reason_codes=("SATELLITE_CANDIDATE_IN_REACHABLE_AREA",),
         evidence_links=("evidence-a", "sat:gfw_sar:test"),
-        evidence_stage="derived",
+        evidence_stage=stage,
     )
-    if state == "collecting":
+    if state != "candidate":
         hyp = transition(hyp, "collecting", actor="test")
+    if state in {"review_ready", "assessed", "published"}:
+        hyp = transition(hyp, "review_ready", actor="test")
+    if state in {"assessed", "published"}:
+        hyp = transition(hyp, "assessed", actor="test")
+    if state == "published":
+        hyp = transition(hyp, "published", actor="test")
     save_hypothesis(hyp)
     return hyp.hypothesis_id
 
 
-def test_play_catalog_exposes_collecting_investigation_as_neutral_candidate():
+def test_play_catalog_hides_collecting_investigation_until_review_ready():
     hypothesis_id = _seed_investigation()
+    rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
+    assert hypothesis_id not in {item["incident_id"] for item in rows}
+
+
+def test_play_catalog_exposes_review_ready_corroborated_investigation():
+    hypothesis_id = _seed_investigation(state="review_ready")
     response = TestClient(app).get("/api/v1/play/incidents?limit=500")
     assert response.status_code == 200
     row = next(item for item in response.json()["incidents"] if item["incident_id"] == hypothesis_id)
     assert row["domain"] == "investigation"
     assert row["case_type"] == "dark_transit"
-    assert row["incident_status"] == "collecting"
+    assert row["incident_status"] == "review_ready"
+    assert row["evidence_stage"] == "corroborated"
     assert row["geometry"] == {"type": "Point", "coordinates": [14.1, 35.5]}
-    assert row["title"] == "Dark transit investigation candidate"
+    assert row["title"] == "Dark transit investigation"
+
+
+def test_play_catalog_hides_review_ready_derived_investigation():
+    hypothesis_id = _seed_investigation(state="review_ready", evidence_stage="derived")
+    rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
+    assert hypothesis_id not in {item["incident_id"] for item in rows}
 
 
 def test_play_catalog_hides_unadvanced_candidate_noise():
@@ -72,15 +93,23 @@ def test_play_catalog_hides_unadvanced_candidate_noise():
     assert hypothesis_id not in {item["incident_id"] for item in rows}
 
 
-def test_play_investigation_timeline_exposes_evidence_not_vessel_identity():
+def test_play_collecting_investigation_timeline_is_not_public():
     hypothesis_id = _seed_investigation()
+    response = TestClient(app).get(
+        f"/api/v1/play/incidents/{hypothesis_id}/timeline"
+    )
+    assert response.status_code == 404
+
+
+def test_play_review_ready_timeline_exposes_evidence_not_vessel_identity():
+    hypothesis_id = _seed_investigation(state="review_ready")
     response = TestClient(app).get(
         f"/api/v1/play/incidents/{hypothesis_id}/timeline"
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["domain"] == "investigation"
-    assert payload["incident_status"] == "collecting"
+    assert payload["incident_status"] == "review_ready"
     types = [item["type"] for item in payload["timeline"]]
     assert "hypothesis" in types
     assert "211879870" not in response.text

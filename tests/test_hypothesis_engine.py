@@ -15,8 +15,6 @@ os.environ["SEACOMMONS_TRACK_STORE_SYNC"] = "1"
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
-from core.intel.hypothesis import can_publish
 from core.intel.hypothesis_engine import evaluate_episode
 from core.intel.hypothesis_store import get_hypothesis
 from core.intel.store import IntelEvent, intel_store
@@ -234,9 +232,9 @@ def test_v1_two_same_lineage_gaps_do_not_create_dark_transit_hypothesis() -> Non
 
 
 def test_v1_corroborated_gap_links_persisted_episode() -> None:
-    from core.intel.store import IntelEvent, intel_store
     from core.db.models import InvestigationHypothesisDB, MaritimeEpisodeDB
     from core.db.session import session_scope
+    from core.intel.store import IntelEvent, intel_store
 
     _add_event("v1-gap-c", gap_reason={"hypothesis": "vessel_gap", "confidence": 0.7})
     intel_store.add(IntelEvent(
@@ -257,7 +255,9 @@ def test_v1_corroborated_gap_links_persisted_episode() -> None:
     assert hyp is not None
     assert hyp.episode_id == episode_id
     assert hyp.hypothesis_id == f"hyp:v1:dark_transit:{episode_id}"
-    assert hyp.state == "collecting"
+    assert hyp.state == "review_ready"
+    assert hyp.evidence_stage == "corroborated"
+    assert [entry.new_state for entry in hyp.audit_history[-2:]] == ["collecting", "review_ready"]
     with session_scope() as db:
         assert db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).count() == 1
         row = db.query(InvestigationHypothesisDB).filter_by(hypothesis_id=hyp.hypothesis_id).one()
@@ -336,6 +336,7 @@ def test_v1_engine_never_relinks_or_mutates_legacy_null_episode_hypothesis() -> 
     assert new_hyp is not None
     assert new_hyp.hypothesis_id == f"hyp:v1:dark_transit:{episode_id}"
     assert new_hyp.episode_id == episode_id
+    assert new_hyp.state == "review_ready"
     with session_scope() as db:
         legacy = db.get(InvestigationHypothesisDB, legacy_id)
         assert legacy is not None
@@ -416,6 +417,7 @@ def test_satellite_candidate_moves_dark_transit_into_collecting():
 
 def test_durable_hypothesis_sampler_keeps_gap_family_under_spoof_flood():
     from datetime import datetime, timezone
+
     from core.db.models import IntelEventDB
     from core.db.session import session_scope
     from core.mda.watch import MdaWatch

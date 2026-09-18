@@ -23,12 +23,9 @@ import time
 
 os.environ["SEACOMMONS_TRACK_STORE_SYNC"] = "1"
 
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
-
 from core.api.main import app
 from core.intel.hypothesis import transition
 from core.intel.hypothesis_store import get_hypothesis
@@ -36,13 +33,18 @@ from core.intel.store import IntelEvent, intel_store
 from core.live.projection import _public_intel_feature
 from core.mda.watch import MdaWatch
 from core.vessels.track_store import track_store
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def _clean():
-    from core.db.models import InvestigationHypothesisDB, MaritimeEpisodeDB, VesselTrackDB
+    from core.db.models import (
+        InvestigationHypothesisDB,
+        MaritimeEpisodeDB,
+        VesselTrackDB,
+    )
     from core.db.session import engine, session_scope
 
     InvestigationHypothesisDB.__table__.create(bind=engine(), checkfirst=True)
@@ -119,14 +121,14 @@ def test_e2e_independent_gap_corroboration_creates_idempotent_v1_hypothesis():
     hyp = hyps[0]
     assert hyp.hypothesis_id.startswith("hyp:v1:dark_transit:")
     assert hyp.episode_id is not None
-    assert hyp.state == "collecting"
+    assert hyp.state == "review_ready"
+    assert hyp.evidence_stage == "corroborated"
     assert w.scan_hypotheses() == 1
     with session_scope() as db:
         assert db.query(MaritimeEpisodeDB).count() == 1
         assert db.query(InvestigationHypothesisDB).count() == 1
 
-    published = transition(hyp, "review_ready", actor="analyst:test")
-    published = transition(published, "assessed", actor="analyst:test")
+    published = transition(hyp, "assessed", actor="analyst:test")
     published = transition(published, "published", actor="analyst:test")
     save_hypothesis(published)
     features = client.get("/api/v1/live/hypotheses").json()["features"]

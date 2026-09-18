@@ -121,13 +121,33 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     }
 
 
+def _is_public_play_investigation(hypothesis) -> bool:
+    """Expose only investigation cases that have crossed the review boundary.
+
+    Collecting hypotheses remain durable internal research state. Play is a
+    public case archive, so a maritime investigation appears only after it is
+    review-ready (or beyond), carries corroborated-or-better evidence, and has
+    at least two distinct evidence references plus an explicit reason code.
+    """
+    if hypothesis.hypothesis_type not in {"dark_transit", "position_spoofing"}:
+        return False
+    if hypothesis.state not in {"review_ready", "assessed", "published"}:
+        return False
+    if hypothesis.evidence_stage not in {"corroborated", "assessed", "confirmed"}:
+        return False
+    if not (hypothesis.reason_codes or []):
+        return False
+    evidence_links = {str(value) for value in (hypothesis.evidence_links or []) if value}
+    return len(evidence_links) >= 2
+
+
 def _investigation_projection(hypothesis, episode) -> dict[str, Any]:
     title = {
-        "dark_transit": "Dark transit investigation candidate",
-        "position_spoofing": "Position integrity investigation candidate",
-        "covert_rendezvous": "Covert rendezvous investigation candidate",
-        "infrastructure_pattern": "Infrastructure pattern investigation candidate",
-    }.get(hypothesis.hypothesis_type, "Maritime investigation candidate")
+        "dark_transit": "Dark transit investigation",
+        "position_spoofing": "Position integrity investigation",
+        "covert_rendezvous": "Covert rendezvous investigation",
+        "infrastructure_pattern": "Infrastructure pattern investigation",
+    }.get(hypothesis.hypothesis_type, "Maritime investigation")
     return {
         "incident_id": hypothesis.hypothesis_id,
         "incident_status": hypothesis.state,
@@ -204,13 +224,14 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 InvestigationHypothesisDB.episode_id == MaritimeEpisodeDB.episode_id,
             )
             .filter(
-                InvestigationHypothesisDB.state.in_(("collecting", "review_ready", "assessed", "published")),
+                InvestigationHypothesisDB.state.in_(("review_ready", "assessed", "published")),
                 InvestigationHypothesisDB.hypothesis_type.in_(("dark_transit", "position_spoofing")),
             )
             .all()
         )
         for hypothesis, episode in investigations:
-            combined.append(_investigation_projection(hypothesis, episode))
+            if _is_public_play_investigation(hypothesis):
+                combined.append(_investigation_projection(hypothesis, episode))
 
         combined = dedupe_public_case_items(combined)
         public_ids = [str(item["incident_id"]) for item in combined]
@@ -415,7 +436,7 @@ def play_incident_timeline(incident_id: str):
     now = datetime.now(timezone.utc)
     with session_scope() as db:
         hypothesis = db.get(InvestigationHypothesisDB, incident_id)
-        if hypothesis is not None and hypothesis.state != "candidate" and hypothesis.hypothesis_type in {"dark_transit", "position_spoofing"}:
+        if hypothesis is not None and _is_public_play_investigation(hypothesis):
             episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id) if hypothesis.episode_id else None
             if episode is None:
                 raise HTTPException(status_code=404, detail="Investigation not found")

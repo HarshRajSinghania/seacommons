@@ -40,6 +40,7 @@ export function initialLayerVisibility({ publicLive = false, storage = globalThi
       merged.ais_stationary = false;
       merged.ais_trails = false;
       merged.ngo_vessels = true;
+      merged.nautical = true;
     }
     return merged;
   } catch {

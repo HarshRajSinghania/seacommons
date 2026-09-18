@@ -670,6 +670,7 @@ function App() {
   const [showAisAlerts, setShowAisAlerts] = useState(false);
   const [showVesselLinks, setShowVesselLinks] = useState(false);
   const [baseMap, setBaseMap] = useState(() => {
+    if (isPublicLiveHost) return 'standard';
     try {
       return window.localStorage.getItem('seacommons_base_map') === 'satellite' ? 'satellite' : 'standard';
     } catch {
@@ -2412,9 +2413,13 @@ function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    if (map.getLayer('osm')) map.setLayoutProperty('osm', 'visibility', baseMap === 'standard' ? 'visible' : 'none');
-    if (map.getLayer('satellite')) map.setLayoutProperty('satellite', 'visibility', baseMap === 'satellite' ? 'visible' : 'none');
-    try { window.localStorage.setItem('seacommons_base_map', baseMap); } catch { /* quota */ }
+    const effectiveBaseMap = isPublicLiveHost ? 'standard' : baseMap;
+    if (map.getLayer('osm')) map.setLayoutProperty('osm', 'visibility', effectiveBaseMap === 'standard' ? 'visible' : 'none');
+    if (map.getLayer('satellite')) map.setLayoutProperty('satellite', 'visibility', effectiveBaseMap === 'satellite' ? 'visible' : 'none');
+    try {
+      window.localStorage.setItem('seacommons_base_map', effectiveBaseMap);
+    } catch { /* quota */ }
+    if (isPublicLiveHost && baseMap !== 'standard') setBaseMap('standard');
   }, [baseMap, mapReady]);
 
   // Layer group visibility — applied to every MapLibre layer in the group
@@ -3381,6 +3386,7 @@ function App() {
             onToggle={toggleLayerGroup}
             baseMap={baseMap}
             onBaseMapChange={setBaseMap}
+            allowSatellite={!isPublicLiveHost}
             allowed={isPublicLiveHost ? PUBLIC_LIVE_LAYER_GROUPS : null}
           />
         ) : null}

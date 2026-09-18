@@ -17,14 +17,16 @@ test('public Live starts incident-first even when the legacy layer cache enabled
   assert.equal(value.ais_trails, false);
   assert.equal(value.ngo_vessels, true);
   assert.equal(value.sar, true);
+  assert.equal(value.nautical, true);
 });
 
 test('public Live never restores raw AIS from its public layer profile', () => {
   const value = initialLayerVisibility({
     publicLive: true,
-    storage: storage({ [PUBLIC_LIVE_LAYER_STORAGE_KEY]: JSON.stringify({ ais_moving: true }) }),
+    storage: storage({ [PUBLIC_LIVE_LAYER_STORAGE_KEY]: JSON.stringify({ ais_moving: true, nautical: false }) }),
   });
   assert.equal(value.ais_moving, false);
   assert.equal(value.ais_stationary, false);
   assert.equal(value.ais_trails, false);
+  assert.equal(value.nautical, true);
 });

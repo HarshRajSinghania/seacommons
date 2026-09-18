@@ -52,6 +52,7 @@ export default function LayerToggles({
   labelOverrides = null,
   baseMap = 'standard',
   onBaseMapChange,
+  allowSatellite = true,
 }) {
   const [open, setOpen] = useState(false);
   const groups = allowed ? LAYER_GROUPS.filter((g) => allowed.has(g.key)) : LAYER_GROUPS;
@@ -79,12 +80,14 @@ export default function LayerToggles({
               type="button"
               className={baseMap === 'standard' ? 'is-active' : ''}
               onClick={() => onBaseMapChange?.('standard')}
-            >Standard</button>
-            <button
-              type="button"
-              className={baseMap === 'satellite' ? 'is-active' : ''}
-              onClick={() => onBaseMapChange?.('satellite')}
-            >Satellite</button>
+            >OpenStreetMap</button>
+            {allowSatellite ? (
+              <button
+                type="button"
+                className={baseMap === 'satellite' ? 'is-active' : ''}
+                onClick={() => onBaseMapChange?.('satellite')}
+              >Satellite</button>
+            ) : null}
           </div>
           <div className="layer-panel-sub">Overlays</div>
           {groups.map((g) => (

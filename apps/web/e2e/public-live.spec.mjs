@@ -44,16 +44,9 @@ test('Humanitarian public browser surface contains no vessel dossier identifiers
 });
 
 
-test('acquisition renders five canonical families and public-safe radio provenance', async ({ page }) => {
+test('public Live omits the legacy acquisition pipeline block', async ({ page }) => {
   await page.goto(PUBLIC_LIVE_URL);
-  const acquisition = page.getByRole('region', { name: 'Acquisition pipeline' });
-  for (const label of ['AIS', 'First-party', 'Partner', 'Public feed', 'Radio']) {
-    await expect(acquisition.getByText(label, { exact: true })).toBeVisible();
-  }
-  await expect(acquisition.getByText('Mediterranean DSC', { exact: true })).toBeVisible();
-  await expect(acquisition.getByText(/kiwisdr · DSC · 2187\.5 kHz · USB/)).toBeVisible();
-  const text = await acquisition.innerText();
-  expect(text).not.toMatch(/frontend_url|physical_lineage|secret\.example/i);
+  await expect(page.getByRole('region', { name: 'Acquisition pipeline' })).toHaveCount(0);
 });
 
 test('Listen live is exposed only for an eligible public receiver', async ({ page }) => {
@@ -65,7 +58,7 @@ test('Listen live is exposed only for an eligible public receiver', async ({ pag
   await expect(page.getByRole('button', { name: 'Listen live' })).toHaveCount(0);
 });
 
-test('public Live ignores the legacy AIS-on cache and starts incident-first', async ({ page }) => {
+test('public Live does not expose raw AIS vessel layer controls', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('seacommons_layer_vis', JSON.stringify({
       ais_moving: true,
@@ -77,9 +70,9 @@ test('public Live ignores the legacy AIS-on cache and starts incident-first', as
   await page.getByTitle('Map layers').click();
 
   const row = (label) => page.locator('.layer-row').filter({ hasText: label }).locator('input');
-  await expect(row('AIS · moving vessels')).not.toBeChecked();
-  await expect(row('AIS · stationary vessels')).not.toBeChecked();
-  await expect(row('AIS · selected vessel trail')).not.toBeChecked();
+  await expect(row('AIS · moving vessels')).toHaveCount(0);
+  await expect(row('AIS · stationary vessels')).toHaveCount(0);
+  await expect(row('AIS · selected vessel trail')).toHaveCount(0);
   await expect(row('NGO SAR fleet')).toBeChecked();
 });
 

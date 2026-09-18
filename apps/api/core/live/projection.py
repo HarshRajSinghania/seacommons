@@ -215,7 +215,8 @@ def dedupe_public_case_items(items: list[dict[str, Any]], *, window_seconds: int
     when count, point and time make them the same operational case.
     """
     def fields(item: dict[str, Any]) -> tuple[str, str, str, Any, str]:
-        props = item.get("properties") if isinstance(item.get("properties"), dict) else item
+        raw_props = item.get("properties")
+        props: dict[str, Any] = raw_props if isinstance(raw_props, dict) else item
         source = str(props.get("source") or "").lower().replace(" ", "_").replace("-", "_")
         title = str(props.get("title") or "")
         timestamp = str(

@@ -116,6 +116,9 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
   const L = module.default || module;
   const map = L.map(container, { zoomControl: true, attributionControl: false, preferCanvas: true });
   map.setView([Number(center[1]), Number(center[0])], zoom);
+  // Incident geometry must remain a real DOM target for keyboard/pointer
+  // interaction and accessibility even when the map prefers Canvas globally.
+  const incidentRenderer = typeof L.svg === 'function' ? L.svg({ padding: 0.5 }) : undefined;
   const retinaTiles = { detectRetina: true, maxZoom: 19, maxNativeZoom: 16, crossOrigin: true };
   L.tileLayer(PUBLIC_BASEMAP_TILE_URL, retinaTiles).addTo(map);
   L.tileLayer(PUBLIC_BASEMAP_LABEL_URL, { ...retinaTiles, opacity: 0.9 }).addTo(map);
@@ -132,7 +135,7 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
           const color = semanticColor(feature);
           L.polygon(latlngs, {
             color, weight: 2, fillColor: color, fillOpacity: 0.22,
-            className: markerClass(feature),
+            className: markerClass(feature), renderer: incidentRenderer,
           }).on('click', () => onFeatureSelect?.(feature)).addTo(markers);
         }
       }
@@ -149,9 +152,13 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
             fillColor: color,
             fillOpacity: 0.12,
             className: `${markerClass(feature)} seacommons-fallback-uncertainty`,
+            renderer: incidentRenderer,
           }).on('click', () => onFeatureSelect?.(feature)).addTo(markers);
         }
-        const marker = L.circleMarker([Number(lat), Number(lon)], markerStyle(feature)).addTo(markers);
+        const marker = L.circleMarker(
+          [Number(lat), Number(lon)],
+          { ...markerStyle(feature), renderer: incidentRenderer },
+        ).addTo(markers);
         bindSelection(marker, feature, onFeatureSelect);
       }
       for (const feature of pointFeatures(vessels)) {

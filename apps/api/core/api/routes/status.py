@@ -29,7 +29,7 @@ from core.live.feed import public_signal_collection
 
 router = APIRouter(tags=["status"])
 
-_STATUS_CACHE_TTL_S = 5.0
+_STATUS_CACHE_TTL_S = 30.0
 _status_cache_lock = threading.Lock()
 _status_cache: tuple[float, int, dict[str, Any]] | None = None
 

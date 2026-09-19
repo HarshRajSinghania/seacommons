@@ -169,7 +169,19 @@ class AISStreamClient:
         while not self._stop.is_set():
             try:
                 logger.info("AISStream: connecting to %s (%s)", _WS_URL, self._label)
-                with ws_sync.connect(_WS_URL, open_timeout=15) as ws:
+                # AISStream has repeatedly left the socket healthy and flowing
+                # while failing the websockets library's protocol-level ping
+                # watchdog. The default ping_interval=20/ping_timeout=20 then
+                # tears down a productive stream every ~45-60 seconds. This
+                # client already owns stronger application-level liveness:
+                # recv(timeout=60), reconnect on timeout/error, source-health
+                # reporting, and a forced reconnect after three minutes with
+                # no PositionReports. Disable only the redundant protocol ping.
+                with ws_sync.connect(
+                    _WS_URL,
+                    open_timeout=15,
+                    ping_interval=None,
+                ) as ws:
                     # Subscribe
                     sub = {
                         "APIKey": self._api_key,

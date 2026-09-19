@@ -158,3 +158,40 @@ def test_ngo_socket_does_not_override_primary_provider_health(monkeypatch):
     finally:
         aisstream._client = old_client
         aisstream._ngo_client = old_ngo_client
+
+
+def test_protocol_ping_watchdog_is_disabled_but_application_liveness_remains(monkeypatch):
+    captured = {}
+    client = AISStreamClient("dummy-key", label="Ping Contract")
+
+    class _FakeWs:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def send(self, *_args, **_kwargs):
+            pass
+        def recv(self, timeout=None):
+            raise AssertionError("stop flag should prevent recv in this contract test")
+
+    def connect(*args, **kwargs):
+        captured.update(kwargs)
+        client._stop.set()
+        return _FakeWs()
+
+    fake_client_module = types.ModuleType("websockets.sync.client")
+    fake_client_module.connect = connect
+    fake_sync_module = types.ModuleType("websockets.sync")
+    fake_sync_module.client = fake_client_module
+    fake_websockets_module = types.ModuleType("websockets")
+    fake_websockets_module.sync = fake_sync_module
+    monkeypatch.setitem(sys.modules, "websockets", fake_websockets_module)
+    monkeypatch.setitem(sys.modules, "websockets.sync", fake_sync_module)
+    monkeypatch.setitem(sys.modules, "websockets.sync.client", fake_client_module)
+
+    client._run()
+    client.stop()
+
+    assert captured["open_timeout"] == 15
+    assert "ping_interval" in captured
+    assert captured["ping_interval"] is None

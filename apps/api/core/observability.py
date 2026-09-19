@@ -99,6 +99,11 @@ V1_HYPOTHESIS_DECISIONS = Counter(
     "Observation->Episode->Hypothesis v1 eligibility decisions",
     ["hypothesis_type", "outcome"],
 )
+MDA_SCAN_STAGE_EVENTS = Counter(
+    "seacommons_mda_scan_stage_events_total",
+    "MDA scan stage completions/failures using bounded stage labels",
+    ["stage", "outcome"],
+)
 CASE_RELINK_EVENTS = Counter(
     "seacommons_case_relink_events_total", "Incident linking outcomes", ["outcome"],
 )
@@ -238,6 +243,22 @@ def record_v1_hypothesis_decision(hypothesis_type: str, outcome: str) -> None:
     """Count v1 eligibility decisions without vessel or evidence identifiers."""
     try:
         V1_HYPOTHESIS_DECISIONS.labels(hypothesis_type, outcome).inc()
+    except Exception:  # pragma: no cover
+        pass
+
+
+_MDA_SCAN_STAGES = frozenset({
+    "rendezvous", "infra_loiter", "gap", "identity", "sanctioned_port_call",
+    "mmsi_duplicate", "spoofing", "hypotheses",
+})
+
+
+def record_mda_scan_stage(*, stage: str, outcome: str) -> None:
+    """Record stage health without letting metrics block the MDA pipeline."""
+    try:
+        stage_label = stage if stage in _MDA_SCAN_STAGES else "other"
+        outcome_label = outcome if outcome in {"success", "error"} else "error"
+        MDA_SCAN_STAGE_EVENTS.labels(stage_label, outcome_label).inc()
     except Exception:  # pragma: no cover
         pass
 

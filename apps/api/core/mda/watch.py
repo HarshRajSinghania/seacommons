@@ -136,19 +136,38 @@ class MdaWatch:
             time.sleep(int(getattr(config, "MDA_SCAN_INTERVAL_S", 300)))
 
     def scan(self) -> dict[str, int]:
-        counts = {
-            "rendezvous": self.scan_rendezvous(),
-            "infra_loiter": self.scan_infra_loiter(),
-            "gap": self.scan_gaps(),
-            "identity": self.scan_identity(),
-            "sanctioned_port_call": self.scan_sanctioned_port_calls(),
-            "mmsi_duplicate": self.scan_mmsi_duplicate(),
-            "spoofing": self.scan_spoofing(),
-        }
-        # Hypothesis evaluation runs after every detector above so it sees
-        # this cycle's freshest events (docs/fixes.md M14.3).
-        counts["hypotheses"] = self.scan_hypotheses()
-        # prune emit-dedup + stale pairs
+        """Run the canonical MDA stages independently.
+
+        One malformed detector result must not prevent later stages, especially
+        hypothesis evaluation, from seeing all other fresh evidence in the same
+        cycle. Failures remain explicit in logs/metrics and contribute zero to
+        that stage's count; no fallback or parallel analysis path is created.
+        """
+        from core.observability import record_mda_scan_stage
+
+        stages = (
+            ("rendezvous", self.scan_rendezvous),
+            ("infra_loiter", self.scan_infra_loiter),
+            ("gap", self.scan_gaps),
+            ("identity", self.scan_identity),
+            ("sanctioned_port_call", self.scan_sanctioned_port_calls),
+            ("mmsi_duplicate", self.scan_mmsi_duplicate),
+            ("spoofing", self.scan_spoofing),
+            # Hypothesis evaluation deliberately remains last so it sees every
+            # detector result that succeeded in this cycle.
+            ("hypotheses", self.scan_hypotheses),
+        )
+        counts: dict[str, int] = {}
+        for stage, runner in stages:
+            try:
+                counts[stage] = int(runner())
+                record_mda_scan_stage(stage=stage, outcome="success")
+            except Exception as exc:
+                counts[stage] = 0
+                record_mda_scan_stage(stage=stage, outcome="error")
+                logger.exception("MdaWatch stage %s failed: %s", stage, exc)
+
+        # prune emit-dedup + stale pairs even when one stage failed
         now = time.time()
         self._emitted = {k: t for k, t in self._emitted.items() if now - t < 24 * 3600}
         self._pairs = {k: v for k, v in self._pairs.items() if now - v["last_seen"] < 2 * 3600}

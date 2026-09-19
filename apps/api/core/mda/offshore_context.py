@@ -39,7 +39,15 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
     is informative enough to surface as a labelled Maritime evidence signal.
     """
     if not context.get("offshore"):
-        return {"qualified": False, "reason_codes": ["NOT_OFFSHORE"]}
+        return {
+            "qualified": False,
+            "reason_codes": ["NOT_OFFSHORE"],
+            "stage": "anomaly",
+            "rationale": (
+                "Observation is not offshore under the current coast/port context gate; "
+                "it remains internal context and is not promoted to Live."
+            ),
+        }
 
     reasons: list[str] = ["OFFSHORE_CONTEXT"]
     qualified = False

@@ -167,3 +167,15 @@ def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> Non
     }
     assert is_useful_public_case_feature(one) is False
     assert is_useful_public_case_feature(repeated) is True
+
+
+def test_non_offshore_qualification_preserves_full_result_contract() -> None:
+    result = qualify_offshore_anomaly(
+        "ais_rendezvous",
+        {"duration_min": 120, "dark": True},
+        {"offshore": False},
+    )
+    assert result["qualified"] is False
+    assert result["reason_codes"] == ["NOT_OFFSHORE"]
+    assert result["stage"] == "anomaly"
+    assert "not offshore" in result["rationale"].lower()

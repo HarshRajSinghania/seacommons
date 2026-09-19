@@ -7,7 +7,7 @@ import time
 
 os.environ["SEACOMMONS_TRACK_STORE_SYNC"] = "1"
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from core.intel.store import intel_store
@@ -455,9 +455,10 @@ def test_sanctioned_port_call_requires_strong_identity_and_qualified_stay(monkey
     monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: "Augusta")
     mmsi = "244123456"
     registry._cache[mmsi] = {"imo": "1234567", "ship_name": "LISTED SHIP", "flag": "NL"}
+    now = datetime.now(timezone.utc)
     rows = [
-        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": "2026-09-18T05:00:00+00:00"},
-        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": "2026-09-18T06:00:00+00:00"},
+        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": (now - timedelta(hours=2)).isoformat()},
+        {"mmsi": mmsi, "lat": 37.0, "lon": 15.0, "ts": (now - timedelta(hours=1)).isoformat()},
     ]
     monkeypatch.setattr(track_store, "positions_between", lambda *a, **k: rows)
     monkeypatch.setattr(
@@ -580,3 +581,41 @@ def test_retrospective_darkship_refresh_reuses_canonical_hypothesis_scan(monkeyp
     assert report["with_unmatched_sar"] == 1
     assert report["hypotheses_evaluated"] == 1
     assert scan_calls == [[updated]]
+
+
+def test_scan_continues_after_one_stage_failure(monkeypatch):
+    watch = MdaWatch()
+    calls = []
+
+    def ok(name, value):
+        def run():
+            calls.append(name)
+            return value
+        return run
+
+    def fail():
+        calls.append("rendezvous")
+        raise KeyError("broken detector contract")
+
+    monkeypatch.setattr(watch, "scan_rendezvous", fail)
+    monkeypatch.setattr(watch, "scan_infra_loiter", ok("infra_loiter", 2))
+    monkeypatch.setattr(watch, "scan_gaps", ok("gap", 3))
+    monkeypatch.setattr(watch, "scan_identity", ok("identity", 4))
+    monkeypatch.setattr(watch, "scan_sanctioned_port_calls", ok("sanctioned_port_call", 5))
+    monkeypatch.setattr(watch, "scan_mmsi_duplicate", ok("mmsi_duplicate", 6))
+    monkeypatch.setattr(watch, "scan_spoofing", ok("spoofing", 7))
+    monkeypatch.setattr(watch, "scan_hypotheses", ok("hypotheses", 8))
+
+    result = watch.scan()
+
+    assert result == {
+        "rendezvous": 0,
+        "infra_loiter": 2,
+        "gap": 3,
+        "identity": 4,
+        "sanctioned_port_call": 5,
+        "mmsi_duplicate": 6,
+        "spoofing": 7,
+        "hypotheses": 8,
+    }
+    assert calls[-1] == "hypotheses"

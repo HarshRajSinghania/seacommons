@@ -63,6 +63,38 @@ def test_operator_dashboard_requires_gateway(monkeypatch):
     assert "current fixes only" in response.text
 
 
+def test_operator_dashboard_inline_javascript_compiles(monkeypatch, tmp_path):
+    import shutil
+    import subprocess
+
+    import pytest
+    from core.api.main import app
+    from core.config import config
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for dashboard JavaScript syntax validation")
+
+    monkeypatch.setattr(config, "OPERATOR_GATEWAY_SECRET", "operator-secret")
+    response = TestClient(app).get(
+        "/api/v1/operator/ingestion/dashboard",
+        headers={"x-seacommons-operator-gateway": "operator-secret"},
+    )
+    assert response.status_code == 200
+    start = response.text.index("<script>") + len("<script>")
+    end = response.text.index("</script>", start)
+
+    script = tmp_path / "operator-dashboard.js"
+    script.write_text(response.text[start:end], encoding="utf-8")
+    checked = subprocess.run(
+        [node, "--check", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+
+
 def test_operator_overview_includes_public_pipeline_status(monkeypatch):
     from core.api.main import app
     from core.config import config

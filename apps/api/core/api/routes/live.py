@@ -656,21 +656,6 @@ async def live_sources():
     }
 
 
-@router.get("/ngo-vessels")
-async def live_ngo_vessels():
-    """Public projection of known SAR NGO/coastguard vessel positions.
-
-    Same data and query as the authenticated operator route
-    (/api/v1/intel/ngo) — these vessels already broadcast AIS publicly, so
-    there is nothing to withhold; this just gives the public Live map a
-    route under the same public /api/v1/live/ prefix as everything else it
-    reads, instead of poking a hole in /api/v1/intel's auth gate.
-    """
-    from core.intel.ngo_registry import ngo_vessel_geojson
-
-    return ngo_vessel_geojson()
-
-
 @router.get("/platforms")
 async def live_platforms():
     """Public projection of Mediterranean oil/gas platform positions
@@ -704,7 +689,7 @@ async def live_stream(websocket: WebSocket, mode: str = "humanitarian"):
                 previous_digest = digest
             else:
                 await websocket.send_text('{"type":"ping"}')
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
     except WebSocketDisconnect:
         return
     except Exception:

@@ -165,6 +165,22 @@ def ngo_mmsi_set() -> frozenset[str]:
     return frozenset(_MMSI_SET)
 
 
+def _position_age_seconds(last_seen: Any, *, now: datetime | None = None) -> float | None:
+    if not last_seen:
+        return None
+    try:
+        observed = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return max(
+        0.0,
+        (current.astimezone(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds(),
+    )
+
+
 def _position_status(last_seen: Any, *, now: datetime | None = None) -> str:
     if not last_seen:
         return "offline"
@@ -184,11 +200,10 @@ def _position_status(last_seen: Any, *, now: datetime | None = None) -> str:
 
 
 def ngo_vessel_geojson() -> dict[str, Any]:
-    """Live NGO/coastguard vessel positions as GeoJSON, enriched from the
-    registry above. Shared by the authenticated operator route
-    (/api/v1/intel/ngo) and the public Live route (/api/v1/live/ngo-vessels)
-    so both always agree — AIS positions are public data either way, this
-    is just about which surface exposes them.
+    """Operational NGO/coastguard vessel inventory enriched from the registry.
+
+    This projection is for authenticated operator surfaces. Public Live stays
+    case/activity-first and does not expose the complete fleet inventory.
     """
     from core.vessels.registry import registry  # lazy to avoid circular import
 
@@ -206,6 +221,7 @@ def ngo_vessel_geojson() -> dict[str, Any]:
         info = get_ngo_info(mmsi) or {}
         positioned_mmsi.add(mmsi)
         operator_type = info.get("operator_type", "civil_ngo")
+        position_age_s = _position_age_seconds(props.get("last_seen"))
         ais_status = _position_status(props.get("last_seen"))
         if ais_status == "live":
             live_mmsi.add(mmsi)
@@ -213,6 +229,9 @@ def ngo_vessel_geojson() -> dict[str, Any]:
             stale_mmsi.add(mmsi)
         ngo_features.append({
             **feat,
+            # Old AIS fixes remain in the fleet inventory as history/status,
+            # but only genuinely fresh positions are allowed onto a map.
+            "geometry": feat.get("geometry") if ais_status == "live" else None,
             "properties": {
                 **props,
                 # Canonical registry identity wins over a stale AIS display
@@ -223,7 +242,12 @@ def ngo_vessel_geojson() -> dict[str, Any]:
                 "org": info.get("org", ""),
                 "role": info.get("role", ""),
                 "ais_status": ais_status,
-                "position_policy": "last_known",
+                "position_age_s": (
+                    round(position_age_s, 1) if position_age_s is not None else None
+                ),
+                "position_policy": (
+                    "current" if ais_status == "live" else "stale_withheld"
+                ),
                 "operator_type": operator_type,
                 "vessel_class": "ngo" if operator_type == "civil_ngo" else "coastguard",
             },
@@ -255,6 +279,29 @@ def ngo_vessel_geojson() -> dict[str, Any]:
     civil_ngo_count = sum(
         1 for info in NGO_VESSELS.values() if info.get("operator_type") == "civil_ngo"
     )
+    try:
+        from core.vessels.aisstream import get_ngo_client
+
+        tracker = get_ngo_client()
+        tracker_health = tracker.health() if tracker else None
+        tracking_stream = {
+            "connected": bool(tracker and tracker.connected),
+            "messages_received": int(tracker.messages_received) if tracker else 0,
+            "last_message_at": (
+                tracker_health.last_message_at.isoformat()
+                if tracker_health and tracker_health.last_message_at
+                else None
+            ),
+            "scope": "global_mmsi",
+        }
+    except Exception:
+        tracking_stream = {
+            "connected": False,
+            "messages_received": 0,
+            "last_message_at": None,
+            "scope": "global_mmsi",
+        }
+
     return {
         "type": "FeatureCollection",
         "features": ngo_features,
@@ -267,5 +314,7 @@ def ngo_vessel_geojson() -> dict[str, Any]:
             "last_known_position": len(positioned_mmsi),
             "never_seen": len(NGO_VESSELS) - len(positioned_mmsi),
             "offline": len(NGO_VESSELS) - len(live_mmsi) - len(stale_mmsi),
+            "map_position_policy": "live_only_10m",
+            "tracking_stream": tracking_stream,
         },
     }

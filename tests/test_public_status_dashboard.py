@@ -59,8 +59,8 @@ def test_operator_dashboard_requires_gateway(monkeypatch):
     assert "Real investigation chains" in response.text
     assert "All-time corpus" in response.text
     assert "Civil + state SAR fleet" in response.text
-    assert "/api/v1/live/ngo-vessels" in response.text
-    assert "AIS freshness only" in response.text
+    assert "/api/v1/operator/ingestion/sar-fleet" in response.text
+    assert "current fixes only" in response.text
 
 
 def test_operator_overview_includes_public_pipeline_status(monkeypatch):
@@ -117,3 +117,23 @@ def test_public_status_excludes_legacy_unclassified_from_corroborated(monkeypatc
     pipeline = response.json()["pipeline"]
     assert pipeline["maritime_episodes"] == 1
     assert pipeline["corroborated_episodes"] == 1
+
+
+def test_operator_sar_fleet_is_private(monkeypatch):
+    from core.api.main import app
+    from core.config import config
+
+    monkeypatch.setattr(config, "OPERATOR_GATEWAY_SECRET", "operator-secret")
+    client = TestClient(app)
+
+    denied = client.get("/api/v1/operator/ingestion/sar-fleet")
+    assert denied.status_code == 401
+
+    allowed = client.get(
+        "/api/v1/operator/ingestion/sar-fleet",
+        headers={"x-seacommons-operator-gateway": "operator-secret"},
+    )
+    assert allowed.status_code == 200
+    payload = allowed.json()
+    assert payload["type"] == "FeatureCollection"
+    assert payload["meta"]["map_position_policy"] == "live_only_10m"

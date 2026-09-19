@@ -112,3 +112,27 @@ test('replaces stale drift features when an operator event update arrives', () =
   assert.equal(result.features[1].properties.intel_title, 'Updated drift');
   assert.equal(result.features[1].properties.version, undefined);
 });
+
+test('expired short-lived SAR observations never reappear from browser cache', () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse('2026-09-19T18:00:00Z');
+  try {
+    const feature = (id, timestamp) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [12, 38] },
+      properties: {
+        id,
+        type: 'ngo_activity',
+        source: 'SeaCommons AIS analysis',
+        live_role: 'humanitarian_observation',
+        live_valid_for_s: 6 * 3600,
+        timestamp_utc: timestamp,
+      },
+    });
+    const fresh = feature('fresh', '2026-09-19T17:00:00Z');
+    const expired = feature('expired', '2026-09-19T10:00:00Z');
+    assert.deepEqual(receivedSignalFeatures([fresh, expired]), [fresh]);
+  } finally {
+    Date.now = originalNow;
+  }
+});

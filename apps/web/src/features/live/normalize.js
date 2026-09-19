@@ -114,7 +114,13 @@ export function receivedSignalFeatures(features) {
     const properties = feature.properties;
     const policy = String(properties.source_policy || '').toLowerCase();
     const transport = String(properties.via || properties.scrape_source || '').toLowerCase();
-    return !BLOCKED_PUBLIC_TRANSPORTS.some(
+    const timestampMs = Date.parse(String(properties.timestamp_utc || ''));
+    const ttlSeconds = finiteNumber(properties.live_valid_for_s);
+    const expired = properties.live_role === 'humanitarian_observation'
+      && Number.isFinite(timestampMs)
+      && ttlSeconds !== null
+      && Date.now() - timestampMs > ttlSeconds * 1000;
+    return !expired && !BLOCKED_PUBLIC_TRANSPORTS.some(
       (blocked) => policy === blocked || transport.includes(blocked),
     )
       && properties.type !== 'sar_model'

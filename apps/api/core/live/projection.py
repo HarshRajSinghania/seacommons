@@ -134,6 +134,7 @@ _PUBLIC_METADATA = frozenset(
         "independent_source_count",
         "evidence_count",
         "evidence_stage",
+        "live_valid_for_s",
         "source_lineage",
         "activity_kind",
         "observation_type",

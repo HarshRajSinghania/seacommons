@@ -6,14 +6,12 @@ Connects to wss://stream.aisstream.io/v0/stream, subscribes to Mediterranean
 bounding box, processes PositionReport and ShipStaticData messages.
 Auto-reconnects on disconnect.
 
-A second, independent connection additionally tracks the known NGO/SAR fleet
-by MMSI (AISStream's FiltersShipMMSI, capped at 50 values — the fleet is
-~20) with a global bounding box, so a tracked vessel is never missed just
-because it repositions outside the Mediterranean box (e.g. transiting to a
-European drydock). Both run on the free tier — AISStream's public docs
-document no data/message quota, just per-connection throughput and
-throttling-under-load caveats — so this is additive coverage, not a
-different plan.
+A second, low-volume connection additionally tracks the known NGO/SAR fleet
+by MMSI (AISStream's FiltersShipMMSI, capped at 50 values) with a global
+bounding box. It reuses the primary account key unless an override key is
+configured. This isolates fleet freshness from the high-volume Mediterranean
+stream and prevents stale last-known SAR positions from being mistaken for
+current movement.
 """
 from __future__ import annotations
 
@@ -96,6 +94,7 @@ class AISStreamClient:
         on_observation=None,
         on_health=None,
         publish_legacy: bool = True,
+        update_registry: bool | None = None,
     ):
         self._api_key = api_key
         self._label = label
@@ -104,6 +103,9 @@ class AISStreamClient:
         self._on_observation = on_observation
         self._on_health = on_health
         self._publish_legacy = bool(publish_legacy)
+        self._update_registry = (
+            self._publish_legacy if update_registry is None else bool(update_registry)
+        )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._connected = False
@@ -264,7 +266,7 @@ class AISStreamClient:
             nav_status = pr.get("NavigationalStatus")
             if lat is not None and lon is not None:
                 name = meta.get("ShipName", "").strip()
-                if self._publish_legacy:
+                if self._update_registry:
                     registry.upsert(
                         mmsi,
                         ship_name=name or None,
@@ -327,12 +329,12 @@ def start(
     api_key: str, *, ngo_api_key: str = "", on_observation=None, on_health=None,
     publish_legacy: bool = True,
 ) -> AISStreamClient:
-    """`ngo_api_key` must be a SEPARATE AISStream key from `api_key` — verified
-    live against the real service that it allows only one open connection per
-    key, so a second subscription reusing the same key gets dropped
-    immediately (connects, subscribes, then closes within ~1s, in a tight
-    reconnect loop). With no second key, the NGO-fleet subscription is simply
-    not started rather than spinning in that broken state.
+    """Start the regional stream plus a global MMSI-filtered SAR-fleet stream.
+
+    ngo_api_key is an optional override. When omitted, the fleet stream reuses
+    api_key. A live production probe verifies that AISStream accepts the
+    concurrent subscription; keeping it MMSI-filtered makes it low-volume and
+    isolates SAR position freshness from regional stream churn.
     """
     global _client, _ngo_client
     _client = AISStreamClient(
@@ -341,14 +343,23 @@ def start(
     )
     _client.start()
 
-    if ngo_api_key and ngo_api_key != api_key:
+    effective_ngo_key = ngo_api_key or api_key
+    if effective_ngo_key:
         try:
             from core.intel.ngo_registry import NGO_VESSELS
 
-            ngo_mmsi = list(NGO_VESSELS.keys())[:50]  # AISStream's FiltersShipMMSI cap
+            ngo_mmsi = list(NGO_VESSELS.keys())[:50]
             _ngo_client = AISStreamClient(
-                ngo_api_key, label="NGO fleet (global)", bbox=_GLOBAL_BBOX, mmsi_filter=ngo_mmsi,
-                on_observation=on_observation, on_health=None, publish_legacy=publish_legacy,
+                effective_ngo_key,
+                label="NGO fleet (global)",
+                bbox=_GLOBAL_BBOX,
+                mmsi_filter=ngo_mmsi,
+                on_observation=on_observation,
+                on_health=None,
+                # Dedicated freshness stream: update vessel state, but do not
+                # fan duplicate copies into legacy detector hooks.
+                publish_legacy=False,
+                update_registry=True,
             )
             _ngo_client.start()
         except Exception:

@@ -195,3 +195,50 @@ def test_protocol_ping_watchdog_is_disabled_but_application_liveness_remains(mon
     assert captured["open_timeout"] == 15
     assert "ping_interval" in captured
     assert captured["ping_interval"] is None
+
+def test_dedicated_ngo_stream_updates_registry_without_duplicate_bus_publish(monkeypatch):
+    from core.vessels import ais_bus
+
+    registry = _Registry()
+    published = []
+    monkeypatch.setattr(ais_bus, "publish", published.append)
+
+    client = AISStreamClient(
+        "key",
+        publish_legacy=False,
+        update_registry=True,
+    )
+    client._handle(_position_message(mmsi="258479000"), registry)
+
+    assert len(registry.rows) == 1
+    assert registry.rows[0][0] == "258479000"
+    assert published == []
+
+
+def test_ngo_stream_reuses_primary_key_when_override_is_unset(monkeypatch):
+    from core.vessels import aisstream
+
+    created = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            created.append(self)
+
+        def start(self):
+            pass
+
+    old_client, old_ngo_client = aisstream._client, aisstream._ngo_client
+    monkeypatch.setattr(aisstream, "AISStreamClient", FakeClient)
+    try:
+        aisstream.start("primary-key", ngo_api_key="")
+        assert len(created) == 2
+        assert created[0].args[0] == "primary-key"
+        assert created[1].args[0] == "primary-key"
+        assert created[1].kwargs["mmsi_filter"]
+        assert created[1].kwargs["publish_legacy"] is False
+        assert created[1].kwargs["update_registry"] is True
+    finally:
+        aisstream._client = old_client
+        aisstream._ngo_client = old_ngo_client

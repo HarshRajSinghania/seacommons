@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from core.config import SuezCanalConfig
 from core.config_validation import check_configuration, validate_configuration
 
@@ -44,11 +43,13 @@ def test_demo_public_mode_on_production_is_an_error():
         validate_configuration(_cfg(RUNTIME_PROFILE="production", DEMO_PUBLIC_MODE=True))
 
 
-def test_reused_aisstream_key_for_ngo_subscription_is_an_error():
-    with pytest.raises(RuntimeError, match="AISSTREAM_NGO_KEY"):
-        validate_configuration(_cfg(AISSTREAM_KEY="k1", AISSTREAM_NGO_KEY="k1"))
-
-    assert check_configuration(_cfg(AISSTREAM_KEY="k1", AISSTREAM_NGO_KEY="k2")).ok
+def test_reused_aisstream_key_for_ngo_subscription_is_valid():
+    assert check_configuration(
+        _cfg(AISSTREAM_KEY="k1", AISSTREAM_NGO_KEY="k1")
+    ).ok
+    assert check_configuration(
+        _cfg(AISSTREAM_KEY="k1", AISSTREAM_NGO_KEY="k2")
+    ).ok
 
 
 def test_drift_worker_url_without_secret_is_an_error():

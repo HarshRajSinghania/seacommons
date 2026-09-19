@@ -56,13 +56,6 @@ def check_configuration(cfg: SuezCanalConfig | None = None) -> ConfigReport:
             "production node"
         )
 
-    if cfg.AISSTREAM_NGO_KEY and cfg.AISSTREAM_NGO_KEY == cfg.AISSTREAM_KEY:
-        report.errors.append(
-            "AISSTREAM_NGO_KEY equals AISSTREAM_KEY: AISStream allows one open "
-            "connection per key, so the second subscription is dropped "
-            "immediately. Use a separate account key or leave it unset"
-        )
-
     if cfg.DRIFT_WORKER_URL and not cfg.DRIFT_WORKER_SECRET:
         report.errors.append(
             "DRIFT_WORKER_URL is set without DRIFT_WORKER_SECRET: the compute "

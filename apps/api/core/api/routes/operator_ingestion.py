@@ -68,6 +68,19 @@ def _since(hours: int) -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
 
 
+@router.get("/sar-fleet")
+def operator_sar_fleet(request: Request) -> dict[str, Any]:
+    """Authenticated operational inventory for civil + state SAR assets.
+
+    Fleet presence and AIS freshness belong to the operator surface, not the
+    public Live case feed. Stale coordinates are withheld by ngo_vessel_geojson.
+    """
+    _require_gateway(request)
+    from core.intel.ngo_registry import ngo_vessel_geojson
+
+    return ngo_vessel_geojson()
+
+
 def _source_observation(row: SourceObservationDB) -> dict[str, Any]:
     semantic_label = (
         "AIS reappearance after sampled silence"

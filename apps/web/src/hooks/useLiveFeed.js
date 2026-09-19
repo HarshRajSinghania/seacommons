@@ -118,7 +118,7 @@ export function useLiveFeed({
     const streamPath = isPublicLiveHost
       ? `/api/v1/live/stream?mode=${encodeURIComponent(liveMode)}`
       : '/ws/intel';
-    const pollIntervalMs = isPublicLiveHost ? 10000 : 30000;
+    const pollIntervalMs = isPublicLiveHost ? 5000 : 30000;
     let ws = null;
     let pollTimer = null;
     let wsAlive = true;

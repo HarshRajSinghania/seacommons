@@ -1798,8 +1798,7 @@ def test_live_routes_remain_public_when_internal_reads_require_auth() -> None:
             }.issubset(source)
             for source in source_payload["sources"]
         )
-        assert public_ngo.status_code == 200
-        assert public_ngo.json()["type"] == "FeatureCollection"
+        assert public_ngo.status_code == 404
         assert public_platforms.status_code == 200
         assert public_platforms.json()["type"] == "FeatureCollection"
         assert internal_feed.status_code == 401

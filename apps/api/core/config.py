@@ -174,11 +174,10 @@ class SuezCanalConfig(BaseSettings):
     AISCAST_BBOX: str = ""
     AISCAST_NGO_MMSI_LIMIT: int = 10
     AISSTREAM_KEY: str = ""
-    # Optional SEPARATE AISStream API key (different account/registration) for
-    # a dedicated, globally-scoped subscription tracking the known NGO/SAR
-    # fleet by MMSI. AISStream allows only one open connection per key, so
-    # reusing AISSTREAM_KEY here would just get the second connection dropped
-    # — see core/vessels/aisstream.py. Leave unset to skip this subscription.
+    # Optional override key for the dedicated globally-scoped NGO/SAR MMSI
+    # subscription. When unset, AISSTREAM_KEY is reused so fleet freshness is
+    # isolated from the high-volume Mediterranean stream without requiring a
+    # second credential.
     AISSTREAM_NGO_KEY: str = ""
     # AIS track history (core/vessels/track_store.py) — the primitive the
     # dark-vessel / grey-zone MDA detectors run on.

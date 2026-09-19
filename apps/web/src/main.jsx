@@ -1108,7 +1108,7 @@ function App() {
           setNgoVessels(data);
         }
       } catch { /* ignore */ }
-      if (alive) window.setTimeout(loadNgoVessels, 120_000);
+      if (alive) window.setTimeout(loadNgoVessels, 15_000);
     }
     loadNgoVessels();
     return () => { alive = false; };

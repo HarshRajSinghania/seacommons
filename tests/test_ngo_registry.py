@@ -90,7 +90,7 @@ def test_ngo_vessel_geojson_never_tags_coastguard_as_ngo_vessel_class(monkeypatc
     )
 
 
-def test_ngo_vessel_geojson_keeps_stale_last_known_position(monkeypatch):
+def test_ngo_vessel_geojson_withholds_stale_last_known_position_from_map(monkeypatch):
     from core.vessels import registry as vessel_registry_module
 
     fake_geojson = {
@@ -117,8 +117,45 @@ def test_ngo_vessel_geojson_keeps_stale_last_known_position(monkeypatch):
         item for item in result["features"]
         if item["properties"]["mmsi"] == "224772000"
     )
-    assert feature["geometry"] == {
-        "type": "Point", "coordinates": [0.25784, 40.04419]
-    }
+    assert feature["geometry"] is None
     assert feature["properties"]["ais_status"] == "offline"
-    assert feature["properties"]["position_policy"] == "last_known"
+    assert feature["properties"]["position_policy"] == "stale_withheld"
+    assert feature["properties"]["position_age_s"] > 3600
+    assert result["meta"]["map_position_policy"] == "live_only_10m"
+
+def test_ngo_vessel_geojson_keeps_only_fresh_geometry(monkeypatch):
+    from datetime import datetime, timezone
+
+    from core.vessels import registry as vessel_registry_module
+
+    now = datetime.now(timezone.utc).isoformat()
+    fake_geojson = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [12.0, 38.0]},
+            "properties": {
+                "mmsi": _CIVIL_NGO_MMSI,
+                "ship_name": "OCEAN VIKING",
+                "last_seen": now,
+                "position_timestamp_utc": now,
+            },
+        }],
+    }
+    monkeypatch.setattr(
+        vessel_registry_module.registry,
+        "get_last_known_geojson",
+        lambda _mmsis: fake_geojson,
+    )
+
+    result = ngo_vessel_geojson()
+    feature = next(
+        item for item in result["features"]
+        if item["properties"]["mmsi"] == _CIVIL_NGO_MMSI
+    )
+    assert feature["geometry"] == {
+        "type": "Point", "coordinates": [12.0, 38.0]
+    }
+    assert feature["properties"]["ais_status"] == "live"
+    assert feature["properties"]["position_policy"] == "current"
+    assert feature["properties"]["position_age_s"] <= 10

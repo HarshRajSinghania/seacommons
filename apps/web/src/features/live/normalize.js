@@ -125,12 +125,9 @@ export function receivedSignalFeatures(features) {
     const policy = String(properties.source_policy || '').toLowerCase();
     const transport = String(properties.via || properties.scrape_source || '').toLowerCase();
     const timestampMs = Date.parse(String(properties.timestamp_utc || ''));
-    const ttlSeconds = finiteNumber(properties.live_valid_for_s);
-    const expired = properties.live_role === 'humanitarian_observation'
-      && Number.isFinite(timestampMs)
-      && ttlSeconds !== null
-      && Date.now() - timestampMs > ttlSeconds * 1000;
-    return !expired && !BLOCKED_PUBLIC_TRANSPORTS.some(
+    const outsideRollingLiveWindow = Number.isFinite(timestampMs)
+      && Date.now() - timestampMs > 24 * 60 * 60 * 1000;
+    return !outsideRollingLiveWindow && !BLOCKED_PUBLIC_TRANSPORTS.some(
       (blocked) => policy === blocked || transport.includes(blocked),
     )
       && properties.type !== 'sar_model'

@@ -34,6 +34,7 @@ def test_alarm_phone_self_reply_resolution_leaves_live_immediately() -> None:
 
     assert lifecycle.distress_lifecycle(event, now=_now(), same_source=[]) == "resolved"
     assert lifecycle.is_within_live_window(event, now=_now()) is False
+    assert lifecycle.is_within_live_retention_window(event, now=_now()) is True
 
 
 def _ap_case(text: str, *, reposts: list | None = None) -> IntelEvent:
@@ -86,7 +87,7 @@ def test_ambiguous_followup_requests_review_not_silent_resolution() -> None:
     assert lifecycle.distress_lifecycle(event, now=_now(), same_source=[]) == "needs_review"
 
 
-def test_concluded_report_itself_never_enters_live() -> None:
+def test_concluded_report_is_not_active_but_is_retained_in_live_timeline() -> None:
     event = IntelEvent(
         id="alarm-phone-resolved-post",
         type="twitter",
@@ -98,6 +99,7 @@ def test_concluded_report_itself_never_enters_live() -> None:
     )
 
     assert lifecycle.is_within_live_window(event, now=_now()) is False
+    assert lifecycle.is_within_live_retention_window(event, now=_now()) is True
 
 
 def test_unresolved_recent_report_remains_live() -> None:

@@ -2219,7 +2219,7 @@ def test_normalized_sar_responder_activity_is_observation_not_case(monkeypatch) 
     assert "mmsi" not in props
     assert "vessel_name" not in props
 
-def test_stale_sar_responder_activity_expires_before_24h_live_window(monkeypatch) -> None:
+def test_sar_responder_activity_remains_visible_inside_24h_live_window(monkeypatch) -> None:
     stale = IntelEvent(
         id="saractivity:stale",
         timestamp_utc=(datetime.now(timezone.utc) - timedelta(hours=7)).isoformat(),
@@ -2247,9 +2247,9 @@ def test_stale_sar_responder_activity_expires_before_24h_live_window(monkeypatch
     monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [stale])
     monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
     collection = public_signal_collection(limit=50, mode="humanitarian")
-    assert collection["features"] == []
-    assert collection["meta"]["total"] == 0
-    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 0
+    assert collection["meta"]["total"] == 1
+    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 1
+    assert collection["features"][0]["properties"]["id"] == "intel:saractivity:stale"
 
 def test_live_sanctioned_vessels_is_fresh_strong_identifier_subset(monkeypatch):
     from core.db.models import SanctionedVesselDB

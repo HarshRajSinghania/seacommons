@@ -197,18 +197,28 @@ def distress_lifecycle(event: IntelEvent, *, now: datetime, same_source: list[In
     )
 
 
-def is_within_live_window(event: IntelEvent, *, now: datetime) -> bool:
-    """Whether a marker belongs on the current operational Live surface.
+def is_within_live_retention_window(event: IntelEvent, *, now: datetime) -> bool:
+    """Whether an event belongs to the rolling 24-hour Live timeline.
 
-    A directly concluded incident is removed immediately. Unresolved cases
-    remain bounded by the rolling 24-hour window; older history belongs in
-    Play/reconstruction views. Cross-post conclusions are handled by callers that
-    have the full same-source context.
+    Retention is intentionally independent from operational state. A resolved
+    or outcome-unknown incident can remain visible in Live until the end of
+    the 24-hour window, while downstream response/drift logic can still stop
+    treating it as active immediately.
     """
-    if is_directly_concluded(event):
-        return False
     observed = _latest_activity_time(event)
     if observed is None:
         return True
     age_hours = (now - observed).total_seconds() / 3600
     return age_hours < DISTRESS_LIVE_MAX_AGE_HOURS
+
+
+def is_within_live_window(event: IntelEvent, *, now: datetime) -> bool:
+    """Whether a marker is still operationally active on Live.
+
+    This preserves the stricter active-state semantic used by response/drift
+    internals. Public timeline retention should use
+    is_within_live_retention_window instead.
+    """
+    if is_directly_concluded(event):
+        return False
+    return is_within_live_retention_window(event, now=now)

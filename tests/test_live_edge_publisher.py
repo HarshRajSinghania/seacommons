@@ -55,7 +55,7 @@ def test_public_distress_event_mapping_is_versioned() -> None:
     assert event["properties"]["incident_id"] == "evt-1"
     assert event["properties"]["radius_m"] == 5000
     assert event["properties"]["incident_lifecycle"] == "active"
-    assert event["properties"]["live_contract_version"] == 2
+    assert event["properties"]["live_contract_version"] == 3
 
 
 def test_humanitarian_edge_accepts_any_verified_humanitarian_source() -> None:
@@ -139,16 +139,15 @@ def test_material_update_gets_new_version_id() -> None:
     assert first["properties"]["incident_id"] == second["properties"]["incident_id"]
 
 
-def test_concluded_report_is_resolved_and_removed_from_operational_live() -> None:
-    # Lifecycle remains explicit for archive consumers while the removal
-    # version clears the incident from operational edge state.
+def test_concluded_report_stays_in_rolling_live_window_as_resolved() -> None:
     row = distress_row(text="Rescued!! Thank you Ocean Viking for rescuing the 14 people")
     event = public_event_from_row(row, "node", now=_NOW, same_source=[])
 
     assert event is not None
     assert event["properties"]["incident_lifecycle"] == "resolved"
-    assert event["type"] == "incident_removed"
-    assert event["properties"]["expired"] is True
+    assert event["properties"]["incident_status"] == "resolved"
+    assert event["type"] == "distress_observation"
+    assert event["properties"]["expired"] is False
 
 
 def test_saved_arrival_reply_resolves_on_the_edge() -> None:
@@ -161,7 +160,8 @@ def test_saved_arrival_reply_resolves_on_the_edge() -> None:
     event = public_event_from_row(row, "node", now=_NOW, same_source=[])
     assert event is not None
     assert event["properties"]["incident_lifecycle"] == "resolved"
-    assert event["type"] == "incident_removed"
+    assert event["properties"]["incident_status"] == "resolved"
+    assert event["type"] == "distress_observation"
 
 
 def test_unsafe_rescue_reply_stays_active_on_the_edge() -> None:
@@ -359,7 +359,7 @@ def test_removed_payload_is_a_valid_incident_removed_event() -> None:
     assert payload["type"] == "incident_removed"
     assert payload["properties"]["incident_id"] == "evt-10"
     assert payload["geometry"] is None
-    assert payload["properties"]["live_contract_version"] == 2
+    assert payload["properties"]["live_contract_version"] == 3
     assert payload["id"].startswith("evt-10:")
 
 

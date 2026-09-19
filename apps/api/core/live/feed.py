@@ -66,9 +66,11 @@ _LIVE_WINDOW_LIMIT = 500
 _LIVE_DURABLE_SCAN_LIMIT = 1500
 _LIVE_DURABLE_TYPE_SCAN_LIMIT = 500
 
-# A derived SAR-responder movement cue is operationally useful only while the
-# underlying AIS behaviour is fresh. It is not a 24h humanitarian case.
-_SAR_ACTIVITY_LIVE_TTL = timedelta(hours=6)
+# Derived SAR-responder activity is an observation in the rolling Live
+# timeline, not a current vessel-position marker. Current fleet positions have
+# their own much shorter freshness policy; the observation itself remains for
+# the same 24-hour retention window as other Live items.
+_SAR_ACTIVITY_LIVE_TTL = timedelta(hours=24)
 
 
 def _is_fresh_sar_activity(event: IntelEvent, *, now: datetime) -> bool:
@@ -364,7 +366,7 @@ def public_signal_collection(
             continue
         kind = feature["properties"].get("kind")
         if kind == "distress" and event.type != "correlated_alert":
-            if not lifecycle.is_within_live_window(event, now=now):
+            if not lifecycle.is_within_live_retention_window(event, now=now):
                 # Hard cutoff: a distress marker's total life on Live is bounded,
                 # regardless of whether it was ever resolved. Older history lives
                 # in the archive/replay views, not the live pulsing map.
@@ -379,10 +381,9 @@ def public_signal_collection(
             incident_state = resolve_public_incident_state(
                 event, now=now, same_source=by_source.get(event.source, [])
             )
-            # Live is operational only. Terminal/retired real-world statuses
-            # belong to Play immediately even when the founding post is recent.
-            if incident_state["incident_status"] in {"resolved", "outcome_unknown"}:
-                continue
+            # Live is a rolling 24-hour timeline. Terminal real-world
+            # statuses remain visible until retention expiry, but are clearly
+            # labelled so they are not mistaken for active response cases.
             feature["properties"]["kind"] = LiveSignalKind.DISTRESS.value
             feature["properties"]["incident_lifecycle"] = incident_state["lifecycle"]
             feature["properties"]["incident_status"] = incident_state["incident_status"]
@@ -398,7 +399,7 @@ def public_signal_collection(
             # by the same age window, no pulsing lifecycle. Kept in a separate
             # bucket and capped so a chatty context source can never crowd a
             # genuine distress report out of the window.
-            if not lifecycle.is_within_live_window(event, now=now):
+            if not lifecycle.is_within_live_retention_window(event, now=now):
                 continue
             mode_context[event_mode].append(feature)
 

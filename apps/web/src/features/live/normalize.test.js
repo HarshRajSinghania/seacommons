@@ -113,7 +113,7 @@ test('replaces stale drift features when an operator event update arrives', () =
   assert.equal(result.features[1].properties.version, undefined);
 });
 
-test('expired short-lived SAR observations never reappear from browser cache', () => {
+test('browser keeps all Live event roles for the rolling 24h window', () => {
   const originalNow = Date.now;
   Date.now = () => Date.parse('2026-09-19T18:00:00Z');
   try {
@@ -129,9 +129,9 @@ test('expired short-lived SAR observations never reappear from browser cache', (
         timestamp_utc: timestamp,
       },
     });
-    const fresh = feature('fresh', '2026-09-19T17:00:00Z');
-    const expired = feature('expired', '2026-09-19T10:00:00Z');
-    assert.deepEqual(receivedSignalFeatures([fresh, expired]), [fresh]);
+    const recent = feature('recent', '2026-09-19T10:00:00Z');
+    const expired = feature('expired', '2026-09-18T17:00:00Z');
+    assert.deepEqual(receivedSignalFeatures([recent, expired]), [recent]);
   } finally {
     Date.now = originalNow;
   }

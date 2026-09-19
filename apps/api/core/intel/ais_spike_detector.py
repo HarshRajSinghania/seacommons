@@ -780,7 +780,7 @@ def _normalized_sar_activity(
             "source_lineage": "ais_sensor_lineage",
             "independent_source_count": 1,
             "evidence_count": 1,
-            "live_valid_for_s": 6 * 3600,
+            "live_valid_for_s": 24 * 3600,
             "activity_kind": activity_kind,
             "observation_type": "sar_responder_activity",
             "operator_type": responder.get("operator_type") or "unknown",

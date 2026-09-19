@@ -295,11 +295,11 @@ def public_event_from_row(
     )
     incident_lifecycle = incident_state["lifecycle"] if incident_state else None
     incident_status = incident_state["incident_status"] if incident_state else None
-    # Live is a 24-hour operational surface. Resolved/outcome-unknown incidents
-    # are explicit removals even when their founding observation is younger.
+    # Edge Live mirrors the same rolling 24-hour retention as the VM
+    # feed. Resolution changes incident state, not retention; the item becomes
+    # an incident_removed tombstone only after it leaves the 24-hour window.
     expired = is_distress and (
-        not lifecycle.is_within_live_window(event, now=now)
-        or incident_status in {"resolved", "outcome_unknown"}
+        not lifecycle.is_within_live_retention_window(event, now=now)
     )
     # Same redaction as the VM's public feed (core/live/projection.py,
     # _public_intel_feature): only the tracked account's own reply fields —
@@ -328,7 +328,7 @@ def public_event_from_row(
         # Bump when retention/lifecycle transport semantics change. It is part
         # of the material version hash, forcing every in-window row through
         # the durable edge again after a deploy (including tombstones).
-        "live_contract_version": 2,
+        "live_contract_version": 3,
         "incident_id": incident_id,
         "severity": event.severity,
         "visual_category": category["visual_category"],
@@ -419,7 +419,7 @@ def removed_payload(incident_id: str, node_id: str, *, source: str = "unknown") 
         "visibility": Visibility.PUBLIC.value,
         "confidence": None,
         "geometry": None,
-        "properties": {"incident_id": incident_id, "live_contract_version": 2},
+        "properties": {"incident_id": incident_id, "live_contract_version": 3},
         "source_url": None,
     }
     payload["id"] = _version_id(incident_id, payload)

@@ -70,8 +70,11 @@ class AISAnomalyDetector:
     def __init__(self, mock: bool = False, on_anomaly: Optional[Callable] = None):
         self.mock = mock or os.environ.get("MOCK", "").lower() == "true" or _cfg.MOCK
         self._on_anomaly = on_anomaly
-        self._last_seen: dict[str, dict] = {}  # mmsi → {lat, lon, ts, speed, type, name}
-        self._positions: dict[str, dict] = {}  # mmsi → latest position
+        self._last_seen: dict[str, dict] = {}  # accepted source-timed position
+        # A single impossible jump is only a candidate. It must be confirmed
+        # by the next newer source-timed fix before becoming a spoofing cue.
+        self._pending_jump: dict[str, dict] = {}
+        self._positions: dict[str, dict] = {}  # mmsi → latest accepted position
         self._sdn_mmsi: set[str] = set()
         self._emitted: dict[tuple[str, str], float] = {}  # (mmsi, type) → last emit
         self._running = False
@@ -251,30 +254,94 @@ class AISAnomalyDetector:
         if prev and observed_ts <= prev["ts"]:
             return
 
-        # Impossible speed between two source-timed fixes (AIS spoofing / MMSI
-        # reuse candidate). Silence "gap" is handled from receipt freshness by
-        # the sweep loop; movement integrity uses source chronology.
+        def movement(a: dict, b_lat: float, b_lon: float, b_ts: float) -> tuple[float, float, float]:
+            gap_s = b_ts - a["ts"]
+            dist_nm = _haversine_nm(a["lat"], a["lon"], b_lat, b_lon)
+            actual_speed_kts = (
+                dist_nm / (gap_s / 3600)
+                if gap_s > 0 and dist_nm > 0
+                else 0.0
+            )
+            return gap_s, dist_nm, actual_speed_kts
+
+        max_spd = _MAX_SPEED.get(vessel_type, _MAX_SPEED["default"])
+        impossible_floor = max(max_spd, 55.0)
+
+        # Confirm impossible movement across two consecutive newer source-time
+        # fixes. This rejects one-frame coordinate glitches such as
+        # 23.68E -> 2.58E -> 23.68E without suppressing a sustained position
+        # discontinuity / MMSI reuse pattern.
+        pending = self._pending_jump.get(mmsi)
+        if prev and pending:
+            if observed_ts <= pending["ts"]:
+                return
+            old_gap_s, _, old_to_current_kts = movement(prev, lat, lon, observed_ts)
+            confirm_gap_s, confirm_dist_nm, pending_to_current_kts = movement(
+                pending, lat, lon, observed_ts
+            )
+            old_path_plausible = (
+                old_gap_s > 0 and old_to_current_kts <= impossible_floor
+            )
+            pending_path_plausible = (
+                confirm_gap_s > 0 and pending_to_current_kts <= impossible_floor
+            )
+
+            if old_path_plausible:
+                # The next fix returned to the accepted track. The pending
+                # teleport was a transient provider/coordinate glitch.
+                self._pending_jump.pop(mmsi, None)
+            elif pending_path_plausible:
+                self._pending_jump.pop(mmsi, None)
+                self._emit(AISAnomalyEvent(
+                    event_id=str(uuid.uuid4()),
+                    timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                    anomaly_type="impossible_speed",
+                    mmsi=mmsi,
+                    vessel_name=pending.get("name") or name,
+                    position={"lat": pending["lat"], "lon": pending["lon"]},
+                    confidence=min(
+                        0.9,
+                        0.5 + (pending["computed_kts"] - pending["max_allowed"]) / 100,
+                    ),
+                    evidence={
+                        "computed_kts": round(pending["computed_kts"], 1),
+                        "max_allowed": pending["max_allowed"],
+                        "gap_s": round(pending["gap_s"]),
+                        "timing_basis": "ais_source_time",
+                        "confirmed_by_followup": True,
+                        "confirmation_gap_s": round(confirm_gap_s),
+                        "confirmation_distance_nm": round(confirm_dist_nm, 3),
+                    },
+                ))
+                # The candidate is now accepted as the prior point. Evaluating
+                # the confirming fix from here prevents a duplicate alert.
+                prev = pending
+            else:
+                # The follow-up supports neither track. Keep the last accepted
+                # position as truth and let this newer fix become the next
+                # candidate below.
+                self._pending_jump.pop(mmsi, None)
+
+        # First impossible leg: quarantine it rather than publishing it.
         if prev:
-            gap_s = observed_ts - prev["ts"]
-            dist_nm = _haversine_nm(prev["lat"], prev["lon"], lat, lon)
-            if gap_s > 0 and dist_nm > 0:
-                actual_speed_kts = dist_nm / (gap_s / 3600)
-                max_spd = _MAX_SPEED.get(vessel_type, _MAX_SPEED["default"])
-                if actual_speed_kts > max_spd and actual_speed_kts > 55:
-                    self._emit(AISAnomalyEvent(
-                        event_id=str(uuid.uuid4()),
-                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
-                        anomaly_type="impossible_speed",
-                        mmsi=mmsi, vessel_name=name,
-                        position=pos,
-                        confidence=min(0.9, 0.5 + (actual_speed_kts - max_spd) / 100),
-                        evidence={
-                            "computed_kts": round(actual_speed_kts, 1),
-                            "max_allowed": max_spd,
-                            "gap_s": round(gap_s),
-                            "timing_basis": "ais_source_time",
-                        },
-                    ))
+            gap_s, _, actual_speed_kts = movement(prev, lat, lon, observed_ts)
+            if gap_s > 0 and actual_speed_kts > impossible_floor:
+                self._pending_jump[mmsi] = {
+                    "lat": lat,
+                    "lon": lon,
+                    "ts": observed_ts,
+                    "received_ts": received_ts,
+                    "speed": speed,
+                    "type": vessel_type,
+                    "name": name or prev.get("name", ""),
+                    "computed_kts": actual_speed_kts,
+                    "max_allowed": max_spd,
+                    "gap_s": gap_s,
+                }
+                # Receipt freshness still advances: we did receive AIS, even
+                # though the coordinate is quarantined from movement truth.
+                prev["received_ts"] = received_ts
+                return
 
         # Dark zone entry
         if self._in_dark_zone(lat, lon) and (not prev or not self._in_dark_zone(prev["lat"], prev["lon"])):

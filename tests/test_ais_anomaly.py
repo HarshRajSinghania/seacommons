@@ -21,10 +21,23 @@ def detector(monkeypatch):
 
 
 def test_impossible_speed_becomes_an_operator_only_intel_event(detector) -> None:
-    detector._last_seen["247012345"] = {
-        "lat": 35.0, "lon": 14.0, "ts": time.time() - 60, "speed": 10, "type": "", "name": "X",
-    }
-    detector.process_position("247012345", "X", 36.0, 15.0, 300.0, "")
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime.now(timezone.utc) - timedelta(minutes=3)
+    detector.process_position(
+        "247012345", "X", 35.0, 14.0, 10.0, "", observed_at=base
+    )
+    detector._added.clear()
+    detector.process_position(
+        "247012345", "X", 36.0, 15.0, 300.0, "",
+        observed_at=base + timedelta(minutes=1),
+    )
+    # First impossible leg is quarantined, not published.
+    assert detector._added == []
+    detector.process_position(
+        "247012345", "X", 36.001, 15.001, 10.0, "",
+        observed_at=base + timedelta(minutes=2),
+    )
     assert len(detector._added) == 1
     event = detector._added[0]
     assert event.type == "ais_anomaly"
@@ -51,10 +64,20 @@ def test_emit_cooldown_prevents_a_flood(detector) -> None:
 
 
 def test_dark_zone_entry_fires_once_on_crossing(detector) -> None:
+    from datetime import datetime, timedelta, timezone
+
     zone = ais_mod._DARK_ZONES[0]
-    inside = ((zone[0] + zone[2]) / 2, (zone[1] + zone[3]) / 2)
-    detector.process_position("111", "V", zone[0] - 5, zone[1] - 5, 10.0, "")  # outside
-    detector.process_position("111", "V", inside[0], inside[1], 10.0, "")      # inside
+    base = datetime.now(timezone.utc) - timedelta(hours=1)
+    # Cross the boundary plausibly rather than teleporting several degrees.
+    outside = (zone[0] - 0.05, zone[1] + 0.1)
+    inside = (zone[0] + 0.05, zone[1] + 0.1)
+    detector.process_position(
+        "111", "V", outside[0], outside[1], 10.0, "", observed_at=base
+    )
+    detector.process_position(
+        "111", "V", inside[0], inside[1], 10.0, "",
+        observed_at=base + timedelta(hours=1),
+    )
     kinds = {e.metadata["anomaly_type"] for e in detector._added}
     assert "dark_zone_entry" in kinds
 
@@ -139,16 +162,27 @@ def test_position_hook_adapter_forwards_to_process_position(detector, monkeypatc
 
 
 def test_impossible_speed_near_coast_stays_internal(monkeypatch, detector) -> None:
+    from datetime import datetime, timedelta, timezone
+
     from core.mda.reference import reference
     monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 3.0)
     monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 5.0))
     monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
     monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
     monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
-    detector._last_seen["247012346"] = {
-        "lat": 35.0, "lon": 14.0, "ts": time.time() - 60, "speed": 10, "type": "", "name": "Y",
-    }
-    detector.process_position("247012346", "Y", 36.0, 15.0, 300.0, "")
+    base = datetime.now(timezone.utc) - timedelta(minutes=3)
+    detector.process_position(
+        "247012346", "Y", 35.0, 14.0, 10.0, "", observed_at=base
+    )
+    detector._added.clear()
+    detector.process_position(
+        "247012346", "Y", 36.0, 15.0, 300.0, "",
+        observed_at=base + timedelta(minutes=1),
+    )
+    detector.process_position(
+        "247012346", "Y", 36.001, 15.001, 10.0, "",
+        observed_at=base + timedelta(minutes=2),
+    )
     event = detector._added[-1]
     assert event.metadata["publication_status"] == "internal"
     assert event.metadata["offshore_anomaly_qualified"] is False
@@ -170,6 +204,58 @@ def test_out_of_order_source_fix_never_emits_impossible_speed(detector):
 
     assert detector._added == []
     assert detector._last_seen["247999001"]["lat"] == 40.0
+
+
+def test_single_frame_coordinate_glitch_is_rejected(detector):
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 19, 19, 10, tzinfo=timezone.utc)
+    detector.process_position(
+        "240760100", "ONCE MORE", 37.9327, 23.6823, 0.0, "",
+        observed_at=base,
+    )
+    detector._added.clear()
+    detector.process_position(
+        "240760100", "ONCE MORE", 37.9327, 2.5823, 0.0, "",
+        observed_at=base + timedelta(minutes=10),
+    )
+    assert detector._added == []
+    assert "240760100" in detector._pending_jump
+
+    detector.process_position(
+        "240760100", "ONCE MORE", 37.93265, 23.6823, 0.0, "",
+        observed_at=base + timedelta(minutes=16),
+    )
+
+    assert not any(
+        event.metadata.get("anomaly_type") == "impossible_speed"
+        for event in detector._added
+    )
+    assert "240760100" not in detector._pending_jump
+    assert detector._last_seen["240760100"]["lon"] == pytest.approx(23.6823)
+
+
+def test_sustained_position_jump_is_confirmed(detector):
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    detector.process_position("247999003", "VESSEL", 35.0, 14.0, 10.0, "", observed_at=base)
+    detector._added.clear()
+    detector.process_position(
+        "247999003", "VESSEL", 40.0, 20.0, 10.0, "",
+        observed_at=base + timedelta(minutes=5),
+    )
+    assert detector._added == []
+    detector.process_position(
+        "247999003", "VESSEL", 40.01, 20.01, 10.0, "",
+        observed_at=base + timedelta(minutes=10),
+    )
+    events = [
+        event for event in detector._added
+        if event.metadata.get("anomaly_type") == "impossible_speed"
+    ]
+    assert len(events) == 1
+    assert events[0].metadata["anomaly_evidence"]["confirmed_by_followup"] is True
 
 
 def test_impossible_speed_uses_source_time_not_receipt_time(detector, monkeypatch):

@@ -1250,6 +1250,17 @@ class MdaWatch:
             reason, extra = self._spoof_signature(pts)
             if reason is None:
                 continue
+
+            # A single impossible leg is not enough to publish a spoofing
+            # episode. AIS providers can emit one-frame coordinate glitches
+            # that jump hundreds of miles and immediately return. Require the
+            # following fixes to remain clustered around the new location.
+            teleport_pattern_pre = None
+            if reason == "teleport":
+                teleport_pattern_pre = self._teleport_pattern(pts)
+                if teleport_pattern_pre != "sustained_relocation":
+                    continue
+
             if reason in ("frozen", "circular"):
                 # A pleasure/sailing craft (ship_type 36/37) swinging on its
                 # anchor near a marina produces exactly this signature --
@@ -1321,7 +1332,7 @@ class MdaWatch:
             coincident_teleport_peers: tuple[str, ...] = ()
             teleport_near_port = None
             if reason == "teleport":
-                teleport_pattern = self._teleport_pattern(pts)
+                teleport_pattern = teleport_pattern_pre
                 trigger = self._teleport_trigger(pts)
                 coincident_teleport_peers = self._coincident_teleport_peers(by_mmsi, mmsi)
                 if trigger is not None:
@@ -1416,6 +1427,8 @@ class MdaWatch:
         peers: list[str] = []
         for mmsi, pts in by_mmsi.items():
             if mmsi == current_mmsi:
+                continue
+            if MdaWatch._teleport_pattern(pts) != "sustained_relocation":
                 continue
             other = MdaWatch._teleport_trigger(pts)
             if other is None:

@@ -355,20 +355,57 @@ def test_spoofing_circular_ignores_passenger_ferry_at_its_own_terminal():
     assert not _alerts("ais_anomaly")
 
 
-def test_spoofing_teleport():
+def test_spoofing_teleport_requires_sustained_relocation():
     from datetime import timedelta
+
     w = MdaWatch()
     base = datetime.now(timezone.utc) - timedelta(minutes=15)
     for i in range(6):
-        track_store.on_position("111000011", "JUMP", 35.0, 15.0, sog=10.0,
-                                nav_status=0, received_at=base + timedelta(seconds=i * 20))
+        track_store.on_position(
+            "111000011", "JUMP", 35.0, 15.0, sog=10.0,
+            nav_status=0, received_at=base + timedelta(seconds=i * 20),
+        )
         track_store._last_write_epoch["111000011"] = 0.0
-    # one impossible jump 40 s after the last fix
-    track_store.on_position("111000011", "JUMP", 39.0, 20.0, sog=10.0,
-                            nav_status=0, received_at=base + timedelta(seconds=6 * 20 + 40))
-    track_store._last_write_epoch["111000011"] = 0.0
+    # Impossible jump followed by two nearby fixes at the new location.
+    for i, (lat, lon) in enumerate(((39.0, 20.0), (39.01, 20.01), (39.02, 20.02))):
+        track_store.on_position(
+            "111000011", "JUMP", lat, lon, sog=10.0, nav_status=0,
+            received_at=base + timedelta(seconds=160 + i * 60),
+        )
+        track_store._last_write_epoch["111000011"] = 0.0
     assert w.scan_spoofing() == 1
-    assert _alerts("ais_anomaly")[0].metadata["anomaly_type"] == "position_jump"
+    event = _alerts("ais_anomaly")[0]
+    assert event.metadata["anomaly_type"] == "position_jump"
+    assert event.metadata["teleport_pattern"] == "sustained_relocation"
+
+
+def test_spoofing_rejects_single_frame_longitude_glitch():
+    from datetime import timedelta
+
+    w = MdaWatch()
+    base = datetime.now(timezone.utc) - timedelta(minutes=20)
+    points = [
+        (37.93266, 23.68231),
+        (37.93268, 23.68230),
+        (37.93267, 23.68232),
+        (37.93268, 2.58229),
+        (37.93265, 23.68230),
+        (37.93264, 23.68232),
+        (37.93265, 23.68228),
+        (37.93265, 23.68230),
+    ]
+    for i, (lat, lon) in enumerate(points):
+        track_store.on_position(
+            "240760100", "ONCE MORE", lat, lon, sog=0.0, nav_status=0,
+            received_at=base + timedelta(minutes=i * 2),
+        )
+        track_store._last_write_epoch["240760100"] = 0.0
+
+    assert w.scan_spoofing() == 0
+    assert not [
+        e for e in _alerts("ais_anomaly")
+        if e.linked_mmsi == "240760100"
+    ]
 
 
 def test_spoofing_ignores_zero_longitude_sentinel_jump():
@@ -462,9 +499,18 @@ def test_coincident_teleport_peers_detect_same_area_and_time():
     def p(lat, lon, sec):
         return {"lat": lat, "lon": lon, "ts": base + timedelta(seconds=sec), "sog": 10.0}
     tracks = {
-        "111000101": [p(30.0, 30.0, 0), p(31.0, 32.0, 60), p(31.01, 32.01, 120)],
-        "111000102": [p(30.5, 30.5, 5), p(31.05, 32.05, 65), p(31.06, 32.06, 125)],
-        "111000103": [p(35.0, 15.0, 0), p(39.0, 20.0, 60)],
+        "111000101": [
+            p(30.0, 30.0, 0), p(31.0, 32.0, 60),
+            p(31.01, 32.01, 120), p(31.02, 32.02, 180),
+        ],
+        "111000102": [
+            p(30.5, 30.5, 5), p(31.05, 32.05, 65),
+            p(31.06, 32.06, 125), p(31.07, 32.07, 185),
+        ],
+        "111000103": [
+            p(35.0, 15.0, 0), p(39.0, 20.0, 60),
+            p(35.01, 15.01, 120), p(35.02, 15.02, 180),
+        ],
     }
     assert MdaWatch._coincident_teleport_peers(tracks, "111000101") == ("111000102",)
 

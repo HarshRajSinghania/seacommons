@@ -193,3 +193,48 @@ def test_radio_acquisition_status_is_degraded_when_managed_channel_is_under_repl
     status = radio_acquisition_status()
 
     assert status["state"] == "degraded"
+
+
+def test_acquisition_pipeline_exposes_only_safe_decoder_counters():
+    from core.acquisition import status as acquisition_status
+
+    acquisition_status._reset_acquisition_status_for_tests()
+    acquisition_status.register_acquisition_status(
+        "radio",
+        "Radio",
+        lambda: {
+            "state": "live",
+            "structured_enabled": True,
+            "structured_state": "degraded",
+            "decoder": {
+                "enabled": True,
+                "decoders": 2,
+                "frames": 120,
+                "decoded": 1,
+                "invalid": 7,
+                "dropped": 4,
+                "errors": 3,
+                "queued": 2,
+                "worker_alive": True,
+                "command": "/secret/decoder",
+                "last_payload": "raw audio",
+            },
+        },
+    )
+
+    radio = acquisition_status.acquisition_status_sources()[0]
+    assert radio["structured_state"] == "degraded"
+    assert radio["decoder"] == {
+        "enabled": True,
+        "decoders": 2,
+        "frames": 120,
+        "decoded": 1,
+        "invalid": 7,
+        "dropped": 4,
+        "errors": 3,
+        "queued": 2,
+        "worker_alive": True,
+    }
+    serialized = str(radio).lower()
+    assert "secret" not in serialized
+    assert "raw audio" not in serialized

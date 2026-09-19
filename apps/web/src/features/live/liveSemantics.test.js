@@ -103,3 +103,11 @@ test('public Live always boots on OpenStreetMap with nautical seamarks', () => {
   assert.match(main, /tiles: \['https:\/\/tiles\.openseamap\.org\/seamark\/\{z\}\/\{x\}\/\{y\}\.png'\]/);
   assert.match(main, /allowSatellite=\{!isPublicLiveHost\}/);
 });
+
+
+test('both moving and stationary NGO SAR markers are raised above later map layers', () => {
+  assert.match(
+    main,
+    /for \(const ngoLayerId of \['vessels-ngo-stationary', 'vessels-ngo'\]\)/,
+  );
+});

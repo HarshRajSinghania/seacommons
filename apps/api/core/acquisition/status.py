@@ -11,7 +11,10 @@ _lock = threading.Lock()
 _providers: dict[str, tuple[str, StatusProvider]] = {}
 
 _ALLOWED_DETAIL_FIELDS = frozenset(
-    {"mode", "configured", "started", "failed", "last_observation_at", "receivers", "channels", "structured_enabled"}
+    {
+        "mode", "configured", "started", "failed", "last_observation_at",
+        "receivers", "channels", "structured_enabled", "structured_state", "decoder",
+    }
 )
 _ALLOWED_RECEIVER_FIELDS = frozenset(
     {
@@ -32,6 +35,15 @@ _ALLOWED_CHANNEL_FIELDS = frozenset(
         "active", "standby", "cooldown", "failovers",
     }
 )
+_ALLOWED_DECODER_FIELDS = frozenset(
+    {"enabled", "decoders", "frames", "decoded", "invalid", "dropped", "errors", "queued", "worker_alive"}
+)
+
+
+def _sanitize_decoder(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value.get(key) for key in _ALLOWED_DECODER_FIELDS if key in value}
 
 
 def register_acquisition_status(family: str, label: str, provider: StatusProvider) -> None:
@@ -87,6 +99,8 @@ def acquisition_status_sources() -> list[dict[str, Any]]:
                 public_detail[key] = _sanitize_receivers(detail[key])
             elif key == "channels":
                 public_detail[key] = _sanitize_channels(detail[key])
+            elif key == "decoder":
+                public_detail[key] = _sanitize_decoder(detail[key])
             else:
                 public_detail[key] = detail[key]
         result.append({"family": family, "label": label, "state": state, **public_detail})

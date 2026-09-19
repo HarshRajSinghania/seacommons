@@ -112,6 +112,7 @@ def radio_acquisition_status() -> dict[str, object]:
 
     status = get_remote_radio_status(include_receivers=True)
     channels = list(status.get("channels") or [])
+    decoder = radio_decoder_status()
     if not status.get("enabled"):
         state = "disabled"
     elif int(status.get("started") or 0) == 0:
@@ -124,10 +125,24 @@ def radio_acquisition_status() -> dict[str, object]:
             for row in channels
         )
         state = "live" if any_connected and not under_replicated else "degraded"
+    structured_enabled = bool(config.STRUCTURED_RADIO_ENABLED)
+    decoder_enabled = bool(decoder.get("enabled"))
+    decoder_frames = int(decoder.get("frames") or 0)
+    if not structured_enabled:
+        structured_state = "disabled"
+    elif not decoder_enabled:
+        structured_state = "offline"
+    elif decoder_frames == 0:
+        structured_state = "idle"
+    elif not bool(decoder.get("worker_alive")) or int(decoder.get("errors") or 0) > 0:
+        structured_state = "degraded"
+    else:
+        structured_state = "live"
     return {
         "state": state,
-        "structured_enabled": bool(config.STRUCTURED_RADIO_ENABLED),
-        "decoder": radio_decoder_status(),
+        "structured_enabled": structured_enabled,
+        "structured_state": structured_state,
+        "decoder": decoder,
         "configured": int(status.get("configured") or 0),
         "started": int(status.get("started") or 0),
         "failed": int(status.get("failed") or 0),

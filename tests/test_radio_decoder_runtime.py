@@ -158,3 +158,34 @@ def test_openwebrx_compressed_audio_is_not_forwarded_to_pcm_decoder(monkeypatch)
     adapter.tune(2_187_500, "usb")
     transport.on_message(b"\x02compressed")
     assert frames == []
+
+
+def test_decoder_worker_survives_downstream_handler_error():
+    import time
+
+    from core.radio.decoder_runtime import RadioDecoderRuntime
+
+    class FakeDecoder:
+        def decode(self, frame):
+            return ({
+                "kind": "dsc",
+                "payload": {"category": "routine"},
+                "message_id": "m1",
+            },)
+
+    runtime = RadioDecoderRuntime(
+        enabled=True,
+        decoders=(FakeDecoder(),),
+        decoded_handler=lambda _msg: (_ for _ in ()).throw(RuntimeError("persist failed")),
+        queue_size=2,
+    )
+    runtime.start()
+    assert runtime.submit_frame(_frame()) is True
+    deadline = time.time() + 1.0
+    while runtime.status()["frames"] < 1 and time.time() < deadline:
+        time.sleep(0.01)
+    status = runtime.status()
+    assert status["worker_alive"] is True
+    assert status["errors"] >= 1
+    assert status["decoded"] == 0
+    runtime.stop()

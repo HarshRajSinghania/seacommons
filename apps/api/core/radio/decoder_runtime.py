@@ -71,6 +71,7 @@ class RadioDecoderRuntime:
         self._decoded = 0
         self._invalid = 0
         self._dropped = 0
+        self._errors = 0
         self._queue: queue.Queue[EphemeralRadioFrame] = queue.Queue(maxsize=max(1, int(queue_size)))
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
@@ -83,7 +84,9 @@ class RadioDecoderRuntime:
             "decoded": self._decoded,
             "invalid": self._invalid,
             "dropped": self._dropped,
+            "errors": self._errors,
             "queued": self._queue.qsize(),
+            "worker_alive": bool(self._worker and self._worker.is_alive()),
         }
 
     def start(self) -> None:
@@ -112,6 +115,10 @@ class RadioDecoderRuntime:
                 continue
             try:
                 self.ingest_frame(frame)
+            except Exception:
+                # A malformed decoder response or downstream persistence error
+                # must never kill the one bounded decoder worker silently.
+                self._errors += 1
             finally:
                 self._queue.task_done()
 
@@ -159,7 +166,11 @@ class RadioDecoderRuntime:
                 except (TypeError, ValueError):
                     invalid += 1
                     continue
-                self._decoded_handler(message)
+                try:
+                    self._decoded_handler(message)
+                except Exception:
+                    self._errors += 1
+                    continue
                 decoded += 1
         self._decoded += decoded
         self._invalid += invalid

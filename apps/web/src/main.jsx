@@ -2116,7 +2116,7 @@ function App() {
         // every other addLayer in this setup, guarantees the NGO fleet is
         // always the top-most vessel marker regardless of how much security
         // noise is on screen.
-        for (const ngoLayerId of ['vessels-ngo']) {
+        for (const ngoLayerId of ['vessels-ngo-stationary', 'vessels-ngo']) {
           if (map.getLayer(ngoLayerId)) map.moveLayer(ngoLayerId);
         }
 

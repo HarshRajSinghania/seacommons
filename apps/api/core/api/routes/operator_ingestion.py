@@ -549,6 +549,7 @@ def operator_pipeline_funnel(
             db.query(func.count(MaritimeEpisodeDB.episode_id))
             .filter(
                 MaritimeEpisodeDB.updated_at >= cutoff,
+                MaritimeEpisodeDB.episode_family != "unclassified_episode",
                 MaritimeEpisodeDB.verification_status == "multi_source_corroborated",
             )
             .scalar()

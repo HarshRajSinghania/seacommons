@@ -86,3 +86,22 @@ def test_uncatalogued_rss_news_has_conservative_reporting_lineage():
     assert lineage.source_family == "secondary_reporting"
     assert lineage.sensor_family == "public_report"
     assert lineage.independence_group == "secondary_news_reporting"
+
+
+def test_sqlalchemy_event_uses_json_meta_for_lineage():
+    from core.db.models import IntelEventDB
+    from core.intel.evidence_lineage import lineage_for_event
+
+    row = IntelEventDB(
+        id="orm-lineage-event",
+        timestamp_utc="2026-09-19T13:00:00+00:00",
+        type="twitter",
+        severity="info",
+        title="Alarm Phone report",
+        source="@alarm_phone",
+        meta={"platform": "x", "coordinate_source": "post_text"},
+    )
+
+    lineage = lineage_for_event(row)
+    assert lineage.independence_group == "x_twitter_platform"
+    assert lineage.sensor_family == "public_report"

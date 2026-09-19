@@ -5,6 +5,7 @@ Unknown lineage never counts as independent by default.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from core.intel.source_catalog import get_source_profile
@@ -43,7 +44,13 @@ def _sensor_family(profile: dict | None, source_name: str) -> str:
 
 def lineage_for_event(event) -> EvidenceLineage:
     source_name = str(getattr(event, "source", "") or "").strip()
-    metadata = dict(getattr(event, "metadata", {}) or {})
+    raw_metadata = getattr(event, "metadata", None)
+    if not isinstance(raw_metadata, Mapping):
+        # SQLAlchemy ORM rows expose declarative MetaData as .metadata; the
+        # persisted event JSON lives in .meta. Dataclass IntelEvent objects use
+        # .metadata directly.
+        raw_metadata = getattr(event, "meta", {})
+    metadata = dict(raw_metadata or {})
     platform = str(metadata.get("platform") or "").strip().lower()
     transport = str(metadata.get("transport") or "").strip().lower()
     event_type = str(getattr(event, "type", "") or "").strip().lower()

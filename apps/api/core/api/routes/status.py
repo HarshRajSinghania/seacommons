@@ -71,15 +71,62 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
             .scalar()
             or 0
         )
+        derived_total_raw = (
+            db.query(func.count(IntelEventDB.id))
+            .filter(
+                IntelEventDB.received_at >= cutoff,
+                IntelEventDB.type.in_((
+                    "ais_anomaly", "ais_rendezvous", "correlated_alert",
+                    "dark_candidate", "vessel_identity", "sar_model",
+                )),
+            )
+            .scalar()
+            or 0
+        )
+        anomaly_type = IntelEventDB.meta["anomaly_type"].as_string()
+        legacy_gap_context = (
+            db.query(func.count(IntelEventDB.id))
+            .filter(
+                IntelEventDB.received_at >= cutoff,
+                IntelEventDB.type == "ais_anomaly",
+                IntelEventDB.source == "ais",
+                IntelEventDB.id.like("aisanom:%"),
+                anomaly_type == "gap",
+            )
+            .scalar()
+            or 0
+        )
+        derived_total = max(0, int(derived_total_raw) - int(legacy_gap_context))
         episodes_total = (
             db.query(func.count(MaritimeEpisodeDB.episode_id))
-            .filter(MaritimeEpisodeDB.updated_at >= cutoff)
+            .filter(
+                MaritimeEpisodeDB.updated_at >= cutoff,
+                MaritimeEpisodeDB.episode_family != "unclassified_episode",
+            )
+            .scalar()
+            or 0
+        )
+        corroborated_total = (
+            db.query(func.count(MaritimeEpisodeDB.episode_id))
+            .filter(
+                MaritimeEpisodeDB.updated_at >= cutoff,
+                MaritimeEpisodeDB.verification_status == "multi_source_corroborated",
+            )
             .scalar()
             or 0
         )
         hypotheses_total = (
             db.query(func.count(InvestigationHypothesisDB.hypothesis_id))
             .filter(InvestigationHypothesisDB.updated_at >= cutoff)
+            .scalar()
+            or 0
+        )
+        review_ready_total = (
+            db.query(func.count(InvestigationHypothesisDB.hypothesis_id))
+            .filter(
+                InvestigationHypothesisDB.updated_at >= cutoff,
+                InvestigationHypothesisDB.state.in_(("review_ready", "assessed", "published")),
+            )
             .scalar()
             or 0
         )
@@ -156,9 +203,12 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         "pipeline": {
             "raw_observations": int(raw_total),
             "parsed_events": int(parsed_total),
+            "derived_cues": int(derived_total),
             "analysis_outputs": int(episodes_total + hypotheses_total),
             "maritime_episodes": int(episodes_total),
             "investigation_hypotheses": int(hypotheses_total),
+            "corroborated_episodes": int(corroborated_total),
+            "review_ready": int(review_ready_total),
         },
         "sensor_activity": {
             "ais_fixes": int(ais_fixes),
@@ -175,7 +225,10 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         "semantics": {
             "raw_observations": "Immutable source envelopes received during the selected window.",
             "parsed_events": "Normalized IntelEvent records produced during the selected window.",
-            "analysis_outputs": "Maritime episodes plus investigation hypotheses updated during the selected window.",
+            "derived_cues": "Rule/model outputs such as AIS integrity, rendezvous or dark-gap cues; not findings.",
+            "analysis_outputs": "Recognized maritime episodes plus investigation hypotheses updated during the selected window.",
+            "corroborated_episodes": "Episodes supported by at least two independent evidence lineages.",
+            "review_ready": "Corroborated investigations ready for human review; not findings of illegality.",
             "live": "Cases/signals that currently satisfy the public Live publication gate.",
         },
     }

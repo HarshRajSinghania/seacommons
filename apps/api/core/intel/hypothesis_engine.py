@@ -108,6 +108,17 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
     from core.intel.analysis_state import annotate_event_analysis
 
     annotate_event_analysis(event)
+    metadata = event.metadata or {}
+    # Legacy AIS integrity gaps are short reappearance telemetry. Keep them
+    # durable for audit/Play, but do not let them duplicate the canonical
+    # MdaWatch dark-gap signal inside investigation episodes.
+    if (
+        event.id.startswith("aisanom:")
+        and str(event.source or "").lower() == "ais"
+        and str(metadata.get("anomaly_type") or "") == "gap"
+    ):
+        return None
+
     mmsis = _event_mmsis(event)
     if not mmsis:
         return None
@@ -159,6 +170,10 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
 def _should_persist_episode(props: dict[str, Any]) -> bool:
     """Persist aggregation, not one-detector wrappers. Raw signals stay durable."""
     family = str(props.get("episode_family") or "unclassified_episode")
+    if family == "unclassified_episode":
+        # Unknown analytical semantics stay in the durable event/archive layer.
+        # Persisting them as episodes makes telemetry look like intelligence.
+        return False
     signal_count = int(props.get("signal_count") or 0)
     evidence_count = int(props.get("evidence_count") or 0)
     independent = int(props.get("independent_source_count") or 0)

@@ -440,3 +440,45 @@ def test_durable_hypothesis_sampler_keeps_gap_family_under_spoof_flood():
     ids = {event.id for event in sampled}
     assert "sampler-gap" in ids
     assert len([event for event in sampled if (event.metadata or {}).get("anomaly_type") == "position_jump"]) <= 5
+
+
+def test_legacy_short_gap_is_telemetry_not_hypothesis_episode_input():
+    from core.intel.hypothesis_engine import event_to_episode_input_feature
+
+    legacy = IntelEvent(
+        id="aisanom:211879870:gap",
+        type="ais_anomaly",
+        severity="medium",
+        lat=35.5,
+        lon=14.1,
+        title="legacy short gap",
+        linked_mmsi="211879870",
+        source="ais",
+        metadata={"anomaly_type": "gap"},
+    )
+    canonical = IntelEvent(
+        id="aisgap:211879870",
+        type="ais_anomaly",
+        severity="medium",
+        lat=35.5,
+        lon=14.1,
+        title="canonical MDA gap",
+        linked_mmsi="211879870",
+        source="mda",
+        metadata={"anomaly_type": "long_gap"},
+    )
+
+    assert event_to_episode_input_feature(legacy) is None
+    assert event_to_episode_input_feature(canonical) is not None
+
+
+def test_unclassified_episode_is_not_persisted_as_analysis():
+    _add_event("unknown1", anomaly_type="unknown_pattern")
+    _add_event("unknown2", anomaly_type="unknown_pattern")
+    hyp = evaluate_episode(_episode("unclassified_episode", signal_ids=["unknown1", "unknown2"]))
+    assert hyp is None
+
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+    with session_scope() as db:
+        assert db.query(MaritimeEpisodeDB).count() == 0

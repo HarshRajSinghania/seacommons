@@ -319,6 +319,33 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
             # while it is still being observed. A lone historical ping remains
             # available in Play but must not sit in Live indefinitely.
             return False
+        verification = str(props.get("verification_status") or "")
+        evidence_stage = str(props.get("evidence_stage") or "")
+        independently_corroborated = (
+            verification == "multi_source_corroborated"
+            or evidence_stage in {"corroborated", "assessed", "confirmed"}
+            or int(props.get("independent_source_count") or 0) >= 2
+        )
+        if not independently_corroborated:
+            geometry = feature.get("geometry") or {}
+            coordinates = geometry.get("coordinates") or []
+            if geometry.get("type") == "Point" and len(coordinates) >= 2:
+                try:
+                    lon, lat = float(coordinates[0]), float(coordinates[1])
+                    from core.mda.reference import reference
+
+                    # A fresh dedicated beacon in a port/anchorage or clearly on
+                    # land is still a real safety observation, but is too often a
+                    # test/maintenance/on-board transmission to be a public Live
+                    # casualty without an independent SAR/DSC/human source.
+                    if reference.in_port_or_anchorage(lat, lon) or reference.is_land(lat, lon):
+                        return False
+                except (TypeError, ValueError):
+                    pass
+                except Exception:
+                    # Reference-data failure must not hide a genuine fresh distress
+                    # beacon; fail open on context lookup, not on freshness.
+                    pass
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
             return False

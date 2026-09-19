@@ -167,3 +167,52 @@ def test_beacon_alone_never_creates_a_humanitarian_incident(monitor) -> None:
             break
 
     assert get_incident(event_id) is None
+
+
+def test_fresh_uncorroborated_beacon_in_port_stays_observation(monkeypatch) -> None:
+    from core.live.projection import is_useful_public_case_feature
+    from core.mda.reference import reference
+
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda _lat, _lon: True)
+    monkeypatch.setattr(reference, "is_land", lambda _lat, _lon: False)
+    now = datetime.now(timezone.utc)
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [13.758375, 45.6475933333]},
+        "properties": {
+            "type": "distress",
+            "ais_nav_status_kind": "distress_beacon",
+            "linked_mmsi": "972585920",
+            "mmsi": "972585920",
+            "source": "ais_sart",
+            "visual_category": "distress",
+            "verification_status": "ais_transponder",
+            "last_observed_at": (now - timedelta(minutes=10)).isoformat(),
+        },
+    }
+    assert is_useful_public_case_feature(feature) is False
+
+
+def test_independently_corroborated_beacon_can_remain_live_in_port(monkeypatch) -> None:
+    from core.live.projection import is_useful_public_case_feature
+    from core.mda.reference import reference
+
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda _lat, _lon: True)
+    monkeypatch.setattr(reference, "is_land", lambda _lat, _lon: False)
+    now = datetime.now(timezone.utc)
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [13.758375, 45.6475933333]},
+        "properties": {
+            "type": "distress",
+            "ais_nav_status_kind": "distress_beacon",
+            "linked_mmsi": "972585920",
+            "mmsi": "972585920",
+            "source": "ais_sart",
+            "visual_category": "distress",
+            "verification_status": "multi_source_corroborated",
+            "independent_source_count": 2,
+            "last_observed_at": (now - timedelta(minutes=10)).isoformat(),
+        },
+    }
+    assert is_useful_public_case_feature(feature) is True

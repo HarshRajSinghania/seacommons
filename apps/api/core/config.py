@@ -55,6 +55,10 @@ class SuezCanalConfig(BaseSettings):
     # the browser never sees it. Unset (the default) disables the check
     # entirely, so local dev is unaffected.
     INTERNAL_PROXY_SECRET: str = ""
+    # Dedicated reverse-proxy credential for the private operator ingestion
+    # surface. This value is injected by the ops-api Nginx vhost and is never
+    # sent to browser JavaScript.
+    OPERATOR_GATEWAY_SECRET: str = ""
     OIDC_ISSUER: str = ""
     OIDC_AUDIENCE: str = "seacommons-api"
     OIDC_JWKS_URL: str = ""

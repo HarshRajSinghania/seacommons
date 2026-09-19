@@ -32,7 +32,7 @@ from core.config import config
 from core import bootstrap
 from core.api.routes import alerts, drift, anomaly, forensic, integrations, ops, vessels
 from core.api.routes import ingest, probability, weather, zones, intel, cases, governance, live, play, connectors
-from core.api.routes import mda, audit
+from core.api.routes import mda, audit, operator_ingestion
 from core.db.session import init_database
 from core.security import READ_ROLES, WRITE_ROLES, require_roles, validate_production_security
 from core.config_validation import validate_configuration
@@ -178,6 +178,13 @@ async def authorization_gate(request, call_next):
         request.method in {"GET", "HEAD", "OPTIONS"}
         and path.startswith(("/api/v1/live/", "/api/v1/play/"))
     ) or (
+        # Private operator ingestion diagnostics authenticate inside the route
+        # with a gateway secret injected only by the dedicated reverse proxy.
+        # This mirrors signed webhook routes: middleware does not require OIDC,
+        # but the route still fails closed without the server-side credential.
+        request.method in {"GET", "HEAD", "OPTIONS"}
+        and path.startswith("/api/v1/operator/ingestion")
+    ) or (
         # docs/prompt.md P1 C: the media route is an EXPLICIT public contract,
         # not an accident of the proxy header. It serves only the re-encoded
         # public thumbnail (media/pub/<sha>.<jpg|png>), never the private
@@ -248,6 +255,7 @@ app.include_router(play.router)
 app.include_router(connectors.router)
 app.include_router(mda.router)
 app.include_router(audit.router)
+app.include_router(operator_ingestion.router)
 
 
 @app.get("/health")

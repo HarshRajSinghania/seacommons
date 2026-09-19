@@ -183,8 +183,19 @@ class VesselRegistry:
         nav_status: int | None = None,
         last_seen: datetime | None = None,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        ts = (last_seen or datetime.now(timezone.utc)).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        has_position = lat is not None and lon is not None
+        if last_seen is not None:
+            source_seen = last_seen
+            if source_seen.tzinfo is None:
+                source_seen = source_seen.replace(tzinfo=timezone.utc)
+            ts = source_seen.astimezone(timezone.utc).isoformat()
+        elif has_position:
+            ts = now
+        else:
+            # Static-data updates must never make an old coordinate look fresh.
+            ts = None
 
         row: dict[str, Any] = {
             "mmsi": mmsi,
@@ -206,6 +217,31 @@ class VesselRegistry:
 
         with self._lock:
             existing = self._cache.get(mmsi, {})
+
+            # Position state is monotonic in source time. Concurrent providers
+            # and reconnects can deliver an older fix after a newer one; the
+            # older packet may still improve static identity fields, but it
+            # must never roll coordinates/freshness backwards.
+            if has_position and ts and existing.get("last_seen"):
+                try:
+                    incoming_seen = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    current_seen = datetime.fromisoformat(
+                        str(existing["last_seen"]).replace("Z", "+00:00")
+                    )
+                    if incoming_seen < current_seen:
+                        for key in (
+                            "last_lat",
+                            "last_lon",
+                            "last_course",
+                            "last_speed",
+                            "last_heading",
+                            "nav_status",
+                            "last_seen",
+                        ):
+                            row[key] = None
+                except (TypeError, ValueError):
+                    pass
+
             merged: dict[str, Any] = {
                 k: (row[k] if row[k] is not None else existing.get(k))
                 for k in row

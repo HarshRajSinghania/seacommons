@@ -7,7 +7,9 @@ from typing import Callable, Any
 logger = logging.getLogger(__name__)
 
 _PositionHook = Callable[..., None]
+_ObservationHook = Callable[[Any], None]
 _position_hooks: list[_PositionHook] = []
+_observation_hooks: list[_ObservationHook] = []
 
 
 def register_position_hook(hook: _PositionHook) -> None:
@@ -15,11 +17,26 @@ def register_position_hook(hook: _PositionHook) -> None:
         _position_hooks.append(hook)
 
 
+def register_observation_hook(hook: _ObservationHook) -> None:
+    """Subscribe to the canonical AIS observation, including source time."""
+    if hook not in _observation_hooks:
+        _observation_hooks.append(hook)
+
+
 def position_hook_count() -> int:
     return len(_position_hooks)
 
 
+def observation_hook_count() -> int:
+    return len(_observation_hooks)
+
+
 def publish(observation: Any) -> None:
+    for hook in tuple(_observation_hooks):
+        try:
+            hook(observation)
+        except Exception:
+            logger.debug("AIS observation hook failed", exc_info=True)
     publish_legacy(
         observation.mmsi, observation.ship_name, observation.lat, observation.lon,
         observation.sog, observation.nav_status, observation.cog, observation.heading,
@@ -42,3 +59,4 @@ def publish_legacy(
 
 def _reset_for_tests() -> None:
     _position_hooks.clear()
+    _observation_hooks.clear()

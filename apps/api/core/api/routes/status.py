@@ -46,6 +46,19 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
+def peek_public_status(hours: int = 24) -> dict[str, Any] | None:
+    """Return the current cached public status without triggering recomputation."""
+    now_mono = time.monotonic()
+    with _status_cache_lock:
+        if (
+            _status_cache is not None
+            and _status_cache[1] == hours
+            and now_mono - _status_cache[0] < _STATUS_CACHE_TTL_S
+        ):
+            return _status_cache[2]
+    return None
+
+
 def build_public_status(hours: int = 24) -> dict[str, Any]:
     global _status_cache
     now_mono = time.monotonic()

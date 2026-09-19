@@ -2250,3 +2250,79 @@ def test_stale_sar_responder_activity_expires_before_24h_live_window(monkeypatch
     assert collection["features"] == []
     assert collection["meta"]["total"] == 0
     assert collection["meta"]["role_counts"]["humanitarian_observation"] == 0
+
+def test_live_sanctioned_vessels_is_fresh_strong_identifier_subset(monkeypatch):
+    from core.db.models import SanctionedVesselDB
+    from core.db.session import session_scope
+    from core.vessels.registry import registry
+
+    now = datetime.now(timezone.utc)
+    fake = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [14.1, 35.5]},
+                "properties": {
+                    "mmsi": "211000991",
+                    "imo": "9999001",
+                    "ship_name": "MATCHED VESSEL",
+                    "speed": 8.0,
+                    "course": 90.0,
+                    "nav_status": 0,
+                    "last_seen": (now - timedelta(minutes=2)).isoformat(),
+                },
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [14.2, 35.6]},
+                "properties": {
+                    "mmsi": "211000992",
+                    "imo": "9999002",
+                    "ship_name": "STALE MATCHED VESSEL",
+                    "last_seen": (now - timedelta(minutes=30)).isoformat(),
+                },
+            },
+        ],
+    }
+    monkeypatch.setattr(registry, "get_geojson", lambda: fake)
+
+    with session_scope() as db:
+        db.query(SanctionedVesselDB).filter(
+            SanctionedVesselDB.mmsi.in_(("211000991", "211000992"))
+        ).delete(synchronize_session=False)
+        db.add_all([
+            SanctionedVesselDB(
+                source_list="OFAC_SDN",
+                name="MATCHED VESSEL",
+                name_upper="MATCHED VESSEL",
+                imo="9999001",
+                mmsi="211000991",
+                program="TEST PROGRAM",
+            ),
+            SanctionedVesselDB(
+                source_list="OpenSanctions",
+                name="STALE MATCHED VESSEL",
+                name_upper="STALE MATCHED VESSEL",
+                imo="9999002",
+                mmsi="211000992",
+                program="TEST PROGRAM",
+            ),
+        ])
+
+    response = client.get("/api/v1/live/sanctioned-vessels")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["position_policy"] == "fresh_only_10m"
+    assert payload["meta"]["total"] == 1
+    feature = payload["features"][0]
+    assert feature["properties"]["mmsi"] == "211000991"
+    assert feature["properties"]["sanctions_matched"] is True
+    assert feature["properties"]["match_basis"] == ["mmsi", "imo"]
+    assert feature["properties"]["position_age_s"] < 600
+    assert "does not by itself establish unlawful" in feature["properties"]["note"]
+
+    with session_scope() as db:
+        db.query(SanctionedVesselDB).filter(
+            SanctionedVesselDB.mmsi.in_(("211000991", "211000992"))
+        ).delete(synchronize_session=False)

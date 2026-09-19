@@ -108,21 +108,23 @@ function renderDiagnostics(f){let d=f.diagnostics||{},b=$("diagnostics");let top
 async function refreshOverall(){try{
  let o=await get("/api/v1/operator/ingestion/overall"),s=o.sensor_activity||{},b=o.breakdowns||{},f=o.first_last||{};
  let fake={stages:o.stages||[]};let box=$("overallFunnel");box.textContent="";(fake.stages||[]).forEach(x=>{let d=document.createElement("div");d.className="stage";let l=document.createElement("div");l.className="l";l.textContent=x.label;let n=document.createElement("div");n.className="n";n.textContent=fmt(x.count);d.append(l,n);box.append(d)});
- $("overallAis").textContent=fmt(s.ais_fixes);$("overallRf").textContent=fmt(s.radio_bursts);$("overallRadio").textContent=fmt(s.radio_events);$("overallSat").textContent=fmt(s.satellite_observations);$("overallSources").textContent=fmt(s.source_names);
+ $("overallAis").textContent=(s.ais_fixes_estimated?"≈ ":"")+fmt(s.ais_fixes);$("overallRf").textContent=fmt(s.radio_bursts);$("overallRadio").textContent=fmt(s.radio_events);$("overallSat").textContent=fmt(s.satellite_observations);$("overallSources").textContent=fmt(s.source_names);
  kvRows("overallRawSources",b.raw_by_source,30);kvRows("overallRawTypes",b.raw_observation_types,30);kvRows("overallEventTypes",b.normalized_event_types,30);
  let analysis={};Object.entries(b.episode_families||{}).forEach(([k,v])=>analysis["episode · "+k]=v);Object.entries(b.hypothesis_types||{}).forEach(([k,v])=>analysis["hypothesis · "+k]=v);kvRows("overallAnalysis",analysis,40);
  let from=f.raw_first?new Date(f.raw_first).toLocaleDateString():"–";$("overallFresh").textContent="stored since "+from+" · cached "+fmt(o.cache_ttl_seconds)+"s · updated "+new Date(o.generated_at).toLocaleTimeString();
 }catch(err){$("overallFresh").textContent="historical inventory degraded · "+String(err.message||err)}}
-async function refresh(){try{
- let [o,f,r,e,a,c,m]=await Promise.all([
-  get("/api/v1/operator/ingestion/overview?hours=24"),get("/api/v1/operator/ingestion/funnel?hours=24"),get("/api/v1/operator/ingestion/observations?hours=24&limit=80"),get("/api/v1/operator/ingestion/events?hours=24&limit=80"),get("/api/v1/operator/ingestion/analysis?hours=24&limit=80"),get("/api/v1/operator/ingestion/cases?hours=168&limit=20"),get("/api/v1/operator/ingestion/pipeline-map")
- ]);
- let p=o.pipeline_status||{},s=p.sensor_activity||{},fr=p.freshness||{};
- renderFunnel(f);$("ais").textContent=fmt(s.ais_fixes);$("rf").textContent=fmt(s.radio_bursts);$("radio").textContent=fmt(s.radio_events);$("sat").textContent=fmt(s.satellite_observations);$("activeSources").textContent=fmt(s.active_source_names);
- $("rawFresh").textContent="latest "+ago(fr.raw_observation);$("parsedFresh").textContent="latest "+ago(fr.parsed_event);$("analysisFresh").textContent="latest "+ago(fr.analysis_output);
- renderLog("rawLog",r.observations,"rawRow","raw");renderLog("eventLog",e.events,"","event");renderLog("analysisLog",a.items,"analysisRow","analysis");renderCases(c.cases);renderMap(m.chains);renderDiagnostics(f);sourceRows((o.source_observations||{}).by_source);acquisitionRows(o.acquisition);
- $("health").textContent="LIVE / AUTO-REFRESH 5S";$("health").style.color="var(--mint)";$("updated").textContent="updated "+new Date().toLocaleTimeString();
-}catch(err){$("health").textContent="DEGRADED / "+String(err.message||err);$("health").style.color="var(--amber)"}}
-refresh();refreshOverall();refreshFleet();setInterval(refresh,5000);setInterval(refreshFleet,15000);setInterval(refreshOverall,60000);
+const inflight=new Set();let lastFastSuccess=0;
+async function runOnce(key,fn){if(inflight.has(key))return;inflight.add(key);try{await fn()}catch(err){if(Date.now()-lastFastSuccess>15000){$("health").textContent="DEGRADED / "+String(err.message||err);$("health").style.color="var(--amber)"}}finally{inflight.delete(key)}}
+function markLive(){lastFastSuccess=Date.now();$("health").textContent="LIVE / PROGRESSIVE REFRESH";$("health").style.color="var(--mint)";$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+function refreshOverview(){return runOnce("overview",async()=>{let o=await get("/api/v1/operator/ingestion/overview?hours=24"),p=o.pipeline_status||{},s=p.sensor_activity||{},fr=p.freshness||{};$("ais").textContent=fmt(s.ais_fixes);$("rf").textContent=fmt(s.radio_bursts);$("radio").textContent=fmt(s.radio_events);$("sat").textContent=fmt(s.satellite_observations);$("activeSources").textContent=fmt(s.active_source_names);$("rawFresh").textContent="latest "+ago(fr.raw_observation);$("parsedFresh").textContent="latest "+ago(fr.parsed_event);$("analysisFresh").textContent="latest "+ago(fr.analysis_output);sourceRows((o.source_observations||{}).by_source);acquisitionRows(o.acquisition);markLive()})}
+function refreshFunnel(){return runOnce("funnel",async()=>{let f=await get("/api/v1/operator/ingestion/funnel?hours=24");renderFunnel(f);renderDiagnostics(f);markLive()})}
+function refreshRaw(){return runOnce("raw",async()=>{let r=await get("/api/v1/operator/ingestion/observations?hours=24&limit=80");renderLog("rawLog",r.observations,"rawRow","raw");markLive()})}
+function refreshEvents(){return runOnce("events",async()=>{let e=await get("/api/v1/operator/ingestion/events?hours=24&limit=80");renderLog("eventLog",e.events,"","event");markLive()})}
+function refreshAnalysis(){return runOnce("analysis",async()=>{let a=await get("/api/v1/operator/ingestion/analysis?hours=24&limit=80");renderLog("analysisLog",a.items,"analysisRow","analysis");markLive()})}
+function refreshCases(){return runOnce("cases",async()=>{let c=await get("/api/v1/operator/ingestion/cases?hours=168&limit=20");renderCases(c.cases)})}
+function refreshTopology(){return runOnce("topology",async()=>{let m=await get("/api/v1/operator/ingestion/pipeline-map");renderMap(m.chains)})}
+function refreshFast(){refreshOverview();refreshFunnel();refreshRaw();refreshEvents();refreshAnalysis()}
+function refreshSlow(){refreshCases();refreshTopology()}
+refreshFast();refreshSlow();refreshFleet();setTimeout(refreshOverall,1000);setInterval(refreshFast,5000);setInterval(refreshFleet,15000);setInterval(refreshSlow,30000);setInterval(refreshOverall,300000);
 </script>
 </body></html>"""

@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { classifyEventVisual, eventAnomalyLabel, isAlarmPhoneSource, signalCategoryOf } from '../features/intel/categories.js';
+import { classifyEventVisual, isAlarmPhoneSource, signalCategoryOf } from '../features/intel/categories.js';
 import { locationLabel, relativeTime } from '../features/live/eventPresentation.js';
 
 const ALARM_PHONE_SOURCE = 'Alarm Phone';
-const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const SEV_LABELS = ['critical', 'high', 'medium', 'low'];
 const TYPE_ICONS = {
   distress:        '🆘',
@@ -66,6 +65,17 @@ function eventTier(p) {
   if (p.type === 'distress') return 'operational';
   if (p.type === 'ais_spike' || p.type === 'ngo_activity') return 'signal';
   return 'news';
+}
+
+function eventMainCategory(p = {}) {
+  if (p.main_category === 'humanitarian' || p.main_category === 'maritime') {
+    return p.main_category;
+  }
+  return p.maritime_domain === 'sar' ? 'humanitarian' : 'maritime';
+}
+
+function eventIncidentType(p = {}) {
+  return p.incident_type || signalCategoryOf(p) || 'maritime_context';
 }
 
 // Average of a Polygon's exterior-ring vertices -- good enough for "fly
@@ -223,11 +233,10 @@ export default function IntelDashboard({
   intelEvents,
   intelStats,
   liveModeCounts = null,
-  intelFilter,
-  setIntelFilter,
   feedStatus = 'live',
   liveMode = 'humanitarian',
   activeSignalCategories,
+  liveFacetFilters = null,
   alarmPhoneOn = true,
   showAisAlerts,
   setShowAisAlerts,
@@ -238,8 +247,9 @@ export default function IntelDashboard({
   const [search, setSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
-  const [tierFilter, setTierFilter] = useState('all');   // 'all' | operational | news | signal
-  const [domainFilter, setDomainFilter] = useState('all');   // 'all' | sar | sanctions | grey_zone | ...
+  const [tierFilter, setTierFilter] = useState('all');   // evidence/presentation tier
+  const [mainCategoryFilter, setMainCategoryFilter] = useState('all');
+  const [incidentTypeFilter, setIncidentTypeFilter] = useState('all');
   const [viewMode, setViewMode] = useState('list');   // 'list' | 'timeline'
   const [showInject, setShowInject] = useState(false);
   const [injectSuccess, setInjectSuccess] = useState(false);
@@ -254,7 +264,8 @@ export default function IntelDashboard({
     setChannelFilter('all');
     setSourceFilter('all');
     setTierFilter('all');
-    setDomainFilter('all');
+    setMainCategoryFilter('all');
+    setIncidentTypeFilter('all');
   }, [liveMode, publicMode]);
 
   // Filtered + searched events
@@ -270,9 +281,20 @@ export default function IntelDashboard({
     if (!alarmPhoneOn) {
       evs = evs.filter((f) => !isAlarmPhoneSource(f.properties?.source));
     }
+    if (liveFacetFilters?.satellite) evs = evs.filter((f) => Boolean(f.properties?.has_satellite));
+    if (liveFacetFilters?.sanctions) evs = evs.filter((f) => Boolean(f.properties?.sanctions_matched));
+    if (liveFacetFilters?.corroborated) evs = evs.filter((f) => Boolean(f.properties?.corroborated));
 
     if (tierFilter !== 'all') evs = evs.filter((f) => eventTier(f.properties || {}) === tierFilter);
-    if (intelFilter !== 'all') evs = evs.filter((f) => f.properties?.severity === intelFilter);
+    if (mainCategoryFilter !== 'all') {
+      evs = evs.filter((f) => {
+        const p = f.properties || {};
+        return eventMainCategory(p) === mainCategoryFilter;
+      });
+    }
+    if (incidentTypeFilter !== 'all') {
+      evs = evs.filter((f) => eventIncidentType(f.properties || {}) === incidentTypeFilter);
+    }
     if (channelFilter !== 'all') evs = evs.filter((f) => f.properties?.type === channelFilter);
     if (sourceFilter === ALARM_PHONE_SOURCE) {
       // The account's source string varies by ingester/tweet (display name
@@ -282,10 +304,6 @@ export default function IntelDashboard({
     } else if (sourceFilter !== 'all') {
       evs = evs.filter((f) => f.properties?.source === sourceFilter);
     }
-    if (domainFilter !== 'all') {
-      evs = evs.filter((f) => (f.properties?.maritime_domain || 'sar') === domainFilter);
-    }
-
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       evs = evs.filter((f) => {
@@ -305,13 +323,21 @@ export default function IntelDashboard({
       Date.parse(right.properties?.timestamp_utc || 0)
       - Date.parse(left.properties?.timestamp_utc || 0)
     ));
-  }, [intelEvents, intelFilter, channelFilter, sourceFilter, tierFilter, domainFilter, showAisAlerts, activeSignalCategories, alarmPhoneOn, search, selectedEventId]);
+  }, [intelEvents, channelFilter, sourceFilter, tierFilter, mainCategoryFilter, incidentTypeFilter, showAisAlerts, activeSignalCategories, liveFacetFilters, alarmPhoneOn, search, selectedEventId]);
 
-  // Maritime compartments actually present in the current event set (operator view).
-  const presentDomains = useMemo(() => {
+  const presentIncidentTypes = useMemo(() => {
     const seen = new Set();
-    for (const f of intelEvents) seen.add(f.properties?.maritime_domain || 'sar');
-    return [...seen];
+    for (const feature of intelEvents) seen.add(eventIncidentType(feature.properties || {}));
+    return [...seen].filter(Boolean).sort();
+  }, [intelEvents]);
+
+  const mainCategoryCounts = useMemo(() => {
+    const counts = { humanitarian: 0, maritime: 0 };
+    for (const feature of intelEvents) {
+      const category = eventMainCategory(feature.properties || {});
+      counts[category] = (counts[category] || 0) + 1;
+    }
+    return counts;
   }, [intelEvents]);
 
   // Group the visible events by operational tier (operational pinned on top).
@@ -372,7 +398,7 @@ export default function IntelDashboard({
       || p.operational_label
       || p.title
       || (isHumanitarianRow ? 'Distress report' : 'Unknown vessel');
-    const anomaly = eventAnomalyLabel(p);
+    const incidentType = eventIncidentType(p).replace(/_/g, ' ');
     // F-12: report time visible in every row; a missing coordinate reads as a
     // reason (OCR PROCESSING / OCR DISPUTED / REGION ONLY / WITHHELD / NOT
     // EXTRACTED), never a bare "position unavailable".
@@ -402,7 +428,7 @@ export default function IntelDashboard({
             title={visual.label}
           />
           <strong>{vesselName}</strong>
-          <span>{p.operational_label || anomaly}{p.input_modality ? ` · ${p.input_modality.replace('_', ' ')}` : ''}</span>
+          <span>{incidentType}{p.input_modality ? ` · ${p.input_modality.replace('_', ' ')}` : ''}</span>
           {reported && <span className="intel-log-time">{reported}</span>}
           <code className={`intel-log-loc intel-log-loc--${location.tone}`}>{location.text}</code>
         </button>
@@ -430,8 +456,8 @@ export default function IntelDashboard({
             <div className="osint-stat"><strong>{liveModeCounts?.maritime || 0}</strong><span>maritime</span></div>
           </>) : (<>
             <div className="osint-stat"><strong>{intelStats.total}</strong><span>events</span></div>
-            <div className="osint-stat osint-stat--critical"><strong>{intelStats.by_sev?.critical || 0}</strong><span>critical</span></div>
-            <div className="osint-stat osint-stat--high"><strong>{intelStats.by_sev?.high || 0}</strong><span>high</span></div>
+            <div className="osint-stat osint-stat--critical"><strong>{mainCategoryCounts.humanitarian}</strong><span>humanitarian</span></div>
+            <div className="osint-stat"><strong>{mainCategoryCounts.maritime}</strong><span>maritime</span></div>
             <div className="osint-stat"><strong>{filteredEvents.length}</strong><span>shown</span></div>
           </>)}
         </div>
@@ -470,47 +496,48 @@ export default function IntelDashboard({
           ))}
         </div>
 
-        {/* Severity filter */}
+        {/* Product taxonomy: exactly two main categories. */}
         <div className="intel-filter-row" style={{ marginTop: 6 }}>
-          {['all', 'critical', 'high', 'medium', 'low'].map((f) => (
+          {[
+            ['all', 'all'],
+            ['humanitarian', 'humanitarian'],
+            ['maritime', 'maritime'],
+          ].map(([key, label]) => (
             <button
-              key={f}
-              className={`intel-filter-btn ${intelFilter === f ? 'is-active' : ''}`}
-              onClick={() => setIntelFilter(f)}
-            >{f}</button>
+              key={key}
+              className={`intel-filter-btn ${mainCategoryFilter === key ? 'is-active' : ''}`}
+              onClick={() => setMainCategoryFilter(key)}
+            >{label}</button>
           ))}
           {!publicMode ? (
             <button
               className={`intel-filter-btn ${showAisAlerts ? 'is-active' : ''}`}
               onClick={() => setShowAisAlerts((v) => !v)}
-              title="Toggle AIS loitering alerts"
-            >AIS</button>
+              title="Show raw AIS detector output in the operator view"
+            >raw AIS</button>
           ) : null}
           {!publicMode && (
             <button
               className={`intel-filter-btn ${sourceFilter === ALARM_PHONE_SOURCE ? 'is-active' : ''}`}
               onClick={() => setSourceFilter((cur) => cur === ALARM_PHONE_SOURCE ? 'all' : ALARM_PHONE_SOURCE)}
-              title="Show only Alarm Phone reports"
-            >📞 Alarm Phone</button>
+              title="Source facet: Alarm Phone"
+            >Alarm Phone</button>
           )}
         </div>
 
-        {/* Maritime compartment filter — operator view, only when >1 present */}
-        {!publicMode && presentDomains.length > 1 && (
-          <div className="intel-filter-row" style={{ marginTop: 4 }}>
-            <button
-              className={`intel-filter-btn intel-filter-btn--channel ${domainFilter === 'all' ? 'is-active' : ''}`}
-              onClick={() => setDomainFilter('all')}
-            >all domains</button>
-            {presentDomains.map((d) => (
-              <button
-                key={d}
-                className={`intel-filter-btn intel-filter-btn--channel ${domainFilter === d ? 'is-active' : ''}`}
-                onClick={() => setDomainFilter((cur) => cur === d ? 'all' : d)}
-              >{d.replace(/_/g, ' ')}</button>
+        <div className="intel-search-row" style={{ marginTop: 6 }}>
+          <select
+            className="intel-search-input"
+            value={incidentTypeFilter}
+            onChange={(event) => setIncidentTypeFilter(event.target.value)}
+            aria-label="Incident type"
+          >
+            <option value="all">All incident types</option>
+            {presentIncidentTypes.map((type) => (
+              <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>
             ))}
-          </div>
-        )}
+          </select>
+        </div>
 
         {/* Channel filter */}
         {channelTypes.length > 0 && (
@@ -549,8 +576,12 @@ export default function IntelDashboard({
             <ul className="intel-list">
               <li className="intel-empty">
                 {(() => {
-                  const filtersActive = tierFilter !== 'all' || intelFilter !== 'all'
-                    || channelFilter !== 'all' || !!search;
+                  const filtersActive = tierFilter !== 'all'
+                    || mainCategoryFilter !== 'all'
+                    || incidentTypeFilter !== 'all'
+                    || channelFilter !== 'all'
+                    || sourceFilter !== 'all'
+                    || !!search;
                   // A successful response with zero events is NOT the same as a
                   // dropped connection or the initial connect (docs/fixes.md
                   // Phase 0.4).

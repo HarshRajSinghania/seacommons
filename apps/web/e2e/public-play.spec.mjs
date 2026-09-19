@@ -12,9 +12,11 @@ test('Play archive exposes deterministic filters, dossier and global timeline', 
   await expect(page.locator('main.play-public-shell')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Play' })).toBeVisible();
   const filters = page.getByRole('group', { name: 'Play archive filters' });
-  for (const label of ['ALL', 'HUMANITARIAN', 'MARITIME', 'CORRELATED', 'SATELLITE']) {
+  for (const label of ['ALL', 'HUMANITARIAN', 'MARITIME', 'SATELLITE', 'SANCTIONS', 'INVESTIGATION']) {
     await expect(filters.getByRole('button', { name: label })).toBeVisible();
   }
+  await expect(filters.getByRole('button', { name: 'CORRELATED' })).toHaveCount(0);
+  await expect(filters.getByRole('combobox', { name: 'Incident type' })).toBeVisible();
 
   const cases = page.locator('.play-cases__list');
   await expect(cases.getByText('Historical distress', { exact: true })).toBeVisible();

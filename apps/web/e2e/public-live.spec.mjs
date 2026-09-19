@@ -28,9 +28,9 @@ test('Live semantics keep Humanitarian and Maritime as the public macro split', 
   await expect(maritimeToggle).toHaveAttribute('aria-expanded', 'false');
   await maritimeToggle.click();
   await expect(page.locator('button[aria-label="Collapse Maritime"]')).toHaveAttribute('aria-expanded', 'true');
-  const safety = categories.locator('a[href="#incident"]');
+  const safety = categories.locator('a[href="#navigation_safety"]');
   await expect(safety).toBeVisible();
-  await expect(safety).toContainText('Safety');
+  await expect(safety).toContainText('Navigation safety');
   await expect(page.getByText('Not under command report', { exact: true })).toBeVisible();
 });
 
@@ -85,8 +85,8 @@ test('Alarm Phone transport type stays Humanitarian Distress in counts and feed 
   await expect(categories.locator('a[href="#distress"]')).toContainText(/Distress\s*1/);
 
   await page.locator('button[aria-label$="Maritime"]').click();
-  await expect(categories.locator('a[href="#social"]')).toContainText(/Public observations\s*0/);
-  await categories.locator('a[href="#social"]').click();
+  await expect(categories.locator('a[href="#public_observation"]')).toContainText(/Public observation\s*0/);
+  await categories.locator('a[href="#public_observation"]').click();
   await expect(page.getByText('Distress report', { exact: true })).toBeVisible();
 });
 

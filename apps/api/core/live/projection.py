@@ -690,6 +690,14 @@ def _public_intel_feature(
         humanitarian_case_type=metadata.get("humanitarian_case_type"),
         metadata=metadata,
     )
+    from core.domain.incident_taxonomy import taxonomy_fields
+
+    metadata.update(taxonomy_fields(
+        event_type=event.type,
+        maritime_domain=resolved_domain,
+        humanitarian_case_type=metadata.get("humanitarian_case_type"),
+        metadata={**event.metadata, **metadata, **category},
+    ))
     operational_label = _operational_label(event, resolved_domain=resolved_domain)
     input_modality = _input_modality(event, source_policy=canonical_source_policy)
     anomaly_type = str(metadata.get("anomaly_type") or "")

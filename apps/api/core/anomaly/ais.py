@@ -83,14 +83,15 @@ class AISAnomalyDetector:
         The old _ws_loop opened its own AISStream socket, which conflicts
         with the primary client (one connection per key on the free tier) --
         that is why this detector was never wired in. It now consumes the
-        same PositionReports as everything else via a position hook.
+        same PositionReports as everything else via the canonical AIS
+        observation bus, preserving each fix's source timestamp.
         """
         self._running = True
         self._load_sdn()
         try:
             from core.vessels import aisstream
 
-            aisstream.register_position_hook(self._on_feed_position)
+            aisstream.register_observation_hook(self._on_observation)
         except Exception as exc:
             logger.warning("AISAnomalyDetector: could not attach to AIS feed: %s", exc)
         self._thread = threading.Thread(
@@ -101,10 +102,25 @@ class AISAnomalyDetector:
     def stop(self) -> None:
         self._running = False
 
+    def _on_observation(self, observation) -> None:
+        """Consume a canonical AIS observation with source and receipt time."""
+        if not self._running:
+            return
+        self.process_position(
+            observation.mmsi,
+            observation.ship_name,
+            observation.lat,
+            observation.lon,
+            observation.sog or 0.0,
+            "",
+            observed_at=observation.observed_at,
+        )
+
     def _on_feed_position(
         self, mmsi: str, name: str, lat: float, lon: float,
         sog: float | None, nav_status: int | None = None, *_extra,
     ) -> None:
+        """Legacy adapter retained for tests/tools; runtime uses _on_observation."""
         if self._running:
             self.process_position(mmsi, name, lat, lon, sog or 0.0, "")
 
@@ -120,7 +136,9 @@ class AISAnomalyDetector:
             # Bounded memory on the small VM: drop tracks and cooldowns that
             # can no longer produce an event.
             self._last_seen = {
-                m: s for m, s in self._last_seen.items() if now - s["ts"] < 12 * 3600
+                m: s
+                for m, s in self._last_seen.items()
+                if now - s.get("received_ts", s["ts"]) < 12 * 3600
             }
             self._emitted = {
                 k: t for k, t in self._emitted.items() if now - t < self._EMIT_COOLDOWN_S * 2
@@ -128,7 +146,7 @@ class AISAnomalyDetector:
             for mmsi, seen in list(self._last_seen.items()):
                 if seen.get("gap_emitted"):
                     continue
-                silent_s = now - seen["ts"]
+                silent_s = now - seen.get("received_ts", seen["ts"])
                 if silent_s < 900 or silent_s > 6 * 3600:
                     continue
                 if seen.get("speed", 0) < 1.0 or self._in_dark_zone(seen["lat"], seen["lon"]):
@@ -150,7 +168,7 @@ class AISAnomalyDetector:
                 continue
             if _haversine_nm(lat, lon, s["lat"], s["lon"]) > _GAP_NEIGHBOUR_RADIUS_NM:
                 continue
-            age = now - s["ts"]
+            age = now - s.get("received_ts", s["ts"])
             if age < _GAP_HISTORY_S:
                 before += 1
             if age < _GAP_FRESH_S:
@@ -199,22 +217,46 @@ class AISAnomalyDetector:
         )
 
     def process_position(
-        self, mmsi: str, name: str, lat: float, lon: float, speed: float, vessel_type: str
+        self,
+        mmsi: str,
+        name: str,
+        lat: float,
+        lon: float,
+        speed: float,
+        vessel_type: str,
+        *,
+        observed_at=None,
     ) -> None:
         from datetime import datetime, timezone
-        now = time.time()
+
+        received_ts = time.time()
+        if observed_at is None:
+            observed_ts = received_ts
+        elif isinstance(observed_at, datetime):
+            observed = observed_at
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=timezone.utc)
+            observed_ts = observed.timestamp()
+        else:
+            try:
+                observed_ts = float(observed_at)
+            except (TypeError, ValueError):
+                observed_ts = received_ts
+
         prev = self._last_seen.get(mmsi)
         pos = {"lat": lat, "lon": lon}
 
-        # Impossible speed between two fixes (AIS spoofing / MMSI reuse).
-        # Silence "gap" is handled by the sweep loop, not here -- a normal AIS
-        # refresh interval routinely exceeds a few minutes.
+        # AIS providers can replay or reorder fixes after reconnects. A fix that
+        # is not newer in source time must never create a teleport/spoofing cue.
+        if prev and observed_ts <= prev["ts"]:
+            return
+
+        # Impossible speed between two source-timed fixes (AIS spoofing / MMSI
+        # reuse candidate). Silence "gap" is handled from receipt freshness by
+        # the sweep loop; movement integrity uses source chronology.
         if prev:
-            gap_s = now - prev["ts"]
-            import math
-            dlat = lat - prev["lat"]
-            dlon = lon - prev["lon"]
-            dist_nm = math.sqrt(dlat**2 + dlon**2) * 60
+            gap_s = observed_ts - prev["ts"]
+            dist_nm = _haversine_nm(prev["lat"], prev["lon"], lat, lon)
             if gap_s > 0 and dist_nm > 0:
                 actual_speed_kts = dist_nm / (gap_s / 3600)
                 max_spd = _MAX_SPEED.get(vessel_type, _MAX_SPEED["default"])
@@ -226,8 +268,12 @@ class AISAnomalyDetector:
                         mmsi=mmsi, vessel_name=name,
                         position=pos,
                         confidence=min(0.9, 0.5 + (actual_speed_kts - max_spd) / 100),
-                        evidence={"computed_kts": round(actual_speed_kts, 1),
-                                  "max_allowed": max_spd, "gap_s": round(gap_s)},
+                        evidence={
+                            "computed_kts": round(actual_speed_kts, 1),
+                            "max_allowed": max_spd,
+                            "gap_s": round(gap_s),
+                            "timing_basis": "ais_source_time",
+                        },
                     ))
 
         # Dark zone entry
@@ -253,8 +299,13 @@ class AISAnomalyDetector:
             ))
 
         self._last_seen[mmsi] = {
-            "lat": lat, "lon": lon, "ts": now, "speed": speed,
-            "type": vessel_type, "name": name or self._last_seen.get(mmsi, {}).get("name", ""),
+            "lat": lat,
+            "lon": lon,
+            "ts": observed_ts,
+            "received_ts": received_ts,
+            "speed": speed,
+            "type": vessel_type,
+            "name": name or self._last_seen.get(mmsi, {}).get("name", ""),
         }
         self._positions[mmsi] = pos
 

@@ -145,24 +145,35 @@ const SIGNALS_MACRO_GROUPS = [
     key: 'humanitarian',
     label: 'Humanitarian',
     categories: [
-      { key: 'distress', label: 'Distress', groupKey: 'sar' },
-      { key: 'iom', label: 'IOM missing migrants', groupKey: 'intel_iom' },
-      { key: 'ngo', label: 'NGO activity', groupKey: 'intel_ngo' },
+      { key: 'distress', label: 'Distress', groupKey: 'signal_type_distress' },
+      { key: 'rescue', label: 'Rescue', groupKey: 'signal_type_rescue' },
+      { key: 'missing', label: 'Missing', groupKey: 'signal_type_missing' },
+      { key: 'shipwreck', label: 'Shipwreck', groupKey: 'signal_type_shipwreck' },
+      { key: 'pushback', label: 'Pushback', groupKey: 'signal_type_pushback' },
+      { key: 'migration_incident', label: 'Migration incident', groupKey: 'signal_type_migration_incident' },
+      { key: 'sar_activity', label: 'SAR activity', groupKey: 'signal_type_sar_activity' },
+      { key: 'land_humanitarian', label: 'Land humanitarian', groupKey: 'signal_type_land_humanitarian' },
+      { key: 'resolution', label: 'Resolution', groupKey: 'signal_type_resolution' },
+      { key: 'humanitarian_context', label: 'Humanitarian context', groupKey: 'signal_type_humanitarian_context' },
     ],
   },
   {
     key: 'maritime',
     label: 'Maritime',
     categories: [
-      { key: 'incident', label: 'Safety', groupKey: 'intel_incident' },
-      { key: 'hazard', label: 'Maritime context', groupKey: 'intel_hazard' },
-      { key: 'news', label: 'Context reports', groupKey: 'intel_news' },
-      { key: 'social', label: 'Public observations', groupKey: 'intel_social' },
-      { key: 'sanctions', label: 'Sanctions / compliance', groupKey: 'signal_sanctions' },
-      { key: 'dark_activity', label: 'Dark activity / AIS integrity', groupKey: 'signal_dark_activity' },
-      { key: 'rendezvous', label: 'Rendezvous / STS', groupKey: 'signal_rendezvous' },
-      { key: 'identity', label: 'Identity integrity', groupKey: 'signal_identity' },
-      { key: 'fused', label: 'Reviewed investigation', groupKey: 'signal_investigation' },
+      { key: 'dark_activity', label: 'Dark activity', groupKey: 'signal_type_dark_activity' },
+      { key: 'spoofing', label: 'Spoofing / position integrity', groupKey: 'signal_type_spoofing' },
+      { key: 'transfer', label: 'Transfers / rendezvous', groupKey: 'signal_type_transfer' },
+      { key: 'loitering', label: 'Loitering', groupKey: 'signal_type_loitering' },
+      { key: 'infrastructure_proximity', label: 'Infrastructure proximity', groupKey: 'signal_type_infrastructure' },
+      { key: 'navigation_safety', label: 'Navigation safety', groupKey: 'signal_type_navigation_safety' },
+      { key: 'identity_integrity', label: 'Identity integrity', groupKey: 'signal_type_identity_integrity' },
+      { key: 'port_call', label: 'Port call', groupKey: 'signal_type_port_call' },
+      { key: 'piracy_security', label: 'Piracy / security', groupKey: 'signal_type_piracy_security' },
+      { key: 'environmental_hazard', label: 'Environmental hazard', groupKey: 'signal_type_environmental_hazard' },
+      { key: 'context_report', label: 'Context report', groupKey: 'signal_type_context_report' },
+      { key: 'public_observation', label: 'Public observation', groupKey: 'signal_type_public_observation' },
+      { key: 'maritime_context', label: 'Maritime context', groupKey: 'signal_type_maritime_context' },
     ],
   },
 ];
@@ -595,6 +606,7 @@ function App() {
   const [stats, setStats] = useState(null);
   const [vessels, setVessels] = useState({ type: 'FeatureCollection', features: [] });
   const [ngoVessels, setNgoVessels] = useState({ type: 'FeatureCollection', features: [] });
+  const [sanctionedVessels, setSanctionedVessels] = useState({ type: 'FeatureCollection', features: [] });
   // Map layers only ever receive fleet features that have a real position;
   // the fleet panel gets the complete registry (F-13).
   const sarMapFeatures = useMemo(() => ({
@@ -664,9 +676,12 @@ function App() {
     },
   });
   const [liveEstimateClock, setLiveEstimateClock] = useState(Date.now());
-  const [intelFilter, setIntelFilter] = useState('all');
   const [signalsExpanded, setSignalsExpanded] = useState(false);
   const [expandedMacros, setExpandedMacros] = useState(() => new Set());
+  const [liveFacets, setLiveFacets] = useState(() => ({
+    satellite: false,
+    sanctions: false,
+  }));
   const [showAisAlerts, setShowAisAlerts] = useState(false);
   const [showVesselLinks, setShowVesselLinks] = useState(false);
   const [baseMap, setBaseMap] = useState(() => {
@@ -1115,6 +1130,34 @@ function App() {
   }, [apiBase, isPublicLiveHost, isPublicDemoHost]);
 
   useEffect(() => {
+    if (!isPublicLiveHost || !liveFacets.sanctions) {
+      setSanctionedVessels({ type: 'FeatureCollection', features: [] });
+      return undefined;
+    }
+    let alive = true;
+    let timer = null;
+    const load = async () => {
+      try {
+        const data = await fetchJson(
+          apiBase,
+          '/api/v1/live/sanctioned-vessels',
+          undefined,
+          8000,
+        );
+        if (alive && data?.features) setSanctionedVessels(data);
+      } catch {
+        // Keep the last good fresh-only frame; the server itself refuses stale positions.
+      }
+      if (alive) timer = window.setTimeout(load, 15_000);
+    };
+    load();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, liveFacets.sanctions]);
+
+  useEffect(() => {
     window.localStorage.setItem('seacommons_tz_host', localSettings.timezeroHost);
     window.localStorage.setItem('seacommons_tz_port', localSettings.timezeroPort);
     window.localStorage.setItem('seacommons_tz_enabled', localSettings.timezeroEnabled);
@@ -1279,6 +1322,7 @@ function App() {
         map.addSource('radio-receivers', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addSource('radio-dsc', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addSource('vessels-ngo',       { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addSource('sanctioned-vessels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addSource('platforms',         { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addSource('alerts',            { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addSource('sar-case',          { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -1675,6 +1719,41 @@ function App() {
             'icon-color': '#8bf0c5',
             'icon-opacity': 1.0,
             'icon-halo-color': '#021318',
+            'icon-halo-width': 1.8,
+          },
+        });
+
+        // Sanctions is an evidence/identity facet, not a third incident
+        // category. Only the server's <=10-minute strong-identifier subset is
+        // rendered, and only while the public Sanctions filter is active.
+        map.addLayer({
+          id: 'sanctioned-vessels-stationary', type: 'circle', source: 'sanctioned-vessels',
+          filter: ['any', ['match', ['get', 'nav_status'], [1, 5], true, false], ['<=', ['coalesce', ['get', 'speed'], 0], 0.5]],
+          layout: { visibility: 'none' },
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 5.8, 14, 7],
+            'circle-color': '#f59e0b',
+            'circle-opacity': 0.98,
+            'circle-stroke-color': '#1c1202',
+            'circle-stroke-width': 1.7,
+          },
+        });
+        map.addLayer({
+          id: 'sanctioned-vessels-moving', type: 'symbol', source: 'sanctioned-vessels',
+          filter: ['all', ['match', ['get', 'nav_status'], [1, 5], false, true], ['>', ['coalesce', ['get', 'speed'], 0], 0.5]],
+          layout: {
+            visibility: 'none',
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.38, 10, 0.60, 14, 0.74],
+            'icon-rotate': ['coalesce', ['get', 'heading'], ['get', 'course'], 0],
+            'icon-rotation-alignment': 'map',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
+          paint: {
+            'icon-color': '#f59e0b',
+            'icon-opacity': 0.98,
+            'icon-halo-color': '#1c1202',
             'icon-halo-width': 1.8,
           },
         });
@@ -2377,6 +2456,20 @@ function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !map.isStyleLoaded()) return;
+    const visible = isPublicLiveHost && liveFacets.sanctions;
+    map.getSource('sanctioned-vessels')?.setData(
+      visible ? sanctionedVessels : { type: 'FeatureCollection', features: [] },
+    );
+    for (const layerId of ['sanctioned-vessels-stationary', 'sanctioned-vessels-moving']) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+      }
+    }
+  }, [sanctionedVessels, liveFacets.sanctions, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.isStyleLoaded()) return;
     map.getSource('platforms')?.setData(platforms);
   }, [platforms, mapReady]);
 
@@ -2521,21 +2614,27 @@ function App() {
       const props = feature.properties || {};
       if (!activeSignalCategories.has(signalCategoryOf(props))) return false;
       if (!alarmPhoneOn && isAlarmPhoneSource(props.source)) return false;
+      if (liveFacets.satellite && !props.has_satellite) return false;
+      if (liveFacets.sanctions && !props.sanctions_matched) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intelEvents, activeSignalCategories, layerVis.alarm_phone]);
+  }, [intelEvents, activeSignalCategories, layerVis.alarm_phone, liveFacets]);
 
   const fallbackVesselFeatures = useMemo(() => {
     const byId = new Map();
-    for (const feature of (sarMapFeatures.features || [])) {
+    const sources = [
+      ...(sarMapFeatures.features || []),
+      ...(liveFacets.sanctions ? (sanctionedVessels.features || []) : []),
+    ];
+    for (const feature of sources) {
       if (!feature?.geometry?.coordinates) continue;
       const report = vesselReportFeature(feature);
       const key = report.properties?.mmsi || report.properties?.id || `${report.geometry.coordinates}`;
       byId.set(String(key), report);
     }
     return [...byId.values()];
-  }, [sarMapFeatures]);
+  }, [sarMapFeatures, sanctionedVessels, liveFacets.sanctions]);
 
   useEffect(() => {
     const fallback = fallbackMapRef.current;
@@ -3670,6 +3769,27 @@ function App() {
                     <div className="signals-selector__role-summary">
                       Cases {Number(liveRoleCounts?.humanitarian_case || 0)} · Episodes {Number(liveRoleCounts?.maritime_episode || 0)} · Evidence {Number(liveRoleCounts?.maritime_evidence || 0)} · Operational signals {Number(liveRoleCounts?.operational_signal || 0)}
                     </div>
+                    <div className="signals-selector__role-summary">Evidence filters</div>
+                    <div className="signals-selector__list">
+                      {[
+                        ['satellite', 'Satellite'],
+                        ['sanctions', 'Sanctions'],
+                      ].map(([key, label]) => (
+                        <a
+                          key={key}
+                          href={`#facet-${key}`}
+                          className={`signals-selector__link signals-selector__link--nested ${liveFacets[key] ? 'is-active' : ''}`}
+                          aria-pressed={liveFacets[key]}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            setLiveFacets((current) => ({ ...current, [key]: !current[key] }));
+                          }}
+                        >
+                          <span className="signals-selector__box" aria-hidden="true" />
+                          {label}
+                        </a>
+                      ))}
+                    </div>
                     {SIGNALS_MACRO_GROUPS.map((macro) => {
                       const macroOn = macro.categories.every((c) => isLayerGroupOn(c.groupKey));
                       const sampledMacroCount = macro.categories.reduce(
@@ -3750,11 +3870,10 @@ function App() {
                 intelEvents={intelEvents}
                 intelStats={intelStats}
                 liveModeCounts={liveModeCounts}
-                intelFilter={intelFilter}
-                setIntelFilter={setIntelFilter}
                 feedStatus={feedStatus}
                 liveMode={liveMode}
                 activeSignalCategories={activeSignalCategories}
+                liveFacetFilters={liveFacets}
                 alarmPhoneOn={isLayerGroupOn('alarm_phone')}
                 showAisAlerts={showAisAlerts}
                 setShowAisAlerts={setShowAisAlerts}
@@ -3883,8 +4002,6 @@ function App() {
               intelStats={intelStats}
               liveModeCounts={liveModeCounts}
               liveMode={liveMode}
-              intelFilter={intelFilter}
-              setIntelFilter={setIntelFilter}
               feedStatus={feedStatus}
               showAisAlerts={showAisAlerts}
               setShowAisAlerts={setShowAisAlerts}

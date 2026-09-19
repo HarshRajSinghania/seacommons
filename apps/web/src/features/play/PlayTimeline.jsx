@@ -101,6 +101,10 @@ export default function PlayTimeline({ apiBase }) {
   const [error, setError] = useState('');
   const [satelliteMission, setSatelliteMission] = useState('auto');
   const [archiveFilter, setArchiveFilter] = useState('all');
+  const [incidentTypeFilter, setIncidentTypeFilter] = useState('all');
+  const [satelliteOnly, setSatelliteOnly] = useState(false);
+  const [sanctionsOnly, setSanctionsOnly] = useState(false);
+  const [investigationsOnly, setInvestigationsOnly] = useState(false);
   const [satelliteVisible, setSatelliteVisible] = useState(true);
   const [satelliteContextMission, setSatelliteContextMission] = useState('VIIRS NOAA-21');
 
@@ -112,13 +116,29 @@ export default function PlayTimeline({ apiBase }) {
     () => incidentsAtCutoff(incidents, globalState.cutoff),
     [incidents, globalState.cutoff],
   );
-  const filteredIncidents = useMemo(() => visibleIncidents.filter((incident) => {
-    if (archiveFilter === 'humanitarian') return incident.domain === 'humanitarian';
-    if (archiveFilter === 'maritime') return incident.domain === 'maritime';
-    if (archiveFilter === 'investigations') return incident.domain === 'investigation';
-    if (archiveFilter === 'correlated') return incident.case_type === 'correlated_alert';
+  const categoryIncidents = useMemo(() => visibleIncidents.filter((incident) => {
+    const mainCategory = incident.main_category || incident.domain;
+    if (archiveFilter === 'humanitarian') return mainCategory === 'humanitarian';
+    if (archiveFilter === 'maritime') return mainCategory === 'maritime';
     return true;
   }), [visibleIncidents, archiveFilter]);
+  const incidentTypes = useMemo(
+    () => [...new Set(categoryIncidents.map((incident) => incident.incident_type).filter(Boolean))].sort(),
+    [categoryIncidents],
+  );
+  const filteredIncidents = useMemo(() => categoryIncidents.filter((incident) => {
+    if (incidentTypeFilter !== 'all' && incident.incident_type !== incidentTypeFilter) return false;
+    if (satelliteOnly && !incident.has_satellite) return false;
+    if (sanctionsOnly && !incident.sanctions_matched) return false;
+    if (investigationsOnly && !incident.investigation) return false;
+    return true;
+  }), [
+    categoryIncidents,
+    incidentTypeFilter,
+    satelliteOnly,
+    sanctionsOnly,
+    investigationsOnly,
+  ]);
   const coverage = useMemo(() => archiveCoverage(incidents), [incidents]);
   const archiveGroups = useMemo(() => groupArchiveByMonth(filteredIncidents), [filteredIncidents]);
   const selectedIncident = useMemo(
@@ -209,6 +229,12 @@ export default function PlayTimeline({ apiBase }) {
   }, [selectedId]);
 
   useEffect(() => {
+    if (incidentTypeFilter !== 'all' && !incidentTypes.includes(incidentTypeFilter)) {
+      setIncidentTypeFilter('all');
+    }
+  }, [incidentTypeFilter, incidentTypes]);
+
+  useEffect(() => {
     if (satelliteMission !== 'auto' && !satelliteMissions.includes(satelliteMission)) {
       setSatelliteMission('auto');
     }
@@ -262,7 +288,7 @@ export default function PlayTimeline({ apiBase }) {
           filter: ['!=', ['get', 'marker_kind'], 'vessel'],
           paint: {
             'circle-radius': ['case', ['==', ['get', 'incident_id'], selectedId], 8, 5],
-            'circle-color': ['match', ['get', 'domain'], 'maritime', '#8ed8ff', 'investigation', '#f7b955', '#ff746f'],
+            'circle-color': ['match', ['get', 'domain'], 'maritime', '#8ed8ff', '#ff746f'],
             'circle-opacity': 0.9,
             'circle-stroke-color': '#071014', 'circle-stroke-width': 1.5,
           },
@@ -441,9 +467,20 @@ export default function PlayTimeline({ apiBase }) {
               <button type="button" className={`signals-selector__link ${archiveFilter === 'all' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('all')}><span className="signals-selector__box" aria-hidden="true" />ALL</button>
               <button type="button" className={`signals-selector__link ${archiveFilter === 'humanitarian' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('humanitarian')}><span className="signals-selector__box" aria-hidden="true" />HUMANITARIAN</button>
               <button type="button" className={`signals-selector__link ${archiveFilter === 'maritime' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('maritime')}><span className="signals-selector__box" aria-hidden="true" />MARITIME</button>
-              <button type="button" className={`signals-selector__link ${archiveFilter === 'investigations' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('investigations')}><span className="signals-selector__box" aria-hidden="true" />INVESTIGATIONS</button>
-              <button type="button" className={`signals-selector__link ${archiveFilter === 'correlated' ? 'is-active' : ''}`} onClick={() => setArchiveFilter('correlated')}><span className="signals-selector__box" aria-hidden="true" />CORRELATED</button>
-              <button type="button" className={`signals-selector__link ${satelliteVisible ? 'is-active' : ''}`} onClick={() => setSatelliteVisible((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />SATELLITE</button>
+            </div>
+            <label className="play-satellite-selector">
+              <span>Incident type</span>
+              <select value={incidentTypeFilter} onChange={(event) => setIncidentTypeFilter(event.target.value)}>
+                <option value="all">All incident types</option>
+                {incidentTypes.map((type) => (
+                  <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+            </label>
+            <div className="signals-selector__list" aria-label="Evidence facets">
+              <button type="button" className={`signals-selector__link ${satelliteOnly ? 'is-active' : ''}`} onClick={() => setSatelliteOnly((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />SATELLITE</button>
+              <button type="button" className={`signals-selector__link ${sanctionsOnly ? 'is-active' : ''}`} onClick={() => setSanctionsOnly((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />SANCTIONS</button>
+              <button type="button" className={`signals-selector__link ${investigationsOnly ? 'is-active' : ''}`} onClick={() => setInvestigationsOnly((value) => !value)}><span className="signals-selector__box" aria-hidden="true" />INVESTIGATION</button>
             </div>
           </div>
           <div className="play-archive-continuity">
@@ -468,7 +505,7 @@ export default function PlayTimeline({ apiBase }) {
                   >
                     <span className="play-case__time">{itemTime(incident.reported_at)}</span>
                     <strong>{incident.title || 'SeaCommons incident'}</strong>
-                    <span>{incident.domain || 'humanitarian'} · {incident.source || 'source'} · {statusLabel(incidentStatusAtCutoff(incident, globalState.cutoff))}</span>
+                    <span>{(incident.incident_type || 'context').replace(/_/g, ' ')} · {incident.main_category || incident.domain || 'humanitarian'} · {statusLabel(incidentStatusAtCutoff(incident, globalState.cutoff))}</span>
                     {(Number(counts.drift) > 0 || Number(counts.satellite) > 0) ? (
                       <span className="play-case__evidence">
                         {Number(counts.drift) > 0 ? <b>DRIFT {counts.drift}</b> : null}
@@ -507,7 +544,7 @@ export default function PlayTimeline({ apiBase }) {
         </div>
         <div className="play-evidence__scroll">
           <section className="play-card">
-            <p>{selectedIncident?.domain || caseData?.domain || 'incident'}</p>
+            <p>{(selectedIncident?.incident_type || caseData?.incident_type || 'incident').replace(/_/g, ' ')} · {selectedIncident?.main_category || selectedIncident?.domain || caseData?.main_category || caseData?.domain || 'maritime'}</p>
             <h2>{selectedIncident?.title || 'SeaCommons incident'}</h2>
             <time>{itemTime(selectedIncident?.reported_at)}</time>
             <span>{selectedIncident?.source || '—'}</span>

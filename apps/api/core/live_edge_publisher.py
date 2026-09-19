@@ -316,6 +316,14 @@ def public_event_from_row(
         humanitarian_case_type=metadata.get("humanitarian_case_type"),
         metadata=metadata,
     )
+    from core.domain.incident_taxonomy import taxonomy_fields
+
+    taxonomy = taxonomy_fields(
+        event_type=event.type,
+        maritime_domain=event.maritime_domain(),
+        humanitarian_case_type=metadata.get("humanitarian_case_type"),
+        metadata={**metadata, **category},
+    )
     properties = {
         # Bump when retention/lifecycle transport semantics change. It is part
         # of the material version hash, forcing every in-window row through
@@ -326,6 +334,7 @@ def public_event_from_row(
         "visual_category": category["visual_category"],
         "visual_color": category["visual_color"],
         "category_label": category["category_label"],
+        **taxonomy,
         "maritime_domain": event.maritime_domain(),
         "humanitarian_case_type": metadata.get("humanitarian_case_type"),
         "location_status": metadata.get("location_status"),

@@ -75,3 +75,41 @@ def test_geojson_exposes_public_visual_and_report_contract(tmp_path):
     moored = {f["properties"]["mmsi"]: f["properties"] for f in reg.get_geojson(since=now.isoformat())["features"]}["111000666"]
     assert moored["motion_state"] == "stationary"
     assert moored["visual_shape"] == "circle"
+
+def test_static_update_does_not_refresh_position_freshness(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    reg = VesselRegistry(db_path=tmp_path / "v.db")
+    old = datetime.now(timezone.utc) - timedelta(hours=4)
+    reg.upsert("111000888", lat=35.0, lon=13.0, last_seen=old)
+    before = reg._cache["111000888"]["last_seen"]
+
+    reg.upsert("111000888", ship_name="RENAMED", destination="PORT")
+
+    assert reg._cache["111000888"]["last_seen"] == before
+    assert reg._cache["111000888"]["last_lat"] == 35.0
+    assert reg._cache["111000888"]["ship_name"] == "RENAMED"
+
+
+def test_older_position_cannot_overwrite_newer_position(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    reg = VesselRegistry(db_path=tmp_path / "v.db")
+    newer = datetime.now(timezone.utc)
+    older = newer - timedelta(hours=1)
+    reg.upsert("111000889", lat=36.0, lon=14.0, speed=9.0, last_seen=newer)
+    reg.upsert(
+        "111000889",
+        lat=30.0,
+        lon=5.0,
+        speed=1.0,
+        ship_name="STATIC INFO MAY UPDATE",
+        last_seen=older,
+    )
+
+    row = reg._cache["111000889"]
+    assert row["last_lat"] == 36.0
+    assert row["last_lon"] == 14.0
+    assert row["last_speed"] == 9.0
+    assert row["last_seen"] == newer.isoformat()
+    assert row["ship_name"] == "STATIC INFO MAY UPDATE"

@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,46 @@ def register_position_hook(hook) -> None:
     _ais_bus.register_position_hook(hook)
 
 
+def register_observation_hook(hook) -> None:
+    _ais_bus.register_observation_hook(hook)
+
+
 def position_hook_count() -> int:
     _sync_compat_hook_list()
     return _ais_bus.position_hook_count()
+
+
+def _source_observed_at(meta: dict, received_at: datetime) -> datetime:
+    """Return AIS source time when available, otherwise the receipt time.
+
+    AISStream exposes the transponder/message timestamp as MetaData.time_utc.
+    Using it prevents reconnect bursts and out-of-order delivery from looking
+    like physically impossible vessel movement.
+    """
+    raw = (
+        meta.get("time_utc")
+        or meta.get("TimeUtc")
+        or meta.get("timestamp")
+        or meta.get("Timestamp")
+    )
+    if raw in (None, ""):
+        return received_at
+    try:
+        if isinstance(raw, (int, float)):
+            observed = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        else:
+            observed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=timezone.utc)
+            observed = observed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return received_at
+    # A future source clock can poison freshness indefinitely. Small clock
+    # skew is tolerated, but implausible future times fall back to receipt.
+    if observed > received_at + timedelta(minutes=5):
+        return received_at
+    return observed
+
 
 # Mediterranean + Black Sea bounding box [lat_min, lon_min], [lat_max, lon_max]
 _BBOX = [[[28.0, -6.0], [47.0, 42.0]]]
@@ -266,6 +303,8 @@ class AISStreamClient:
             nav_status = pr.get("NavigationalStatus")
             if lat is not None and lon is not None:
                 name = meta.get("ShipName", "").strip()
+                received_at = datetime.now(timezone.utc)
+                observed_at = _source_observed_at(meta, received_at)
                 if self._update_registry:
                     registry.upsert(
                         mmsi,
@@ -276,8 +315,8 @@ class AISStreamClient:
                         speed=float(sog) if sog is not None else None,
                         heading=float(hdg) if hdg is not None and hdg != 511 else None,
                         nav_status=int(nav_status) if nav_status is not None else None,
+                        last_seen=observed_at,
                     )
-                received_at = datetime.now(timezone.utc)
                 from core.vessels.ais_provider import AISPositionObservation
                 observation = AISPositionObservation(
                     mmsi=mmsi, ship_name=name, lat=float(lat), lon=float(lon),
@@ -285,7 +324,7 @@ class AISStreamClient:
                     cog=float(cog) if cog is not None else None,
                     heading=float(hdg) if hdg is not None and hdg != 511 else None,
                     nav_status=int(nav_status) if nav_status is not None else None,
-                    observed_at=received_at, received_at=received_at,
+                    observed_at=observed_at, received_at=received_at,
                     provider="aisstream", upstream_source="aisstream",
                 )
                 if self._on_observation is not None:

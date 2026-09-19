@@ -10,10 +10,10 @@ needs that density). This subscribes to the same shared hook every other
 AIS consumer uses (core.vessels.aisstream.register_position_hook) and
 records one only when something actually changed for that vessel:
 
-  - its navigational status changed since the last recorded observation
+  - its navigational status changed since the previous received fix
     (observation_type=ais_nav_status);
-  - or it is reporting again after a silence of at least
-    AIS_SOURCE_OBSERVATION_GAP_S since its last recorded observation
+  - or it is reporting again after a true message silence of at least
+    AIS_SOURCE_OBSERVATION_GAP_S since the previous received fix
     (observation_type=ais_gap -- the reappearance itself is the
     observation-worthy event, not every fix in between).
 
@@ -50,7 +50,10 @@ class AISSourceObservationSampler:
 
     def __init__(self) -> None:
         self._running = False
-        # mmsi -> (nav_status, last_recorded_epoch)
+        # mmsi -> (last_nav_status, last_received_epoch).
+        # The timestamp MUST advance on every fix, even when no raw
+        # SourceObservation is persisted. Otherwise continuous AIS traffic is
+        # falsely reclassified as a 30-minute reporting gap.
         self._last: dict[str, tuple[Optional[int], float]] = {}
         self._lock = threading.Lock()
 
@@ -92,15 +95,20 @@ class AISSourceObservationSampler:
             status_changed = prev is not None and prev[0] != nav_status
             gap_reappearance = prev is not None and (now - prev[1]) >= self._gap_threshold_s()
             first_seen = prev is None
-            if not (status_changed or gap_reappearance or first_seen):
-                return
+
+            # Always advance last-seen state before deciding whether this fix
+            # is worth persisting. This is the critical distinction between
+            # message silence and "nothing interesting happened".
             self._last[mmsi] = (nav_status, now)
+            should_record = status_changed or gap_reappearance or first_seen
             if len(self._last) > _MAX_TRACKED_MMSI:
                 # Same bounded-growth pattern as every other in-memory
                 # dedup/state dict in this codebase (GDACS/news/twikit
                 # monitors' _seen sets) -- evict the oldest half.
                 oldest_first = sorted(self._last.items(), key=lambda item: item[1][1])
                 self._last = dict(oldest_first[_MAX_TRACKED_MMSI // 2 :])
+            if not should_record:
+                return
 
         if first_seen:
             reason = "first_seen"

@@ -79,6 +79,16 @@ export function edgeEventToFeature(event) {
         ? { visual_color: props.visual_color } : {}),
       ...(typeof props.category_label === 'string'
         ? { category_label: props.category_label } : {}),
+      ...(typeof props.main_category === 'string'
+        ? { main_category: props.main_category } : {}),
+      ...(typeof props.incident_type === 'string'
+        ? { incident_type: props.incident_type } : {}),
+      ...(typeof props.corroborated === 'boolean'
+        ? { corroborated: props.corroborated } : {}),
+      ...(typeof props.sanctions_matched === 'boolean'
+        ? { sanctions_matched: props.sanctions_matched } : {}),
+      ...(typeof props.has_satellite === 'boolean'
+        ? { has_satellite: props.has_satellite } : {}),
       ...(typeof props.maritime_domain === 'string'
         ? { maritime_domain: props.maritime_domain } : {}),
       ...(typeof props.humanitarian_case_type === 'string'

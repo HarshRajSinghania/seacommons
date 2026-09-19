@@ -15,10 +15,11 @@ test('public Live primary semantics are Humanitarian and Maritime, never legacy 
   assert.doesNotMatch(dashboard, /label: 'Public feeds'/);
 });
 
-test('vessel incident safety filter belongs to Maritime macro', () => {
+test('navigation safety is an incident type under the Maritime macro', () => {
   const maritime = main.slice(main.indexOf("key: 'maritime'"), main.indexOf('];', main.indexOf("key: 'maritime'")));
-  assert.match(maritime, /key: 'incident'/);
-  assert.match(maritime, /label: 'Safety'/);
+  assert.match(maritime, /key: 'navigation_safety'/);
+  assert.match(maritime, /label: 'Navigation safety'/);
+  assert.doesNotMatch(maritime, /key: 'sanctions'/);
 });
 
 
@@ -118,4 +119,17 @@ test('both moving and stationary NGO SAR markers are raised above later map laye
     main,
     /for \(const ngoLayerId of \['vessels-ngo-stationary', 'vessels-ngo'\]\)/,
   );
+});
+
+test('Sanctions is a facet with a fresh-only vessel overlay, not a third macro category', () => {
+  const publicMacros = main.slice(
+    main.indexOf('const SIGNALS_MACRO_GROUPS'),
+    main.indexOf('];', main.indexOf('const SIGNALS_MACRO_GROUPS')) + 2,
+  );
+  assert.doesNotMatch(publicMacros, /key: 'sanctions'/);
+  assert.match(main, /\['sanctions', 'Sanctions'\]/);
+  assert.match(main, /\/api\/v1\/live\/sanctioned-vessels/);
+  assert.match(main, /sanctioned-vessels-moving/);
+  assert.match(main, /sanctioned-vessels-stationary/);
+  assert.doesNotMatch(main, /\['corroborated', 'Corroborated'\]/);
 });

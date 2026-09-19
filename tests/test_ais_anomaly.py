@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from core.anomaly import ais as ais_mod
 
 
@@ -153,3 +152,43 @@ def test_impossible_speed_near_coast_stays_internal(monkeypatch, detector) -> No
     event = detector._added[-1]
     assert event.metadata["publication_status"] == "internal"
     assert event.metadata["offshore_anomaly_qualified"] is False
+
+def test_out_of_order_source_fix_never_emits_impossible_speed(detector):
+    from datetime import datetime, timedelta, timezone
+
+    newer = datetime.now(timezone.utc)
+    detector.process_position(
+        "247999001", "PASSENGER", 40.0, 10.0, 20.0, "",
+        observed_at=newer,
+    )
+    detector._added.clear()
+
+    detector.process_position(
+        "247999001", "PASSENGER", 42.0, 14.0, 20.0, "",
+        observed_at=newer - timedelta(minutes=10),
+    )
+
+    assert detector._added == []
+    assert detector._last_seen["247999001"]["lat"] == 40.0
+
+
+def test_impossible_speed_uses_source_time_not_receipt_time(detector, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(ais_mod.time, "time", lambda: 1_800_000_000.0)
+    detector.process_position(
+        "247999002", "VESSEL", 35.0, 14.0, 10.0, "",
+        observed_at=base,
+    )
+    detector.process_position(
+        "247999002", "VESSEL", 35.1, 14.0, 10.0, "",
+        observed_at=base + timedelta(hours=1),
+    )
+
+    # ~6nm over one source-timed hour is plausible even if both messages are
+    # processed in the same local second.
+    assert not any(
+        event.metadata.get("anomaly_type") == "impossible_speed"
+        for event in detector._added
+    )

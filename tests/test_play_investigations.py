@@ -92,7 +92,9 @@ def test_play_catalog_exposes_review_ready_corroborated_investigation():
     response = TestClient(app).get("/api/v1/play/incidents?limit=500")
     assert response.status_code == 200
     row = next(item for item in response.json()["incidents"] if item["incident_id"] == hypothesis_id)
-    assert row["domain"] == "investigation"
+    assert row["domain"] == "maritime"
+    assert row["main_category"] == "maritime"
+    assert row["investigation"] is True
     assert row["case_type"] == "dark_transit"
     assert row["incident_status"] == "review_ready"
     assert row["evidence_stage"] == "corroborated"
@@ -127,7 +129,9 @@ def test_play_collecting_investigation_timeline_is_available_in_archive():
     assert response.status_code == 200
     payload = response.json()
     assert payload["incident_status"] == "collecting"
-    assert payload["domain"] == "investigation"
+    assert payload["domain"] == "maritime"
+    assert payload["main_category"] == "maritime"
+    assert payload["investigation"] is True
 
 
 def test_play_review_ready_timeline_exposes_evidence_not_vessel_identity():
@@ -137,7 +141,9 @@ def test_play_review_ready_timeline_exposes_evidence_not_vessel_identity():
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["domain"] == "investigation"
+    assert payload["domain"] == "maritime"
+    assert payload["main_category"] == "maritime"
+    assert payload["investigation"] is True
     assert payload["incident_status"] == "review_ready"
     types = [item["type"] for item in payload["timeline"]]
     assert "hypothesis" in types

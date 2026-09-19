@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 
 from core.config import config
 from core.db.models import (
@@ -43,8 +43,55 @@ from core.api.routes.operator_pipeline import (
 router = APIRouter(prefix="/api/v1/operator/ingestion", tags=["operator-ingestion"])
 
 _OVERALL_CACHE_TTL_S = 300.0
+_OPERATOR_FAST_CACHE_TTL_S = 10.0
 _overall_cache_lock = threading.Lock()
 _overall_cache: tuple[float, dict[str, Any]] | None = None
+_fast_cache_lock = threading.Lock()
+_fast_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+
+
+def _fast_cache_get(kind: str, hours: int) -> dict[str, Any] | None:
+    now_mono = time.monotonic()
+    with _fast_cache_lock:
+        cached = _fast_cache.get((kind, hours))
+        if cached and now_mono - cached[0] < _OPERATOR_FAST_CACHE_TTL_S:
+            return cached[1]
+    return None
+
+
+def _fast_cache_put(kind: str, hours: int, payload: dict[str, Any]) -> dict[str, Any]:
+    with _fast_cache_lock:
+        _fast_cache[(kind, hours)] = (time.monotonic(), payload)
+    return payload
+
+
+def _fast_table_count(db, model) -> tuple[int, bool]:
+    """Fast row count for dashboard capacity metrics.
+
+    PostgreSQL exact COUNT(*) over the multi-million-row AIS track table can
+    exceed the API statement timeout. Planner/statistics estimates are adequate
+    for a capacity counter and are explicitly labelled as estimated. SQLite and
+    other test backends keep exact semantics.
+    """
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        table = str(model.__tablename__)
+        estimate = db.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(s.n_live_tup, 0), c.reltuples, 0)::bigint
+                FROM pg_class c
+                LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+                WHERE c.relname = :table
+                  AND c.relnamespace = current_schema()::regnamespace
+                LIMIT 1
+                """
+            ),
+            {"table": table},
+        ).scalar()
+        if estimate is not None:
+            return max(0, int(estimate)), True
+    return int(db.query(func.count(model.id)).scalar() or 0), False
 
 
 def _require_gateway(request: Request) -> None:
@@ -187,6 +234,9 @@ def operator_ingestion_overview(
     hours: int = Query(24, ge=1, le=720),
 ) -> dict[str, Any]:
     _require_gateway(request)
+    cached = _fast_cache_get("overview", hours)
+    if cached is not None:
+        return cached
     cutoff = _since(hours)
     with session_scope() as db:
         raw_total = (
@@ -243,6 +293,57 @@ def operator_ingestion_overview(
         newest_event = db.query(func.max(IntelEventDB.received_at)).scalar()
         newest_signal = db.query(func.max(IngestedSignalDB.received_at)).scalar()
 
+        # Operator dashboard hot path: keep this independent of public Live
+        # projection. build_public_status() performs publication projection and
+        # geo/context work that is useful for /status but made the operator
+        # console wait >10s on a cold request.
+        ais_fixes = int(
+            db.query(func.count(VesselTrackDB.id))
+            .filter(VesselTrackDB.ts >= cutoff)
+            .scalar()
+            or 0
+        )
+        radio_bursts = int(
+            db.query(func.count(RadioBurstDB.burst_id))
+            .filter(RadioBurstDB.created_at >= cutoff)
+            .scalar()
+            or 0
+        )
+        radio_events = int(
+            db.query(func.count(RadioEventDB.event_id))
+            .filter(RadioEventDB.created_at >= cutoff)
+            .scalar()
+            or 0
+        )
+        satellite_observations = int(
+            db.query(func.count(SatelliteObservationDB.observation_id))
+            .filter(SatelliteObservationDB.discovered_at >= cutoff)
+            .scalar()
+            or 0
+        )
+        episodes_total = int(
+            db.query(func.count(MaritimeEpisodeDB.episode_id))
+            .filter(
+                MaritimeEpisodeDB.updated_at >= cutoff,
+                MaritimeEpisodeDB.episode_family != "unclassified_episode",
+            )
+            .scalar()
+            or 0
+        )
+        hypotheses_total = int(
+            db.query(func.count(InvestigationHypothesisDB.hypothesis_id))
+            .filter(InvestigationHypothesisDB.updated_at >= cutoff)
+            .scalar()
+            or 0
+        )
+        newest_analysis = max(
+            (
+                db.query(func.max(MaritimeEpisodeDB.updated_at)).scalar(),
+                db.query(func.max(InvestigationHypothesisDB.updated_at)).scalar(),
+            ),
+            key=lambda value: value or datetime.min,
+        )
+
     try:
         from core.acquisition.status import acquisition_status_sources
         acquisition = acquisition_status_sources()
@@ -254,8 +355,9 @@ def operator_ingestion_overview(
     except Exception:
         sources = []
 
-    return {
+    payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "cache_ttl_seconds": int(_OPERATOR_FAST_CACHE_TTL_S),
         "lookback_hours": hours,
         "counts": {
             "source_observations": int(raw_total),
@@ -277,14 +379,34 @@ def operator_ingestion_overview(
         },
         "acquisition": acquisition,
         "sources": sources,
-        "pipeline_status": __import__(
-            "core.api.routes.status", fromlist=["build_public_status"]
-        ).build_public_status(hours),
+        "pipeline_status": {
+            "pipeline": {
+                "raw_observations": int(raw_total),
+                "parsed_events": int(event_total),
+                "analysis_outputs": int(episodes_total + hypotheses_total),
+                "maritime_episodes": int(episodes_total),
+                "investigation_hypotheses": int(hypotheses_total),
+            },
+            "sensor_activity": {
+                "ais_fixes": ais_fixes,
+                "radio_bursts": radio_bursts,
+                "radio_events": radio_events,
+                "satellite_observations": satellite_observations,
+                "active_source_names": len(raw_by_source),
+            },
+            "freshness": {
+                "raw_observation": _dt(newest_raw),
+                "parsed_event": _dt(newest_event),
+                "analysis_output": _dt(newest_analysis),
+            },
+            "scope": "operator_hot_path",
+        },
         "note": (
             "SourceObservation stores the canonical immutable envelope, hash/reference and provenance. "
             "Payload bytes are not stored inline; normalized text and parser output are visible in /events."
         ),
     }
+    return _fast_cache_put("overview", hours, payload)
 
 
 @router.get("/observations")
@@ -507,6 +629,9 @@ def operator_pipeline_funnel(
     hours: int = Query(24, ge=1, le=720),
 ) -> dict[str, Any]:
     _require_gateway(request)
+    cached = _fast_cache_get("funnel", hours)
+    if cached is not None:
+        return cached
     cutoff = _since(hours)
     analysis_state = IntelEventDB.meta["analysis_state"].as_string()
     publication_state = IntelEventDB.meta["publication_status"].as_string()
@@ -653,10 +778,14 @@ def operator_pipeline_funnel(
         )
 
     try:
-        from core.api.routes.status import build_public_status
-        live = build_public_status(hours).get("live") or {}
+        from core.api.routes.status import peek_public_status
+
+        cached_public_status = peek_public_status(hours)
+        live = (cached_public_status or {}).get("live") or {"total": 0}
+        live_count_cached = cached_public_status is not None
     except Exception:
         live = {"total": 0}
+        live_count_cached = False
 
     stages = [
         {"id": "raw", "label": "Raw observations", "count": raw_total},
@@ -668,9 +797,10 @@ def operator_pipeline_funnel(
         {"id": "review_ready", "label": "Review ready", "count": review_ready_total},
         {"id": "live", "label": "Public Live", "count": int(live.get("total") or 0)},
     ]
-    return {
+    payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "lookback_hours": hours,
+        "cache_ttl_seconds": int(_OPERATOR_FAST_CACHE_TTL_S),
         "stages": stages,
         "diagnostics": {
             "raw_observation_types": raw_types,
@@ -690,7 +820,9 @@ def operator_pipeline_funnel(
             "Stage counts are records present at each analytical layer in the selected window, "
             "not a claim that every raw observation converts one-to-one into the next stage."
         ),
+        "live_count_cached": live_count_cached,
     }
+    return _fast_cache_put("funnel", hours, payload)
 
 
 @router.get("/overall")
@@ -760,8 +892,10 @@ def operator_overall_corpus(request: Request) -> dict[str, Any]:
             row.state in {"review_ready", "assessed", "published"} for row in hypotheses
         )
 
+        ais_fix_count, ais_fix_estimated = _fast_table_count(db, VesselTrackDB)
         sensor_activity = {
-            "ais_fixes": int(db.query(func.count(VesselTrackDB.id)).scalar() or 0),
+            "ais_fixes": ais_fix_count,
+            "ais_fixes_estimated": ais_fix_estimated,
             "radio_bursts": int(db.query(func.count(RadioBurstDB.burst_id)).scalar() or 0),
             "radio_events": int(db.query(func.count(RadioEventDB.event_id)).scalar() or 0),
             "satellite_observations": int(

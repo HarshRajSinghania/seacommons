@@ -7,7 +7,7 @@ import asyncio
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -38,6 +38,152 @@ async def live_signals(
 ):
     """Public map-ready signal feed. No private inbound content is returned."""
     return public_signal_collection(limit=limit, days=days, since=since, mode=mode)
+
+
+@router.get("/sanctioned-vessels")
+async def live_sanctioned_vessels(request: Request):
+    """Fresh AIS positions for vessels matched to public sanctions lists.
+
+    This is a narrow public overlay, not the raw AIS fleet. Only strong
+    identifier matches (MMSI or IMO) and positions no older than 10 minutes
+    are returned. A list match is identity context, not evidence that current
+    vessel behaviour is unlawful.
+    """
+    from sqlalchemy import or_
+
+    from core.api.ratelimit import rate_limit
+    from core.db.models import SanctionedVesselDB
+    from core.db.session import session_scope
+    from core.vessels.registry import registry
+
+    rate_limit(request, max_per_minute=60, scope="live-sanctioned-vessels")
+    current = registry.get_geojson()
+    vessel_features = list(current.get("features") or [])
+    mmsis = {
+        str((feature.get("properties") or {}).get("mmsi") or "").strip()
+        for feature in vessel_features
+        if str((feature.get("properties") or {}).get("mmsi") or "").strip()
+    }
+    imos = {
+        str((feature.get("properties") or {}).get("imo") or "").strip()
+        for feature in vessel_features
+        if str((feature.get("properties") or {}).get("imo") or "").strip()
+    }
+    if not mmsis and not imos:
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+            "meta": {
+                "total": 0,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "position_policy": "fresh_only_10m",
+            },
+        }
+
+    conditions = []
+    if mmsis:
+        conditions.append(SanctionedVesselDB.mmsi.in_(mmsis))
+    if imos:
+        conditions.append(SanctionedVesselDB.imo.in_(imos))
+    with session_scope() as db:
+        rows = [
+            {
+                "source_list": row.source_list,
+                "program": row.program,
+                "mmsi": row.mmsi,
+                "imo": row.imo,
+            }
+            for row in db.query(SanctionedVesselDB).filter(or_(*conditions)).all()
+        ]
+
+    by_mmsi: dict[str, list[dict]] = {}
+    by_imo: dict[str, list[dict]] = {}
+    for row in rows:
+        if row["mmsi"]:
+            by_mmsi.setdefault(str(row["mmsi"]), []).append(row)
+        if row["imo"]:
+            by_imo.setdefault(str(row["imo"]), []).append(row)
+
+    now = datetime.now(timezone.utc)
+    fresh_cutoff = now - timedelta(minutes=10)
+    out = []
+    for feature in vessel_features:
+        properties = dict(feature.get("properties") or {})
+        mmsi = str(properties.get("mmsi") or "").strip()
+        imo = str(properties.get("imo") or "").strip()
+        matches = list(by_mmsi.get(mmsi, []))
+        if imo:
+            matches.extend(by_imo.get(imo, []))
+        if not matches or not feature.get("geometry"):
+            continue
+        seen_raw = properties.get("last_seen")
+        try:
+            seen = datetime.fromisoformat(str(seen_raw).replace("Z", "+00:00"))
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            seen = seen.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        if seen < fresh_cutoff or seen > now + timedelta(minutes=5):
+            continue
+
+        unique_matches = {
+            (
+                str(row.get("source_list") or ""),
+                str(row.get("program") or ""),
+                str(row.get("mmsi") or ""),
+                str(row.get("imo") or ""),
+            ): row
+            for row in matches
+        }.values()
+        match_basis = []
+        if mmsi and mmsi in by_mmsi:
+            match_basis.append("mmsi")
+        if imo and imo in by_imo:
+            match_basis.append("imo")
+        lists = sorted(
+            {str(row["source_list"]) for row in unique_matches if row.get("source_list")}
+        )
+        programs = sorted(
+            {str(row["program"]) for row in unique_matches if row.get("program")}
+        )
+        out.append({
+            "type": "Feature",
+            "geometry": feature["geometry"],
+            "properties": {
+                "mmsi": mmsi,
+                "imo": imo or None,
+                "ship_name": properties.get("ship_name") or properties.get("name") or mmsi,
+                "ship_type": properties.get("ship_type"),
+                "speed": properties.get("speed"),
+                "course": properties.get("course"),
+                "heading": properties.get("heading"),
+                "nav_status": properties.get("nav_status"),
+                "last_seen": seen.isoformat(),
+                "position_age_s": round(max(0.0, (now - seen).total_seconds()), 1),
+                "main_category": "maritime",
+                "facet": "sanctions",
+                "sanctions_matched": True,
+                "sanctions_lists": lists,
+                "sanctions_programs": programs,
+                "match_basis": match_basis,
+                "position_policy": "fresh_only_10m",
+                "note": (
+                    "Public sanctions-list identity match; this does not by itself "
+                    "establish unlawful current behaviour."
+                ),
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": out,
+        "meta": {
+            "total": len(out),
+            "generated_at": now.isoformat(),
+            "position_policy": "fresh_only_10m",
+        },
+    }
 
 
 @router.get("/signals/{event_id}/response")

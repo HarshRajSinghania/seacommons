@@ -95,6 +95,9 @@ test('signal parsing follows semantic category instead of raw transport type', (
   assert.equal(signalCategoryOf({
     type: 'correlated_alert', maritime_domain: 'safety',
     ais_nav_status_kind: 'not_under_command', title: 'Vessel unable to manoeuvre',
-  }), 'incident');
-  assert.equal(signalCategoryOf({ type: 'twitter', source: 'public observer' }), 'social');
+  }), 'navigation_safety');
+  assert.equal(
+    signalCategoryOf({ type: 'twitter', source: 'public observer' }),
+    'public_observation',
+  );
 });

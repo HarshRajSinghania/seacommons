@@ -169,20 +169,45 @@ export function categoryOf(type) {
 }
 
 export function signalCategoryOf(properties = {}) {
+  const explicit = String(properties.incident_type || '').trim();
+  const aliases = {
+    incident: 'navigation_safety',
+    hazard: 'environmental_hazard',
+    rendezvous: 'transfer',
+    sanctions: 'identity_integrity',
+    identity: 'identity_integrity',
+    social: 'public_observation',
+    news: 'context_report',
+    ngo: 'sar_activity',
+    iom: 'migration_incident',
+    ais: 'dark_activity',
+    fused: 'maritime_context',
+  };
+  if (explicit) return aliases[explicit] || explicit;
+
+  // Compatibility path for edge/archived records created before incident_type
+  // became part of the public contract. Always translate the old visual/type
+  // taxonomy into the new Humanitarian/Maritime incident-type vocabulary.
   const visual = classifyEventVisual(properties).key;
   const byVisual = {
     humanitarian_alarm_phone: 'distress',
     distress: 'distress',
-    navigation_casualty: 'incident',
-    environmental: 'hazard',
-    spoofing: 'dark_activity',
+    civil_sar: 'sar_activity',
+    state_sar: 'sar_activity',
+    navigation_casualty: 'navigation_safety',
+    environmental: 'environmental_hazard',
+    spoofing: 'spoofing',
     ais_gap: 'dark_activity',
-    loitering: 'dark_activity',
-    rendezvous: 'rendezvous',
-    sanctions: 'sanctions',
-    identity: 'identity',
+    loitering: 'loitering',
+    rendezvous: 'transfer',
+    sanctions: 'identity_integrity',
+    infrastructure: 'infrastructure_proximity',
+    identity: 'identity_integrity',
+    piracy: 'piracy_security',
+    context: 'maritime_context',
   };
-  return byVisual[visual] || categoryOf(properties.type);
+  if (visual !== 'context' && byVisual[visual]) return byVisual[visual];
+  return aliases[categoryOf(properties.type)] || 'maritime_context';
 }
 
 // Alarm Phone is a source, not a `type` -- its reports normalize to

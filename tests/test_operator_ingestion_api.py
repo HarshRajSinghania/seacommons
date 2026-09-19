@@ -117,12 +117,14 @@ def test_operator_case_surface_labels_hypotheses_not_illegality_findings(monkeyp
 def test_operator_funnel_excludes_legacy_unclassified_from_corroborated(monkeypatch):
     from datetime import datetime, timezone
 
+    import core.api.routes.operator_ingestion as operator_route
     from core.api.main import app
     from core.config import config
     from core.db.models import MaritimeEpisodeDB
     from core.db.session import session_scope
 
     monkeypatch.setattr(config, "OPERATOR_GATEWAY_SECRET", "operator-secret")
+    operator_route._fast_cache.clear()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     with session_scope() as db:
         for episode_id, family in (

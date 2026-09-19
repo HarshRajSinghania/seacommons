@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from core.domain.incident_taxonomy import taxonomy_fields
 from core.intel.humanitarian_incident import public_incident_status
 from core.intel.lifecycle import parse_utc
 from core.intel.public_policy import domains_for_mode
@@ -47,11 +48,18 @@ def _incident_projection(row, event, *, now: datetime) -> dict[str, Any]:
     geometry = None
     if event is not None and event.lat is not None and event.lon is not None:
         geometry = {"type": "Point", "coordinates": [event.lon, event.lat]}
+    taxonomy = taxonomy_fields(
+        event_type=event.type if event is not None else "distress",
+        maritime_domain="sar",
+        humanitarian_case_type=row.case_type,
+        metadata=dict(event.meta or {}) if event is not None else {},
+    )
     return {
         "incident_id": row.incident_id,
         "incident_status": status,
         "surface": "play",
         "case_type": row.case_type,
+        **taxonomy,
         "reported_at": row.reported_at,
         "last_update_at": row.last_update_at,
         "state_changed_at": _iso(row.state_changed_at),
@@ -103,11 +111,18 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     if event.lat is not None and event.lon is not None:
         geometry = {"type": "Point", "coordinates": [event.lon, event.lat]}
     meta = dict(event.meta or {})
+    taxonomy = taxonomy_fields(
+        event_type=event.type,
+        maritime_domain=event.maritime_domain,
+        humanitarian_case_type=event.humanitarian_case_type,
+        metadata=meta,
+    )
     return {
         "incident_id": event.id,
         "incident_status": _generic_maritime_status(event),
         "surface": "play",
         "case_type": event.type,
+        **taxonomy,
         "anomaly_type": str(meta.get("anomaly_type") or ""),
         "analysis_state": str(meta.get("analysis_state") or ""),
         "verification_status": str(meta.get("verification_status") or ""),
@@ -168,11 +183,23 @@ def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> 
         else _iso(hypothesis.created_at)
     )
     episode_end = _iso(episode.end_at) if episode is not None else None
+    taxonomy = taxonomy_fields(
+        event_type="ais_anomaly",
+        maritime_domain="grey_zone",
+        metadata={
+            "evidence_stage": hypothesis.evidence_stage,
+            "verification_status": (
+                episode.verification_status if episode is not None else ""
+            ),
+        },
+        hypothesis_type=hypothesis.hypothesis_type,
+    )
     return {
         "incident_id": hypothesis.hypothesis_id,
         "incident_status": hypothesis.state,
         "surface": "play",
         "case_type": hypothesis.hypothesis_type,
+        **taxonomy,
         "reported_at": reported_at,
         "last_update_at": _iso(hypothesis.updated_at) or episode_end,
         "state_changed_at": _iso(hypothesis.updated_at),
@@ -180,8 +207,9 @@ def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> 
         "title": title,
         "source": "SeaCommons evidence engine",
         "geometry": geometry,
-        "domain": "investigation",
+        "domain": "maritime",
         "analysis_state": hypothesis.state,
+        "investigation": True,
         "evidence_stage": hypothesis.evidence_stage,
         "review_boundary_crossed": hypothesis.state in {
             "review_ready", "assessed", "published"
@@ -322,10 +350,12 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
 
         for item in combined:
             incident_id = str(item["incident_id"])
+            satellite_count = satellite_counts.get(incident_id, 0)
             item["evidence_counts"] = {
                 "drift": drift_counts.get(incident_id, 0),
-                "satellite": satellite_counts.get(incident_id, 0),
+                "satellite": satellite_count,
             }
+            item["has_satellite"] = satellite_count > 0
 
     combined.sort(
         key=lambda item: str(item.get("last_update_at") or item.get("reported_at") or ""),
@@ -377,7 +407,7 @@ def _compute_play_counts() -> dict[str, Any]:
     catalog = _get_play_catalog()
     humanitarian_count = sum(1 for item in catalog if item.get("domain") == "humanitarian")
     maritime_count = sum(1 for item in catalog if item.get("domain") == "maritime")
-    investigation_count = sum(1 for item in catalog if item.get("domain") == "investigation")
+    investigation_count = sum(1 for item in catalog if item.get("investigation") is True)
     return {
         "total_count": len(catalog),
         "humanitarian_count": humanitarian_count,
@@ -595,7 +625,10 @@ def play_incident_timeline(incident_id: str):
             timeline.sort(key=lambda item: item["at"])
             return {
                 "incident_id": incident_id, "incident_status": hypothesis.state,
-                "surface": "play", "domain": "investigation",
+                "surface": "play", "domain": "maritime",
+                "main_category": "maritime",
+                "incident_type": projection["incident_type"],
+                "investigation": True,
                 "timeline": timeline, "generated_at": now.isoformat(),
             }
 

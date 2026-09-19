@@ -112,6 +112,17 @@ def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
             maritime_domain="grey_zone",
             metadata={"anomaly_type": anomaly_type},
         )
+        from core.domain.incident_taxonomy import taxonomy_fields
+
+        taxonomy = taxonomy_fields(
+            event_type="ais_anomaly",
+            maritime_domain="grey_zone",
+            metadata={
+                "anomaly_type": anomaly_type,
+                "evidence_stage": props.get("evidence_stage"),
+            },
+            hypothesis_type=hypothesis_type,
+        )
         timestamp = props.get("timestamp_utc")
         if not timestamp or not feature.get("geometry"):
             continue
@@ -124,6 +135,7 @@ def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
                 "id": props["id"],
                 "type": "ais_anomaly",
                 **category,
+                **taxonomy,
                 "kind": LiveSignalKind.CONTEXT.value,
                 "severity": "medium",
                 "tier": IntelTier.SIGNAL.value,
@@ -206,6 +218,10 @@ def _published_ingested_features(limit: int) -> list[dict[str, Any]]:
                 "schema": LIVE_SIGNAL_SCHEMA,
                 "id": f"signal:{signal_id}",
                 "type": "distress",
+                "main_category": "humanitarian",
+                "incident_type": "distress",
+                "corroborated": False,
+                "sanctions_matched": False,
                 "kind": LiveSignalKind.DISTRESS.value,
                 "severity": "high" if payload.get("medical_emergency") else "medium",
                 "tier": IntelTier.OPERATIONAL.value,

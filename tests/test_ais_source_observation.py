@@ -123,3 +123,19 @@ def test_bounded_memory_evicts_the_oldest_half_past_the_cap(sampler, monkeypatch
     for i in range(6):
         _pos(sampler, f"11100{i:04d}")
     assert len(sampler._last) <= 4
+
+def test_continuous_routine_fixes_refresh_last_seen_without_creating_false_gap(
+    sampler, monkeypatch
+):
+    from core.vessels import ais_source_observation as mod
+
+    clock = iter([0.0, 1200.0, 2400.0])
+    monkeypatch.setattr(mod.time, "time", lambda: next(clock))
+
+    _pos(sampler, "111000777", nav=0)
+    _pos(sampler, "111000777", lat=35.01, nav=0)
+    _pos(sampler, "111000777", lat=35.02, nav=0)
+
+    # More than 30 minutes passed since the first persisted observation, but
+    # there was never a 30-minute silence between actual received fixes.
+    assert _observation_count("111000777") == 1

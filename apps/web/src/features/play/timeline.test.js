@@ -255,11 +255,16 @@ test('Play mobile archive drawer stays closed until the archive toggle opens it'
   assert.match(css, /\.play-public-shell \.play-archive-panel\.is-mobile-open\s*\{[^}]*transform:\s*translateY\(0\)/s);
 });
 
-test('Play exposes Live-style archive filter controls', async () => {
+test('Play uses two main categories, incident types and evidence facets', async () => {
   const jsx = await readFile(new URL('./PlayTimeline.jsx', import.meta.url), 'utf8');
-  for (const label of ['ALL', 'HUMANITARIAN', 'MARITIME', 'CORRELATED', 'SATELLITE']) {
+  for (const label of ['ALL', 'HUMANITARIAN', 'MARITIME']) {
     assert.match(jsx, new RegExp(`>${label}<`));
   }
+  assert.match(jsx, /Incident type/);
+  for (const label of ['SATELLITE', 'SANCTIONS', 'INVESTIGATION']) {
+    assert.match(jsx, new RegExp(label));
+  }
+  assert.doesNotMatch(jsx, />CORROBORATED</);
 });
 
 test('Play uses the shared Live vessel triangle for AIS archive identities', async () => {

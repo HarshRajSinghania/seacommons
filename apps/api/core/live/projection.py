@@ -371,9 +371,32 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     category = str(props.get("visual_category") or "")
     verification = str(props.get("verification_status") or "")
     if source == "ais" and category == "navigation_casualty" and verification == "ais_transponder":
+        nav_kind = str(props.get("ais_nav_status_kind") or "")
+        publication = str(props.get("publication_status") or props.get("publication_state") or "")
+        update_count = int(props.get("episode_update_count") or 0)
+        first_seen = lifecycle.parse_utc(str(props.get("first_observed_at") or ""))
+        last_seen = lifecycle.parse_utc(
+            str(props.get("last_observed_at") or props.get("timestamp_utc") or "")
+        )
+        sustained_seconds = (
+            (last_seen - first_seen).total_seconds()
+            if first_seen is not None and last_seen is not None and last_seen >= first_seen
+            else 0.0
+        )
+        published_sustained_aground = (
+            event_type == "distress"
+            and nav_kind == "aground"
+            and publication == "published"
+            and update_count >= 2
+            and sustained_seconds >= 180
+        )
         independent = int(props.get("independent_source_count") or 0) >= 2
         evidence_stage = str(props.get("evidence_stage") or "")
-        if not independent and evidence_stage not in {"corroborated", "assessed", "confirmed"}:
+        if (
+            not published_sustained_aground
+            and not independent
+            and evidence_stage not in {"corroborated", "assessed", "confirmed"}
+        ):
             return False
     return True
 

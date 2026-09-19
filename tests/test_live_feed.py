@@ -268,10 +268,10 @@ def test_context_publication_does_not_depend_on_severity() -> None:
     # Product policy §4: severity must not decide publication. A high-severity
     # uncorroborated, unpublished news item is still chatter and stays off the
     # public map; a low-"severity" corroborated one still surfaces.
-    base = dict(
-        type="news", lat=35.4, lon=13.9, title="Report off Zawiya",
-        source="Official NGO RSS",
-    )
+    base = {
+        "type": "news", "lat": 35.4, "lon": 13.9, "title": "Report off Zawiya",
+        "source": "Official NGO RSS",
+    }
     loud = IntelEvent(id="ctx-loud", severity="critical", metadata={"source_policy": "official_rss"}, **base)
     assert _public_intel_feature(loud) is None
     quiet = IntelEvent(
@@ -283,8 +283,10 @@ def test_context_publication_does_not_depend_on_severity() -> None:
 
 
 def test_correlated_alert_is_public_only_in_a_public_compartment() -> None:
-    base = dict(type="correlated_alert", severity="high", lat=35.0, lon=13.5,
-                title="MMSI 123: spoofing", source="SeaCommons fusion")
+    base = {
+        "type": "correlated_alert", "severity": "high", "lat": 35.0, "lon": 13.5,
+        "title": "MMSI 123: spoofing", "source": "SeaCommons fusion",
+    }
     sanctions = IntelEvent(id="ca-sanc", metadata={"maritime_domain": "sanctions"}, **base)
     sar = IntelEvent(id="ca-sar", metadata={"maritime_domain": "sar", "is_distress": True}, **base)
     assert _public_intel_feature(sanctions) is None
@@ -1902,6 +1904,7 @@ def test_humanitarian_live_excludes_canonical_resolved_signal_immediately(monkey
 def test_needs_review_drift_leaves_live_after_24h(monkeypatch) -> None:
     """Live's 24h surface boundary applies to derived Drift products too."""
     from datetime import timedelta, timezone
+
     from core.live.feed import public_drift_collection
 
     old_iso = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
@@ -2326,3 +2329,81 @@ def test_live_sanctioned_vessels_is_fresh_strong_identifier_subset(monkeypatch):
         db.query(SanctionedVesselDB).filter(
             SanctionedVesselDB.mmsi.in_(("211000991", "211000992"))
         ).delete(synchronize_session=False)
+
+
+def test_published_sustained_aground_enters_maritime_live(monkeypatch) -> None:
+    from core.intel.store import intel_store
+
+    base = datetime.now(timezone.utc)
+    event = IntelEvent(
+        id="audit-aground-published",
+        type="distress",
+        severity="high",
+        lat=37.9,
+        lon=23.6,
+        title="Vessel ran aground — TEST",
+        source="ais",
+        linked_mmsi="240123456",
+        timestamp_utc=base.isoformat(),
+        metadata={
+            "ais_nav_status_kind": "aground",
+            "maritime_domain": "safety",
+            "publication_status": "published",
+            "publication_state": "published",
+            "source_policy": "official_api",
+            "verification_status": "ais_transponder",
+            "episode_update_count": 3,
+            "first_observed_at": (base - timedelta(minutes=8)).isoformat(),
+            "last_observed_at": base.isoformat(),
+            "detection_reason": "Flagged after 3 reports over 480s.",
+        },
+    )
+    monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [event])
+    monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
+
+    collection = public_signal_collection(mode="maritime", days=1, limit=500)
+    ids = {f["properties"]["id"] for f in collection["features"]}
+    assert "intel:audit-aground-published" in ids
+    props = next(
+        f["properties"]
+        for f in collection["features"]
+        if f["properties"]["id"] == "intel:audit-aground-published"
+    )
+    assert props["main_category"] == "maritime"
+    assert props["incident_type"] == "navigation_safety"
+    assert props["verification_status"] == "ais_transponder"
+    assert props["corroborated"] is False
+
+
+def test_short_lived_aground_self_report_does_not_enter_live() -> None:
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
+
+    base = datetime.now(timezone.utc)
+    event = IntelEvent(
+        id="audit-aground-short",
+        type="distress",
+        severity="high",
+        lat=37.9,
+        lon=23.6,
+        title="Vessel ran aground — SHORT",
+        source="ais",
+        linked_mmsi="240123457",
+        timestamp_utc=base.isoformat(),
+        metadata={
+            "ais_nav_status_kind": "aground",
+            "maritime_domain": "safety",
+            "publication_status": "published",
+            "publication_state": "published",
+            "source_policy": "official_api",
+            "verification_status": "ais_transponder",
+            "episode_update_count": 2,
+            "first_observed_at": (base - timedelta(seconds=90)).isoformat(),
+            "last_observed_at": base.isoformat(),
+        },
+    )
+    feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is False

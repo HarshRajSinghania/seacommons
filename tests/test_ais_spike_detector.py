@@ -10,12 +10,13 @@ os.environ["SEACOMMONS_TRACK_STORE_SYNC"] = "1"
 from datetime import datetime, timezone
 
 import pytest
-
 from core.intel.ais_spike_detector import (
     AISSpikeDetector,
     _nearby_active_distress,
     _ngo_circular_pattern,
+    backfill_recent_sar_activity,
 )
+from core.intel.ngo_registry import get_ngo_info
 from core.intel.store import IntelEvent, intel_store
 from core.vessels.track_store import track_store
 
@@ -357,3 +358,78 @@ def test_ngo_vessels_moored_in_port_are_not_a_rescue(monkeypatch):
     monkeypatch.setattr(det, "_emit", lambda **kw: emitted.append(kw))
     det._scan()
     assert emitted and emitted[0]["spike_type"] == "possible_rescue_cluster"
+
+
+def test_search_pattern_normalizes_active_responder_as_neutral_sar_observation():
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="ngo_search_pattern",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="high",
+        detail="Ocean Viking executing search pattern",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={"pattern": "course_change"},
+    )
+    normalized = [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    assert len(normalized) == 1
+    ev = normalized[0]
+    assert ev.metadata["activity_kind"] == "search_pattern_observed"
+    assert ev.metadata["source_lineage"] == "ais_sensor_lineage"
+    assert ev.metadata["independent_source_count"] == 1
+    assert ev.metadata["verification_status"] == "single_source_observed"
+    assert ev.metadata["publication_status"] == "published"
+    assert ev.metadata["maritime_domain"] == "sar"
+    assert "does not by itself confirm" in ev.text
+
+
+def test_possible_cluster_does_not_normalize_into_public_sar_activity():
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="possible_rescue_cluster",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="medium",
+        detail="Two vessels nearby; convergence unknown",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={"converging": None, "in_port_or_anchorage": False},
+    )
+    assert not [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+
+
+def test_recent_sar_backfill_reuses_canonical_normalization(monkeypatch):
+    source = IntelEvent(
+        id="legacy-rescue-cluster",
+        timestamp_utc="2026-09-18T21:04:25+00:00",
+        type="ais_spike",
+        severity="high",
+        lat=37.50,
+        lon=12.02,
+        title="AIS: Rescue Cluster — OCEAN VIKING",
+        source="AIS Registry",
+        linked_mmsi=_OCEAN_VIKING,
+        metadata={
+            "spike_type": "rescue_cluster",
+            "converging": True,
+            "in_port_or_anchorage": False,
+        },
+    )
+
+    def persisted_events(*, types, **_kwargs):
+        return [source] if types == ["ais_spike"] else []
+
+    written = []
+    monkeypatch.setattr(intel_store, "persisted_events", persisted_events)
+    monkeypatch.setattr(
+        intel_store,
+        "add",
+        lambda event, dedup_key="": written.append((event, dedup_key)) or True,
+    )
+    assert backfill_recent_sar_activity() == 1
+    assert written[0][0].type == "ngo_activity"
+    assert written[0][0].timestamp_utc == source.timestamp_utc
+    assert written[0][0].metadata["activity_kind"] == "responder_convergence_observed"

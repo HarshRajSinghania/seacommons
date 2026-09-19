@@ -286,7 +286,9 @@ def test_spoofing_circular_track():
         track_store._last_write_epoch["111000010"] = 0.0
     assert w.scan_spoofing() == 1
     ev = _alerts("ais_anomaly")
-    assert ev[0].metadata["anomaly_type"] == "circle_spoof"
+    assert ev[0].metadata["anomaly_type"] == "circular_pattern"
+    assert "does not by itself establish spoofing" in ev[0].text
+    assert "spoofing" not in ev[0].title.lower()
 
 
 def test_spoofing_circular_ignores_pleasure_craft_swinging_at_anchor():
@@ -306,6 +308,28 @@ def test_spoofing_circular_ignores_pleasure_craft_swinging_at_anchor():
         track_store.on_position("111000012", "WINDSWEPT", 37.0 + dlat, 15.0 + dlon,
                                 sog=0.4, nav_status=1, received_at=datetime.now(timezone.utc))
         track_store._last_write_epoch["111000012"] = 0.0
+    assert w.scan_spoofing() == 0
+    assert not _alerts("ais_anomaly")
+
+
+def test_spoofing_circular_ignores_high_speed_passenger_ferry():
+    """AIS type 40-49 is HSC, a class that includes passenger ferries.
+    Repeated terminal turns are not spoofing evidence on a circular fit alone."""
+    import math
+
+    from core.vessels.registry import registry
+
+    w = MdaWatch()
+    registry.upsert("111000041", ship_type=41, ship_name="FAST FERRY")
+    for k in range(14):
+        ang = k / 14 * 2 * math.pi
+        dlat = 700 * math.sin(ang) / 111320
+        dlon = 700 * math.cos(ang) / (111320 * math.cos(math.radians(39.45)))
+        track_store.on_position(
+            "111000041", "FAST FERRY", 39.45 + dlat, 2.75 + dlon,
+            sog=2.0, nav_status=0, received_at=datetime.now(timezone.utc),
+        )
+        track_store._last_write_epoch["111000041"] = 0.0
     assert w.scan_spoofing() == 0
     assert not _alerts("ais_anomaly")
 
@@ -619,3 +643,30 @@ def test_scan_continues_after_one_stage_failure(monkeypatch):
         "hypotheses": 8,
     }
     assert calls[-1] == "hypotheses"
+
+def test_rendezvous_requires_continuous_pair_observation():
+    w = MdaWatch()
+    _feed("111000201", 37.00, 18.00, sog=0.3)
+    _feed("111000202", 37.0025, 18.0005, sog=0.4)
+    assert w.scan_rendezvous() == 0
+    key = tuple(sorted(("111000201", "111000202")))
+    w._pairs[key]["first_seen"] = time.time() - 40 * 60
+    w._pairs[key]["last_seen"] = time.time() - 20 * 60
+    _feed("111000201", 37.00, 18.00, sog=0.3)
+    _feed("111000202", 37.0025, 18.0005, sog=0.4)
+    assert w.scan_rendezvous() == 0
+    assert w._pairs[key]["first_seen"] > time.time() - 60
+
+
+def test_rendezvous_ignores_anchored_pair_offshore():
+    w = MdaWatch()
+    now = datetime.now(timezone.utc)
+    for mmsi, lat in (("111000203", 37.00), ("111000204", 37.0025)):
+        track_store.on_position(
+            mmsi, mmsi, lat, 18.00, sog=0.1, nav_status=1, received_at=now,
+        )
+        track_store._last_write_epoch[mmsi] = 0.0
+    key = tuple(sorted(("111000203", "111000204")))
+    w._pairs[key] = {"first_seen": time.time() - 60 * 60, "last_seen": time.time(), "count": 8}
+    assert w.scan_rendezvous() == 0
+    assert not _alerts("ais_rendezvous")

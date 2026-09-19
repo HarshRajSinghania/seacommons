@@ -54,8 +54,10 @@ def test_family_for_maps_the_real_live_emitter_vocabulary():
     assert family_for("cable_proximity") == "infrastructure_proximity_episode"
     assert family_for("sanctions_bunkering_loiter") == "infrastructure_proximity_episode"
     assert family_for("position_jump") == "spoofing_episode"  # scan_spoofing "teleport"
-    assert family_for("circle_spoof") == "spoofing_episode"  # scan_spoofing "circular"
-    assert family_for("static_spoof") == "spoofing_episode"  # scan_spoofing "frozen"
+    # Low-specificity circular/static AIS integrity cues stay as evidence;
+    # they do not create a spoofing episode without a stronger independent cue.
+    assert family_for("circular_pattern") == "unclassified_episode"
+    assert family_for("static_position_inconsistency") == "unclassified_episode"
     assert family_for("impossible_speed") == "spoofing_episode"  # core.anomaly.ais
     assert family_for("dark_zone_entry") == "spoofing_episode"  # core.anomaly.ais
     assert family_for("dark_candidate") == "gap_episode"  # core.intel.viirs_monitor

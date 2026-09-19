@@ -570,10 +570,22 @@ class MdaWatch:
                 _port, port_km = reference.nearest_port_km(mid_lat, mid_lon)
                 if port_km < 5.0:
                     continue
+                # Anchored/moored neighbours are an anchorage observation,
+                # not evidence of a ship-to-ship transfer.
+                if a.get("nav_status") in {1, 5} or b.get("nav_status") in {1, 5}:
+                    continue
                 key = tuple(sorted((a["mmsi"], b["mmsi"])))
                 seen_now.add(key)
-                pair = self._pairs.setdefault(key, {"first_seen": time.time(), "count": 0})
-                pair["last_seen"] = time.time()
+                now_epoch = time.time()
+                continuity_grace_s = max(
+                    900.0,
+                    float(getattr(config, "MDA_SCAN_INTERVAL_S", 300)) * 2.5,
+                )
+                pair = self._pairs.get(key)
+                if pair is None or now_epoch - float(pair.get("last_seen") or 0.0) > continuity_grace_s:
+                    pair = {"first_seen": now_epoch, "count": 0}
+                    self._pairs[key] = pair
+                pair["last_seen"] = now_epoch
                 pair["count"] += 1
                 pair["mid"] = (mid_lat, mid_lon)
                 dur_min = (time.time() - pair["first_seen"]) / 60.0
@@ -1260,18 +1272,16 @@ class MdaWatch:
                     )
                     if not result.get("sanctions"):
                         continue
-                # AIS ship_type 60-69 = passenger vessel -- kept out of Live
-                # for now, same reasoning and same sanctions override as
-                # scan_gaps above (detection unchanged, just not surfaced
-                # here until it has its own destination).
-                elif isinstance(ship_type, int) and 60 <= ship_type <= 69:
-                    from core.mda.identity import screen
-                    result = screen(
-                        mmsi=mmsi, imo=v.get("imo"),
-                        name=v.get("ship_name") or "", flag=v.get("flag") or "",
-                    )
-                    if not result.get("sanctions"):
-                        continue
+                # AIS ship_type 40-49 = high-speed craft (including many
+                # passenger ferries); 60-69 = passenger ships. Repeated terminal
+                # approaches / turnarounds can draw a clean ring in sampled AIS.
+                # Ship class is a false-positive control for this low-specificity
+                # signature only; it never suppresses impossible-speed teleports.
+                elif (
+                    isinstance(ship_type, int)
+                    and (40 <= ship_type <= 49 or 60 <= ship_type <= 69)
+                ):
+                    continue
                 # AIS ship_type 30-32 = fishing vessel. A trawler working a
                 # ground draws exactly the "circular" signature -- repeated
                 # tight loops/passes are how trawling works, not spoofing.
@@ -1300,7 +1310,7 @@ class MdaWatch:
             mid = pts[len(pts) // 2]
             jam = jamming.in_jamming_zone(mid["lat"], mid["lon"])
             atype = "position_jump" if reason == "teleport" else (
-                "circle_spoof" if reason == "circular" else "static_spoof")
+                "circular_pattern" if reason == "circular" else "static_position_inconsistency")
             # docs/fixes.md M14.1: cross-check the teleport signature against
             # core.intel.ais_integrity_replay.classify_impossible_speed --
             # informational only (this detector's own gating above is
@@ -1340,20 +1350,31 @@ class MdaWatch:
                 coverage_quality=confidence_mod.coverage_quality(jam),
                 location_precision=confidence_mod.location_precision_score("ais_position"),
             )
+            label = {
+                "teleport": "AIS impossible-movement candidate",
+                "circular": "AIS circular track pattern",
+                "frozen": "AIS static-position inconsistency",
+            }.get(reason, "AIS position-integrity cue")
             intel_store.add(IntelEvent(
                 id=f"spoof:{mmsi}:{reason}",
                 type="ais_anomaly",
-                severity="high" if jam < 0.4 else "medium",
+                severity="high" if reason == "teleport" and jam < 0.4 else "medium",
                 lat=round(mid["lat"], 5), lon=round(mid["lon"], 5),
-                title=f"AIS {reason} spoofing — {mmsi}",
-                text=f"MMSI {mmsi}: {reason} track signature ({extra})."
-                     + (" Active GNSS jamming in the area." if jam > 0.3 else ""),
+                title=f"{label} — {mmsi}",
+                text=(
+                    f"MMSI {mmsi}: derived AIS integrity cue ({extra}). "
+                    "This single AIS lineage does not by itself establish spoofing."
+                    + (" GNSS interference is reported in the area." if jam > 0.3 else "")
+                ),
                 source="mda", linked_mmsi=mmsi,
                 metadata={
                     "anomaly_type": atype, "maritime_domain": "grey_zone",
                     "is_distress": False, "publication_status": "internal",
                     "source_policy": "official_api", "verification_status": "derived",
                     "coordinate_source": "ais_position", "spoof_reason": reason,
+                    "evidence_stage": "derived", "source_lineage": "ais_sensor_lineage",
+                    "independent_source_count": 1,
+                    "detection_claim": "position_integrity_cue",
                     "jamming_score": jam, "detail": extra,
                     "confidence_v2": confidence_v2.as_metadata(),
                     "ais_integrity_classification": integrity_classification,

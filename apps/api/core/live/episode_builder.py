@@ -66,10 +66,7 @@ _FAMILY_BY_ANOMALY_TYPE: dict[str, str] = {
     "mmsi_duplicate": "identity_integrity_episode",
     "spoofing_candidate": "spoofing_episode",
     "position_anomaly": "spoofing_episode",
-    "circular_pattern": "spoofing_episode",
     "position_jump": "spoofing_episode",  # core.mda.watch.scan_spoofing "teleport"
-    "circle_spoof": "spoofing_episode",  # core.mda.watch.scan_spoofing "circular"
-    "static_spoof": "spoofing_episode",  # core.mda.watch.scan_spoofing "frozen"
     "impossible_speed": "spoofing_episode",  # core.anomaly.ais
     "dark_zone_entry": "spoofing_episode",  # core.anomaly.ais
     "port_call": "port_call_episode",

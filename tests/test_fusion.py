@@ -221,8 +221,8 @@ def test_neutral_rendezvous_cannot_create_a_sanctions_allegation_by_itself() -> 
     """docs/fixes.md M0.3 exit gate: a plain STS pair -- not a tanker, not a
     dark party, not in a known STS zone, no corroborating sanctions/identity
     signal -- must stay a neutral, internal observation. It still gets a
-    low-severity alert (two vessels co-located is worth recording), but
-    never a sanctions-shaped domain and never an auto-opened case."""
+    raw observation only. A second derived fusion alert from the same AIS
+    lineage would be fake corroboration, so none is created."""
     ev = _add(
         type="ais_rendezvous", severity="medium", lat=40.1, lon=25.3,
         title="STS rendezvous — C / D", source="mda", linked_mmsi="273000001",
@@ -234,9 +234,7 @@ def test_neutral_rendezvous_cannot_create_a_sanctions_allegation_by_itself() -> 
     )
     fusion.evaluate(ev)
     alerts = _alerts()
-    assert len(alerts) == 1
-    assert alerts[0].metadata["alert_type"] == "sts_transfer"
-    assert alerts[0].metadata["maritime_domain"] != "sanctions"
+    assert alerts == []
     from core.db.models import CaseDB
     from core.db.session import session_scope
     with session_scope() as db:

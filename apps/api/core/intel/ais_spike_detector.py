@@ -256,6 +256,12 @@ class AISSpikeDetector:
     def _loop(self) -> None:
         # Wait for AIS data to accumulate
         time.sleep(60)
+        try:
+            restored = backfill_recent_sar_activity()
+            if restored:
+                logger.info("AIS SAR normalization backfilled %d recent observations", restored)
+        except Exception as exc:  # pragma: no cover - reconciliation is best effort
+            logger.warning("AIS SAR normalization backfill failed: %s", exc)
         while self._running:
             try:
                 self._scan()
@@ -707,5 +713,110 @@ class AISSpikeDetector:
         added = intel_store.add(event)
         if added:
             logger.info("AIS spike [%s] %s @ %.3f,%.3f", spike_type, name or mmsi, lat, lon)
+            normalized = _normalized_sar_activity(event, ngo_info)
+            if normalized is not None:
+                intel_store.add(normalized, dedup_key=f"sar-activity:{normalized.id}")
             from core.intel.triangulation import evaluate as evaluate_triangulation
             evaluate_triangulation(event)
+
+def _normalized_sar_activity(
+    source_event: IntelEvent,
+    responder: Optional[dict[str, Any]],
+) -> Optional[IntelEvent]:
+    """Normalize qualified responder AIS behaviour into a neutral SAR observation.
+
+    One AIS lineage can establish the observed track pattern; it cannot by itself
+    establish that a casualty existed or that a rescue occurred.
+    """
+    if not responder or responder.get("status") != "active":
+        return None
+    meta = source_event.metadata or {}
+    spike_type = str(meta.get("spike_type") or "")
+    if spike_type == "ngo_search_pattern":
+        activity_kind = "search_pattern_observed"
+        label = "search-pattern activity"
+        observation = "AIS track shows repeated low-speed course changes consistent with a search pattern."
+    elif (
+        spike_type == "rescue_cluster"
+        and meta.get("converging") is True
+        and meta.get("in_port_or_anchorage") is False
+    ):
+        activity_kind = "responder_convergence_observed"
+        label = "multi-vessel convergence"
+        observation = "AIS tracks show a known SAR responder converging with nearby vessels offshore."
+    else:
+        return None
+
+    try:
+        observed = datetime.fromisoformat(source_event.timestamp_utc.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+    except (AttributeError, TypeError, ValueError):
+        observed = datetime.now(timezone.utc)
+    bucket = int(observed.timestamp() // (6 * 3600))
+    vessel_name = str(responder.get("name") or source_event.title or "SAR responder")
+    return IntelEvent(
+        id=f"saractivity:{source_event.linked_mmsi}:{activity_kind}:{bucket}",
+        timestamp_utc=source_event.timestamp_utc,
+        type="ngo_activity",
+        severity="medium",
+        lat=source_event.lat,
+        lon=source_event.lon,
+        title=f"SAR responder {label} — {vessel_name}",
+        text=(
+            f"{observation} This is a single-lineage AIS observation; "
+            "it does not by itself confirm a distress case or rescue."
+        ),
+        source="SeaCommons AIS analysis",
+        linked_mmsi=source_event.linked_mmsi,
+        metadata={
+            "maritime_domain": "sar",
+            "is_distress": False,
+            "publication_status": "published",
+            "source_policy": "official_api",
+            "verification_status": "single_source_observed",
+            "coordinate_source": "ais_position",
+            "evidence_stage": "derived",
+            "source_lineage": "ais_sensor_lineage",
+            "independent_source_count": 1,
+            "evidence_count": 1,
+            "activity_kind": activity_kind,
+            "observation_type": "sar_responder_activity",
+            "operator_type": responder.get("operator_type") or "unknown",
+            "org": responder.get("org"),
+            "vessel_role": responder.get("role"),
+            "vessel_name": vessel_name,
+            "normalized_from": source_event.id,
+            "possible_response_to": meta.get("possible_response_to"),
+            "public_summary": f"{observation} No rescue or casualty is confirmed from AIS alone.",
+        },
+    )
+
+
+def backfill_recent_sar_activity(*, max_age_days: int = 1, limit: int = 5000) -> int:
+    """Reconcile recent qualified AIS responder cues through the same normalizer."""
+    source_events = intel_store.persisted_events(
+        types=["ais_spike"], max_age_days=max_age_days, limit=limit
+    )
+    existing = {
+        event.id: event
+        for event in intel_store.persisted_events(
+            types=["ngo_activity"], max_age_days=max(2, max_age_days), limit=limit
+        )
+        if event.id.startswith("saractivity:")
+    }
+    handled: set[str] = set()
+    written = 0
+    for event in source_events:
+        normalized = _normalized_sar_activity(event, get_ngo_info(event.linked_mmsi))
+        if normalized is None or normalized.id in handled:
+            continue
+        handled.add(normalized.id)
+        previous = existing.get(normalized.id)
+        if previous is not None and str(previous.timestamp_utc or "") >= str(
+            normalized.timestamp_utc or ""
+        ):
+            continue
+        if intel_store.add(normalized, dedup_key=f"sar-activity:{normalized.id}"):
+            written += 1
+    return written

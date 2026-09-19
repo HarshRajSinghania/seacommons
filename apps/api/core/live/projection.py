@@ -133,6 +133,15 @@ _PUBLIC_METADATA = frozenset(
         "contributing_independence_groups",
         "independent_source_count",
         "evidence_count",
+        "evidence_stage",
+        "source_lineage",
+        "activity_kind",
+        "observation_type",
+        "operator_type",
+        "org",
+        "vessel_role",
+        "normalized_from",
+        "possible_response_to",
         "verification_explanation",
         "cluster_id",
         "anomaly_type",
@@ -513,6 +522,13 @@ def _public_intel_feature(
     except ValueError:
         severity = Severity.LOW.value
     metadata = {key: event.metadata[key] for key in _PUBLIC_METADATA if key in event.metadata}
+    from core.intel.public_policy import compartment_for_domain
+
+    if compartment_for_domain(resolved_domain) == "humanitarian":
+        # Humanitarian Live may name a public SAR responder in the title, but
+        # never exports its tracker dossier as structured fields.
+        for identity_key in ("linked_mmsi", "mmsi", "imo", "ship_type", "flag", "vessel_name"):
+            metadata.pop(identity_key, None)
     # Always publish the resolved compartment. This also prevents a legacy raw
     # metadata value from overwriting a compatibility reclassification below.
     metadata["maritime_domain"] = resolved_domain
@@ -561,8 +577,6 @@ def _public_intel_feature(
     # around -- this only withholds the dossier fields on the humanitarian
     # side, the vessel-episode join behaviour for Maritime content below is
     # unchanged.
-    from core.intel.public_policy import compartment_for_domain
-
     mmsi = linked_mmsi
     if len(mmsi) == 9 and mmsi.isdigit() and compartment_for_domain(resolved_domain) != "humanitarian":
         metadata["linked_mmsi"] = mmsi
@@ -684,6 +698,12 @@ def _public_intel_feature(
         metadata["live_role"] = "maritime_evidence"
     elif str(metadata.get("ais_nav_status_kind") or "") == "distress_beacon":
         metadata["live_role"] = "operational_signal"
+    elif (
+        compartment_for_domain(resolved_domain) == "humanitarian"
+        and event.type == "ngo_activity"
+        and metadata.get("observation_type") == "sar_responder_activity"
+    ):
+        metadata["live_role"] = "humanitarian_observation"
     elif compartment_for_domain(resolved_domain) == "humanitarian":
         metadata["live_role"] = "humanitarian_case"
     else:

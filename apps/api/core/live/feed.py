@@ -486,6 +486,7 @@ def public_signal_collection(
     }
     role_counts = {
         "humanitarian_case": 0,
+        "humanitarian_observation": 0,
         "maritime_episode": 0,
         "maritime_evidence": 0,
         "operational_signal": 0,

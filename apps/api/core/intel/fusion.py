@@ -451,6 +451,12 @@ def _rule_dark_sts(new: FusionSignal, event: IntelEvent) -> Optional[FusedAlert]
         if other.kind == "vessel_identity" and other.mmsi in mmsis:
             ids.append(other.event_id)
             sanctioned = True
+    # A sustained AIS-only proximity pair is still one telemetry lineage.
+    # Do not manufacture a second "fusion alert" unless the rendezvous has
+    # contextual specificity (tanker/dark/known STS zone) or independent
+    # sanctions identity evidence.
+    if not (tanker or dark or zone or sanctioned):
+        return None
     confidence = round(min(0.95, 0.5 + 0.15 * tanker + 0.15 * dark + 0.1 * bool(zone) + 0.2 * sanctioned), 3)
     return FusedAlert(
         alert_type="dark_sts" if dark else "sts_transfer",
@@ -460,7 +466,7 @@ def _rule_dark_sts(new: FusionSignal, event: IntelEvent) -> Optional[FusedAlert]
         lat=new.lat, lon=new.lon, ts=new.ts,
         contributing_event_ids=ids,
         contributing_sources=sorted({new.source} | {"mda"}),
-        summary=(f"{'Dark ' if dark else ''}ship-to-ship transfer"
+        summary=(f"{'Dark ' if dark else ''}possible ship-to-ship transfer"
                  + (f" in {zone}" if zone else "") + f": {event.title[:120]}"),
         open_case=bool(tanker or dark or zone or sanctioned),
         case_type="sanctions_watch" if sanctioned else "dark_rendezvous",

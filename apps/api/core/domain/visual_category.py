@@ -159,6 +159,11 @@ def classify_visual_category(
     if event_type == "gdacs":
         return "hazard"
     if event_type == "ngo_activity":
+        operator_type = str(meta.get("operator_type") or "").lower()
+        if operator_type == "state_authority":
+            return "state_sar"
+        if operator_type == "civil_ngo":
+            return "civil_sar"
         return "ngo_activity"
     if hct and hct not in {"advocacy", "unknown_humanitarian"}:
         return "distress"

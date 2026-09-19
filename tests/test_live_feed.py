@@ -1384,6 +1384,7 @@ def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> No
     assert incremental_feed["meta"]["mode_counts"] == expected_counts
     assert humanitarian_feed["meta"]["role_counts"] == {
         "humanitarian_case": 3,
+        "humanitarian_observation": 0,
         "maritime_episode": 0,
         "maritime_evidence": 0,
         "operational_signal": 0,
@@ -2175,3 +2176,46 @@ def test_concluded_sosmed_report_is_not_reopened_by_ambiguous_self_reply() -> No
     )
     assert state == "resolved"
     assert lifecycle.is_directly_concluded(event) is True
+
+def test_normalized_sar_responder_activity_is_observation_not_case(monkeypatch) -> None:
+    event = IntelEvent(
+        id="saractivity:test",
+        type="ngo_activity",
+        severity="medium",
+        lat=35.5,
+        lon=12.6,
+        title="SAR responder search-pattern activity — Ocean Viking",
+        source="SeaCommons AIS analysis",
+        linked_mmsi="258479000",
+        metadata={
+            "maritime_domain": "sar",
+            "publication_status": "published",
+            "source_policy": "official_api",
+            "verification_status": "single_source_observed",
+            "coordinate_source": "ais_position",
+            "evidence_stage": "derived",
+            "source_lineage": "ais_sensor_lineage",
+            "independent_source_count": 1,
+            "evidence_count": 1,
+            "activity_kind": "search_pattern_observed",
+            "observation_type": "sar_responder_activity",
+            "operator_type": "civil_ngo",
+            "org": "SOS Méditerranée",
+            "vessel_role": "SAR",
+            "vessel_name": "Ocean Viking",
+            "public_summary": "AIS track shows a search pattern; no rescue is confirmed from AIS alone.",
+        },
+    )
+    monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [event])
+    monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
+    collection = public_signal_collection(limit=50, mode="humanitarian")
+    assert collection["meta"]["total"] == 1
+    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 1
+    props = collection["features"][0]["properties"]
+    assert props["live_role"] == "humanitarian_observation"
+    assert props["evidence_stage"] == "derived"
+    assert props["verification_status"] == "single_source_observed"
+    assert props["visual_category"] == "civil_sar"
+    assert "linked_mmsi" not in props
+    assert "mmsi" not in props
+    assert "vessel_name" not in props

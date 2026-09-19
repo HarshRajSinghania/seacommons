@@ -66,6 +66,7 @@ _MACHINE_REFRESH_TYPES = frozenset(
         "dark_candidate",
         "correlated_alert",
         "ais_spike",
+        "ngo_activity",
     }
 )
 

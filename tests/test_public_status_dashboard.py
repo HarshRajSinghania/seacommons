@@ -57,6 +57,7 @@ def test_operator_dashboard_requires_gateway(monkeypatch):
     assert "Operational intelligence field" in response.text
     assert "Raw ingestion" in response.text
     assert "Real investigation chains" in response.text
+    assert "All-time corpus" in response.text
 
 
 def test_operator_overview_includes_public_pipeline_status(monkeypatch):

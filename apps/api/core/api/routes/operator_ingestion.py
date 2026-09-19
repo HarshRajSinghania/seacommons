@@ -11,6 +11,8 @@ operator reverse proxy. The browser never receives that secret.
 from __future__ import annotations
 
 import hmac
+import threading
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -24,7 +26,11 @@ from core.db.models import (
     IntelEventDB,
     InvestigationHypothesisDB,
     MaritimeEpisodeDB,
+    RadioBurstDB,
+    RadioEventDB,
+    SatelliteObservationDB,
     SourceObservationDB,
+    VesselTrackDB,
 )
 from core.db.session import session_scope
 from core.api.routes.operator_pipeline import (
@@ -35,6 +41,10 @@ from core.api.routes.operator_pipeline import (
 )
 
 router = APIRouter(prefix="/api/v1/operator/ingestion", tags=["operator-ingestion"])
+
+_OVERALL_CACHE_TTL_S = 300.0
+_overall_cache_lock = threading.Lock()
+_overall_cache: tuple[float, dict[str, Any]] | None = None
 
 
 def _require_gateway(request: Request) -> None:
@@ -668,6 +678,197 @@ def operator_pipeline_funnel(
             "not a claim that every raw observation converts one-to-one into the next stage."
         ),
     }
+
+
+@router.get("/overall")
+def operator_overall_corpus(request: Request) -> dict[str, Any]:
+    """Cached all-time corpus inventory for operator capacity/lineage inspection."""
+    _require_gateway(request)
+    global _overall_cache
+    now_mono = time.monotonic()
+    with _overall_cache_lock:
+        if _overall_cache is not None and now_mono - _overall_cache[0] < _OVERALL_CACHE_TTL_S:
+            return _overall_cache[1]
+
+    analysis_state = IntelEventDB.meta["analysis_state"].as_string()
+    anomaly_type = IntelEventDB.meta["anomaly_type"].as_string()
+
+    with session_scope() as db:
+        raw_total = int(db.query(func.count(SourceObservationDB.observation_id)).scalar() or 0)
+        normalized_total = int(db.query(func.count(IntelEventDB.id)).scalar() or 0)
+        derived_total_raw = int(
+            db.query(func.count(IntelEventDB.id))
+            .filter(
+                or_(
+                    IntelEventDB.type.in_(_DERIVED_EVENT_TYPES),
+                    analysis_state.in_(("anomaly", "evidence_candidate", "evidence")),
+                )
+            )
+            .scalar()
+            or 0
+        )
+        legacy_gap_context = int(
+            db.query(func.count(IntelEventDB.id))
+            .filter(
+                IntelEventDB.type == "ais_anomaly",
+                IntelEventDB.source == "ais",
+                IntelEventDB.id.like("aisanom:%"),
+                anomaly_type == "gap",
+            )
+            .scalar()
+            or 0
+        )
+        derived_total = max(0, derived_total_raw - legacy_gap_context)
+
+        episodes_total = int(
+            db.query(func.count(MaritimeEpisodeDB.episode_id))
+            .filter(MaritimeEpisodeDB.episode_family != "unclassified_episode")
+            .scalar()
+            or 0
+        )
+        unclassified_episodes = int(
+            db.query(func.count(MaritimeEpisodeDB.episode_id))
+            .filter(MaritimeEpisodeDB.episode_family == "unclassified_episode")
+            .scalar()
+            or 0
+        )
+        corroborated_total = int(
+            db.query(func.count(MaritimeEpisodeDB.episode_id))
+            .filter(
+                MaritimeEpisodeDB.episode_family != "unclassified_episode",
+                MaritimeEpisodeDB.verification_status == "multi_source_corroborated",
+            )
+            .scalar()
+            or 0
+        )
+        hypotheses = db.query(InvestigationHypothesisDB).all()
+        hypothesis_total = len(hypotheses)
+        review_ready_total = sum(
+            row.state in {"review_ready", "assessed", "published"} for row in hypotheses
+        )
+
+        sensor_activity = {
+            "ais_fixes": int(db.query(func.count(VesselTrackDB.id)).scalar() or 0),
+            "radio_bursts": int(db.query(func.count(RadioBurstDB.burst_id)).scalar() or 0),
+            "radio_events": int(db.query(func.count(RadioEventDB.event_id)).scalar() or 0),
+            "satellite_observations": int(
+                db.query(func.count(SatelliteObservationDB.observation_id)).scalar() or 0
+            ),
+            "source_names": int(
+                db.query(func.count(func.distinct(SourceObservationDB.source_name))).scalar() or 0
+            ),
+        }
+
+        by_source = _count_pairs(
+            db.query(SourceObservationDB.source_name, func.count(SourceObservationDB.observation_id))
+            .group_by(SourceObservationDB.source_name)
+            .order_by(func.count(SourceObservationDB.observation_id).desc())
+            .limit(40)
+            .all()
+        )
+        raw_types = _count_pairs(
+            db.query(
+                SourceObservationDB.observation_type,
+                func.count(SourceObservationDB.observation_id),
+            )
+            .group_by(SourceObservationDB.observation_type)
+            .order_by(func.count(SourceObservationDB.observation_id).desc())
+            .limit(40)
+            .all()
+        )
+        event_sources = _count_pairs(
+            db.query(IntelEventDB.source, func.count(IntelEventDB.id))
+            .group_by(IntelEventDB.source)
+            .order_by(func.count(IntelEventDB.id).desc())
+            .limit(40)
+            .all()
+        )
+        event_types = _count_pairs(
+            db.query(IntelEventDB.type, func.count(IntelEventDB.id))
+            .group_by(IntelEventDB.type)
+            .order_by(func.count(IntelEventDB.id).desc())
+            .limit(40)
+            .all()
+        )
+        episode_families = _count_pairs(
+            db.query(MaritimeEpisodeDB.episode_family, func.count(MaritimeEpisodeDB.episode_id))
+            .group_by(MaritimeEpisodeDB.episode_family)
+            .order_by(func.count(MaritimeEpisodeDB.episode_id).desc())
+            .limit(40)
+            .all()
+        )
+        episode_verification = _count_pairs(
+            db.query(
+                MaritimeEpisodeDB.verification_status,
+                func.count(MaritimeEpisodeDB.episode_id),
+            )
+            .group_by(MaritimeEpisodeDB.verification_status)
+            .order_by(func.count(MaritimeEpisodeDB.episode_id).desc())
+            .all()
+        )
+        hypothesis_types = dict(
+            Counter(str(row.hypothesis_type or "unset") for row in hypotheses).most_common(40)
+        )
+        hypothesis_states = dict(
+            Counter(str(row.state or "unset") for row in hypotheses).most_common()
+        )
+        hypothesis_evidence_stages = dict(
+            Counter(str(row.evidence_stage or "unset") for row in hypotheses).most_common()
+        )
+
+        first_last = {
+            "raw_first": _dt(db.query(func.min(SourceObservationDB.received_at)).scalar()),
+            "raw_latest": _dt(db.query(func.max(SourceObservationDB.received_at)).scalar()),
+            "event_first": _dt(db.query(func.min(IntelEventDB.received_at)).scalar()),
+            "event_latest": _dt(db.query(func.max(IntelEventDB.received_at)).scalar()),
+            "episode_first": _dt(db.query(func.min(MaritimeEpisodeDB.created_at)).scalar()),
+            "episode_latest": _dt(db.query(func.max(MaritimeEpisodeDB.updated_at)).scalar()),
+            "hypothesis_first": _dt(
+                db.query(func.min(InvestigationHypothesisDB.created_at)).scalar()
+            ),
+            "hypothesis_latest": _dt(
+                db.query(func.max(InvestigationHypothesisDB.updated_at)).scalar()
+            ),
+        }
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scope": "all_time",
+        "cache_ttl_seconds": int(_OVERALL_CACHE_TTL_S),
+        "stages": [
+            {"id": "raw", "label": "Raw observations", "count": raw_total},
+            {"id": "normalized", "label": "Normalized events", "count": normalized_total},
+            {"id": "derived", "label": "Derived cues", "count": derived_total},
+            {"id": "episodes", "label": "Recognized episodes", "count": episodes_total},
+            {"id": "hypotheses", "label": "Hypotheses", "count": hypothesis_total},
+            {"id": "corroborated", "label": "Corroborated", "count": corroborated_total},
+            {"id": "review_ready", "label": "Review ready", "count": review_ready_total},
+        ],
+        "sensor_activity": sensor_activity,
+        "first_last": first_last,
+        "breakdowns": {
+            "raw_by_source": by_source,
+            "raw_observation_types": raw_types,
+            "normalized_by_source": event_sources,
+            "normalized_event_types": event_types,
+            "episode_families": episode_families,
+            "episode_verification": episode_verification,
+            "hypothesis_types": hypothesis_types,
+            "hypothesis_states": hypothesis_states,
+            "hypothesis_evidence_stages": hypothesis_evidence_stages,
+        },
+        "excluded_context": {
+            "legacy_short_gap_telemetry": legacy_gap_context,
+            "unclassified_episodes": unclassified_episodes,
+        },
+        "interpretation": (
+            "All-time stored corpus. Counts describe records retained at each layer, "
+            "not one-to-one conversions and not findings of illegality."
+        ),
+    }
+    with _overall_cache_lock:
+        _overall_cache = (time.monotonic(), payload)
+    return payload
 
 
 @router.get("/cases")

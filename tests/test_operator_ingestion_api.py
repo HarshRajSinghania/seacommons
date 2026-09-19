@@ -156,3 +156,30 @@ def test_operator_funnel_excludes_legacy_unclassified_from_corroborated(monkeypa
     stages = {stage["id"]: stage["count"] for stage in response.json()["stages"]}
     assert stages["episodes"] == 1
     assert stages["corroborated"] == 1
+
+
+def test_operator_overall_exposes_all_time_corpus(monkeypatch):
+    import core.api.routes.operator_ingestion as operator_route
+    from core.api.main import app
+    from core.config import config
+
+    monkeypatch.setattr(config, "OPERATOR_GATEWAY_SECRET", "operator-secret")
+    operator_route._overall_cache = None
+    response = TestClient(app).get(
+        "/api/v1/operator/ingestion/overall",
+        headers={"x-seacommons-operator-gateway": "operator-secret"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scope"] == "all_time"
+    assert [stage["id"] for stage in payload["stages"]] == [
+        "raw", "normalized", "derived", "episodes", "hypotheses",
+        "corroborated", "review_ready",
+    ]
+    assert set(payload["sensor_activity"]) >= {
+        "ais_fixes", "radio_bursts", "radio_events", "satellite_observations", "source_names",
+    }
+    assert set(payload["breakdowns"]) >= {
+        "raw_by_source", "raw_observation_types", "normalized_event_types",
+        "episode_families", "hypothesis_types", "hypothesis_states",
+    }

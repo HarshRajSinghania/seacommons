@@ -18,7 +18,13 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import func
 
 from core.config import config
-from core.db.models import IngestedSignalDB, IntelEventDB, SourceObservationDB
+from core.db.models import (
+    IngestedSignalDB,
+    IntelEventDB,
+    InvestigationHypothesisDB,
+    MaritimeEpisodeDB,
+    SourceObservationDB,
+)
 from core.db.session import session_scope
 
 router = APIRouter(prefix="/api/v1/operator/ingestion", tags=["operator-ingestion"])
@@ -209,6 +215,9 @@ def operator_ingestion_overview(
         },
         "acquisition": acquisition,
         "sources": sources,
+        "pipeline_status": __import__(
+            "core.api.routes.status", fromlist=["build_public_status"]
+        ).build_public_status(hours),
         "note": (
             "SourceObservation stores the canonical immutable envelope, hash/reference and provenance. "
             "Payload bytes are not stored inline; normalized text and parser output are visible in /events."
@@ -314,3 +323,67 @@ def operator_ingestion_stream(
     )
     items.sort(key=lambda item: str(item.get("received_at") or item.get("timestamp_utc") or ""), reverse=True)
     return {"items": items[:limit], "count": min(len(items), limit)}
+
+
+@router.get("/analysis")
+def operator_analysis_outputs(
+    request: Request,
+    limit: int = Query(80, ge=1, le=250),
+    hours: int = Query(24, ge=1, le=720),
+) -> dict[str, Any]:
+    _require_gateway(request)
+    cutoff = _since(hours)
+    with session_scope() as db:
+        episodes = (
+            db.query(MaritimeEpisodeDB)
+            .filter(MaritimeEpisodeDB.updated_at >= cutoff)
+            .order_by(MaritimeEpisodeDB.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+        hypotheses = (
+            db.query(InvestigationHypothesisDB)
+            .filter(InvestigationHypothesisDB.updated_at >= cutoff)
+            .order_by(InvestigationHypothesisDB.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    episode_rows = [
+        {
+            "kind": "maritime_episode",
+            "id": row.episode_id,
+            "family": row.episode_family,
+            "status": row.status,
+            "verification_status": row.verification_status,
+            "subjects": len(row.subject_ids or []),
+            "observations": len(row.observation_ids or []),
+            "independence_groups": len(row.independence_groups or []),
+            "start_at": _dt(row.start_at),
+            "end_at": _dt(row.end_at),
+            "updated_at": _dt(row.updated_at),
+        }
+        for row in episodes
+    ]
+    hypothesis_rows = [
+        {
+            "kind": "investigation_hypothesis",
+            "id": row.hypothesis_id,
+            "episode_id": row.episode_id,
+            "hypothesis_type": row.hypothesis_type,
+            "state": row.state,
+            "evidence_stage": row.evidence_stage,
+            "evidence_links": len(row.evidence_links or []),
+            "reason_codes": list(row.reason_codes or []),
+            "updated_at": _dt(row.updated_at),
+        }
+        for row in hypotheses
+    ]
+    items = episode_rows + hypothesis_rows
+    items.sort(key=lambda item: str(item.get("updated_at") or item.get("end_at") or ""), reverse=True)
+    return {
+        "items": items[:limit],
+        "episodes": len(episode_rows),
+        "hypotheses": len(hypothesis_rows),
+        "count": min(len(items), limit),
+    }

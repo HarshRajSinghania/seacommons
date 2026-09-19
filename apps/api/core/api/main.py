@@ -32,7 +32,7 @@ from core.config import config
 from core import bootstrap
 from core.api.routes import alerts, drift, anomaly, forensic, integrations, ops, vessels
 from core.api.routes import ingest, probability, weather, zones, intel, cases, governance, live, play, connectors
-from core.api.routes import mda, audit, operator_ingestion
+from core.api.routes import mda, audit, operator_dashboard, operator_ingestion, status
 from core.db.session import init_database
 from core.security import READ_ROLES, WRITE_ROLES, require_roles, validate_production_security
 from core.config_validation import validate_configuration
@@ -160,7 +160,8 @@ async def authorization_gate(request, call_next):
     ):
         return JSONResponse(status_code=403, content={"detail": "This operation is disabled in the public demo"})
     public = path in {
-        "/health", "/ready", "/metrics", "/docs", "/openapi.json", "/redoc",
+        "/", "/health", "/ready", "/metrics", "/docs", "/openapi.json", "/redoc",
+        "/status", "/api/v1/status",
         "/api/v1/ingest/twilio/whatsapp", "/api/v1/ingest/twilio/sms",
         "/api/v1/ingest/meta/whatsapp",
         "/api/v1/ingest/telegram", "/api/v1/ingest/webhook",
@@ -256,6 +257,13 @@ app.include_router(connectors.router)
 app.include_router(mda.router)
 app.include_router(audit.router)
 app.include_router(operator_ingestion.router)
+app.include_router(operator_dashboard.router)
+app.include_router(status.router)
+
+
+@app.get("/")
+async def root_status():
+    return status.build_public_status(24)
 
 
 @app.get("/health")

@@ -85,7 +85,7 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         )
         ais_fixes = (
             db.query(func.count(VesselTrackDB.id))
-            .filter(VesselTrackDB.received_at >= cutoff)
+            .filter(VesselTrackDB.ts >= cutoff)
             .scalar()
             or 0
         )

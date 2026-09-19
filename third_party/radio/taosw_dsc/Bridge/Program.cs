@@ -8,7 +8,7 @@ using TAOSW.DSC_Decoder.Core.TAOSW.DSC_Decoder.Core;
 
 var protocol = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
 Console.SetOut(TextWriter.Null);
-var states = new Dictionary<int, DecoderState>();
+var states = new Dictionary<string, DecoderState>();
 
 string? line;
 while ((line = Console.In.ReadLine()) is not null)
@@ -23,10 +23,18 @@ while ((line = Console.In.ReadLine()) is not null)
         if (encoding == "pcm_s16le" && IsDscFrequency(frequency))
         {
             var rate = root.GetProperty("sample_rate_hz").GetInt32();
+            var lineage = root.TryGetProperty("physical_lineage", out var lineageElement)
+                ? lineageElement.GetString()
+                : null;
+            var receiver = root.TryGetProperty("receiver_id", out var receiverElement)
+                ? receiverElement.GetString()
+                : null;
+            var streamKey = $"{lineage ?? receiver ?? "unknown"}|{frequency}|{rate}";
             var pcm = Convert.FromBase64String(root.GetProperty("payload_b64").GetString() ?? "");
             if (pcm.Length > 0 && pcm.Length % 2 == 0)
             {
-                if (!states.TryGetValue(rate, out var state)) states[rate] = state = new DecoderState(rate);
+                if (!states.TryGetValue(streamKey, out var state))
+                    states[streamKey] = state = new DecoderState(rate);
                 state.Process(pcm);
                 foreach (var msg in state.Drain()) if (msg.Status == "OK") messages.Add(ToWire(msg));
             }

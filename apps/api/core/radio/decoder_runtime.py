@@ -179,7 +179,15 @@ class RadioDecoderRuntime:
 class JSONLProcessDecoder:
     """Persistent bounded JSONL decoder subprocess. No shell, no file persistence."""
 
-    def __init__(self, command: tuple[str, ...], *, timeout_s: float = 0.5, max_output_chars: int = 65536) -> None:
+    def __init__(
+        self,
+        command: tuple[str, ...],
+        *,
+        timeout_s: float = 0.5,
+        max_output_chars: int = 65536,
+        accepted_frequencies_hz: frozenset[int] | None = None,
+        frequency_tolerance_hz: int = 100,
+    ) -> None:
         if not command or not command[0]:
             raise ValueError("decoder command required")
         if timeout_s <= 0:
@@ -187,6 +195,8 @@ class JSONLProcessDecoder:
         self._command = tuple(command)
         self._timeout_s = float(timeout_s)
         self._max_output_chars = max(1024, int(max_output_chars))
+        self._accepted_frequencies_hz = accepted_frequencies_hz
+        self._frequency_tolerance_hz = max(0, int(frequency_tolerance_hz))
         self._process: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
 
@@ -207,6 +217,15 @@ class JSONLProcessDecoder:
         return self._process
 
     def decode(self, frame: EphemeralRadioFrame) -> Iterable[Mapping[str, object]]:
+        if self._accepted_frequencies_hz is not None and not any(
+            abs(int(frame.frequency_hz) - frequency) <= self._frequency_tolerance_hz
+            for frequency in self._accepted_frequencies_hz
+        ):
+            # Frequency routing happens before PCM normalization/base64/process
+            # I/O. At 2.1875 MHz the NAVTEX decoder must not consume every DSC
+            # audio frame merely to return an empty result.
+            return ()
+
         from core.radio.pcm import normalize_pcm16le
 
         pcm = normalize_pcm16le(
@@ -256,6 +275,21 @@ class JSONLProcessDecoder:
 _decoder_runtime: RadioDecoderRuntime | None = None
 _decoder_runtime_lock = threading.Lock()
 
+_NAVTEX_FREQUENCIES_HZ = frozenset({490_000, 518_000})
+_DSC_FREQUENCIES_HZ = frozenset(
+    {2_187_500, 4_207_500, 6_312_000, 8_414_500, 12_577_000, 16_804_500, 156_525_000}
+)
+
+
+def _builtin_decoder_frequencies(command: tuple[str, ...]) -> frozenset[int] | None:
+    """Frequency contract for the bundled decoders; unknown plugins stay generic."""
+    joined = " ".join(command).lower()
+    if "navtex_jsonl.py" in joined:
+        return _NAVTEX_FREQUENCIES_HZ
+    if "seacommonsdscbridge.dll" in joined:
+        return _DSC_FREQUENCIES_HZ
+    return None
+
 
 def runtime_from_config() -> RadioDecoderRuntime:
     from core.config import config
@@ -271,7 +305,14 @@ def runtime_from_config() -> RadioDecoderRuntime:
             for raw in commands[:4]:
                 if not isinstance(raw, list) or not raw or not all(isinstance(v, str) and v for v in raw):
                     continue
-                decoders.append(JSONLProcessDecoder(tuple(raw), timeout_s=config.RADIO_DECODER_TIMEOUT_S))
+                command = tuple(raw)
+                decoders.append(
+                    JSONLProcessDecoder(
+                        command,
+                        timeout_s=config.RADIO_DECODER_TIMEOUT_S,
+                        accepted_frequencies_hz=_builtin_decoder_frequencies(command),
+                    )
+                )
     return RadioDecoderRuntime(
         enabled=bool(config.RADIO_DECODER_ENABLED and decoders),
         decoders=decoders,

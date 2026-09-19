@@ -189,3 +189,35 @@ def test_decoder_worker_survives_downstream_handler_error():
     assert status["errors"] >= 1
     assert status["decoded"] == 0
     runtime.stop()
+
+
+def test_frequency_filtered_decoder_skips_incompatible_frame_without_process_start():
+    import sys
+
+    from core.radio.decoder_runtime import JSONLProcessDecoder
+
+    decoder = JSONLProcessDecoder(
+        (sys.executable, "/definitely/not/a/decoder.py"),
+        accepted_frequencies_hz=frozenset({490_000, 518_000}),
+    )
+    assert tuple(decoder.decode(_frame())) == ()
+    assert decoder._process is None
+
+
+def test_builtin_decoder_frequency_contracts_are_disjoint_for_dsc_and_navtex():
+    from core.radio.decoder_runtime import _builtin_decoder_frequencies
+
+    navtex = _builtin_decoder_frequencies(("python", "scripts/radio_decoders/navtex_jsonl.py"))
+    dsc = _builtin_decoder_frequencies(("dotnet", "SeaCommonsDscBridge.dll"))
+    assert navtex == frozenset({490_000, 518_000})
+    assert 2_187_500 in dsc
+    assert navtex.isdisjoint(dsc)
+
+
+def test_dsc_bridge_keeps_decoder_state_per_receiver_lineage():
+    from pathlib import Path
+
+    source = Path("third_party/radio/taosw_dsc/Bridge/Program.cs").read_text()
+    assert "Dictionary<string, DecoderState>" in source
+    assert 'physical_lineage' in source
+    assert 'streamKey' in source

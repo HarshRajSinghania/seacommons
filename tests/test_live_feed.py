@@ -2219,3 +2219,35 @@ def test_normalized_sar_responder_activity_is_observation_not_case(monkeypatch) 
     assert "linked_mmsi" not in props
     assert "mmsi" not in props
     assert "vessel_name" not in props
+
+def test_stale_sar_responder_activity_expires_before_24h_live_window(monkeypatch) -> None:
+    stale = IntelEvent(
+        id="saractivity:stale",
+        timestamp_utc=(datetime.now(timezone.utc) - timedelta(hours=7)).isoformat(),
+        type="ngo_activity",
+        severity="medium",
+        lat=37.5,
+        lon=12.0,
+        title="SAR responder multi-vessel convergence — Ocean Viking",
+        source="SeaCommons AIS analysis",
+        linked_mmsi="258479000",
+        metadata={
+            "maritime_domain": "sar",
+            "publication_status": "published",
+            "source_policy": "official_api",
+            "verification_status": "single_source_observed",
+            "coordinate_source": "ais_position",
+            "evidence_stage": "derived",
+            "source_lineage": "ais_sensor_lineage",
+            "independent_source_count": 1,
+            "activity_kind": "responder_convergence_observed",
+            "observation_type": "sar_responder_activity",
+            "operator_type": "civil_ngo",
+        },
+    )
+    monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [stale])
+    monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
+    collection = public_signal_collection(limit=50, mode="humanitarian")
+    assert collection["features"] == []
+    assert collection["meta"]["total"] == 0
+    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 0

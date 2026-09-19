@@ -1087,18 +1087,15 @@ function App() {
   }, [apiBase]);
 
   useEffect(() => {
-    if (isPublicDemoHost) {
+    // Public Live is case/activity-first, not a fleet tracker. The complete
+    // civil/state SAR registry belongs to the controlled operational console.
+    // This also prevents stale responder AIS positions from being mistaken for
+    // a current rescue operation on live.seacommons.org.
+    if (isPublicDemoHost || isPublicLiveHost) {
       setNgoVessels({ type: 'FeatureCollection', features: [] });
       return undefined;
     }
-    // AIS positions are public data either way; the public Live host reads
-    // them through /api/v1/live/ngo-vessels (unauthenticated) instead of the
-    // operator-only /api/v1/intel/ngo (requires a session). This effect used
-    // to bail out to an empty FeatureCollection for isPublicLiveHost too --
-    // the comment already described the intended unauthenticated path, the
-    // guard above it just never let the code reach it. The NGO fleet was
-    // never once fetched on live.seacommons.org as a result.
-    const path = isPublicLiveHost ? '/api/v1/live/ngo-vessels' : '/api/v1/intel/ngo';
+    const path = '/api/v1/intel/ngo';
     let alive = true;
     async function loadNgoVessels() {
       try {
@@ -3765,18 +3762,6 @@ function App() {
                 selectedEventId={selectedIntelEventId}
                 onOpenReport={openIntelReport}
               />
-              <CivilSarFleetPanel
-                  fleet={ngoVessels}
-                  onSelectVessel={(mmsi) => {
-                    const feature = (ngoVessels.features || []).find(
-                      (f) => String(f.properties?.mmsi || '') === String(mmsi),
-                    );
-                    const coords = feature?.geometry?.coordinates;
-                    if (coords && mapRef?.current) {
-                      mapRef.current.flyTo({ center: coords, zoom: 9, duration: 800 });
-                    }
-                  }}
-                />
             </div>
           </aside>
           <button
@@ -3859,6 +3844,19 @@ function App() {
                   <button onClick={() => loadWeatherGridForMap(mapRef.current).catch((err) => setError(err.message || 'Weather grid unavailable'))}>Refresh overlay</button>
                 </div>
               </section>
+
+              <CivilSarFleetPanel
+                fleet={ngoVessels}
+                onSelectVessel={(mmsi) => {
+                  const feature = (ngoVessels.features || []).find(
+                    (f) => String(f.properties?.mmsi || '') === String(mmsi),
+                  );
+                  const coords = feature?.geometry?.coordinates;
+                  if (coords && mapRef?.current) {
+                    mapRef.current.flyTo({ center: coords, zoom: 9, duration: 800 });
+                  }
+                }}
+              />
 
               <section className="panel-block">
                 <p className="section-kicker">Recent signals</p>

@@ -66,6 +66,26 @@ _LIVE_WINDOW_LIMIT = 500
 _LIVE_DURABLE_SCAN_LIMIT = 1500
 _LIVE_DURABLE_TYPE_SCAN_LIMIT = 500
 
+# A derived SAR-responder movement cue is operationally useful only while the
+# underlying AIS behaviour is fresh. It is not a 24h humanitarian case.
+_SAR_ACTIVITY_LIVE_TTL = timedelta(hours=6)
+
+
+def _is_fresh_sar_activity(event: IntelEvent, *, now: datetime) -> bool:
+    meta = event.metadata or {}
+    if not (
+        event.type == "ngo_activity"
+        and meta.get("observation_type") == "sar_responder_activity"
+    ):
+        return True
+    try:
+        observed = datetime.fromisoformat(str(event.timestamp_utc).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    return now - observed.astimezone(UTC) <= _SAR_ACTIVITY_LIVE_TTL
+
 
 def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
     """Project only hypothesis-gated Maritime Intelligence into Live.
@@ -298,6 +318,11 @@ def public_signal_collection(
         "safety": [],
     }
     for event in events:
+        # Derived responder movement is a short-lived observation. Keeping a
+        # 19h-old convergence on the Live map makes a vessel that is now
+        # transiting elsewhere look as if it were still on scene.
+        if not _is_fresh_sar_activity(event, now=now):
+            continue
         # F-07: positive allow-lists, never humanitarian-by-complement.
         # environmental / unknown -> no operational compartment (still
         # fails closed). docs/fixes.md P0.1/P6.4: Maritime Safety

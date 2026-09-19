@@ -58,6 +58,9 @@ def test_operator_dashboard_requires_gateway(monkeypatch):
     assert "Raw ingestion" in response.text
     assert "Real investigation chains" in response.text
     assert "All-time corpus" in response.text
+    assert "Civil + state SAR fleet" in response.text
+    assert "/api/v1/live/ngo-vessels" in response.text
+    assert "AIS freshness only" in response.text
 
 
 def test_operator_overview_includes_public_pipeline_status(monkeypatch):

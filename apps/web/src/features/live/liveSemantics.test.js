@@ -80,6 +80,14 @@ test('public Live header no longer embeds acquisition pipeline controls', () => 
   assert.doesNotMatch(publicShell, />Acquisition</);
 });
 
+test('public Live does not render or fetch the complete SAR fleet registry', () => {
+  const publicShell = main.slice(main.indexOf('{isPublicLiveHost ? ('), main.indexOf('{!isPublicLiveHost', main.indexOf('{isPublicLiveHost ? (')));
+  assert.doesNotMatch(publicShell, /CivilSarFleetPanel/);
+  assert.match(main, /if \(isPublicDemoHost \|\| isPublicLiveHost\)[\s\S]{0,180}setNgoVessels\(\{ type: 'FeatureCollection', features: \[\] \}\)/);
+  assert.match(main, /const path = '\/api\/v1\/intel\/ngo'/);
+  assert.doesNotMatch(main, /const path = isPublicLiveHost \? '\/api\/v1\/live\/ngo-vessels'/);
+});
+
 test('movement panel distinguishes real tracks from unavailable movement evidence', () => {
   assert.match(cone, /Movement \/ drift evidence/);
   assert.match(cone, /No observed movement track is available/);

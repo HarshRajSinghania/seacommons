@@ -185,7 +185,20 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         )
 
     try:
-        live = public_signal_collection(limit=500, days=30, mode="all")
+        # Status must describe the same requested window as the rest of this
+        # payload. Previously this was hard-coded to 30 days, so a 24h status
+        # could report a stale Live case that /live/signals?days=1 no longer
+        # returned.
+        live_days = max(1, (hours + 23) // 24)
+        live_since = (
+            datetime.now(timezone.utc) - timedelta(hours=hours)
+        ).isoformat()
+        live = public_signal_collection(
+            limit=500,
+            days=live_days,
+            since=live_since,
+            mode="all",
+        )
         live_features = list(live.get("features") or [])
     except Exception:
         live_features = []
@@ -196,7 +209,8 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
     for feature in live_features:
         props = feature.get("properties") or {}
         domain = str(props.get("maritime_domain") or "").lower()
-        if domain == "humanitarian":
+        category = str(props.get("main_category") or "").lower()
+        if category == "humanitarian" or (not category and domain == "humanitarian"):
             humanitarian_live += 1
         else:
             maritime_live += 1

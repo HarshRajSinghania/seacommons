@@ -137,3 +137,45 @@ def test_operator_sar_fleet_is_private(monkeypatch):
     payload = allowed.json()
     assert payload["type"] == "FeatureCollection"
     assert payload["meta"]["map_position_policy"] == "live_only_10m"
+
+def test_public_status_live_count_uses_requested_window(monkeypatch):
+    from datetime import datetime, timezone
+
+    import core.api.routes.status as status_route
+    from core.api.main import app
+
+    captured = {}
+
+    def fake_public_signal_collection(**kwargs):
+        captured.update(kwargs)
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [14.5, 35.9]},
+                    "properties": {
+                        "id": "humanitarian-now",
+                        "main_category": "humanitarian",
+                        "maritime_domain": "sar",
+                        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                        "tier": "operational",
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(status_route, "public_signal_collection", fake_public_signal_collection)
+    status_route._status_cache = None
+
+    response = TestClient(app).get("/api/v1/status?hours=24")
+    assert response.status_code == 200
+    assert captured["days"] == 1
+    assert captured["mode"] == "all"
+    assert captured["since"]
+    assert response.json()["live"] == {
+        "total": 1,
+        "operational": 1,
+        "humanitarian": 1,
+        "maritime": 0,
+    }

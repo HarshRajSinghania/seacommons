@@ -165,6 +165,13 @@ _PUBLIC_METADATA = frozenset(
         "offshore_anomaly_qualified",
         "offshore_reason_codes",
         "offshore_rationale",
+        # core.live.retention: the durable Live visibility contract, when
+        # this event has earned one. None of these three imply the
+        # event is still operationally active -- only that it must stay
+        # visible until live_expires_at (see core.live.feed's read-side use).
+        "live_entered_at",
+        "last_qualified_observation_at",
+        "live_expires_at",
         "drift_eligible",
         "drift_event_id",
         "drift_vessel_type",

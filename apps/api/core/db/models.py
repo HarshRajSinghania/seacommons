@@ -218,6 +218,18 @@ class IntelEventDB(Base):
     coordinate_review_status = Column(String(40))
     location_uncertainty_m   = Column(Float)
 
+    # ── Durable Live retention contract ────────────────────────────────────
+    # A qualified observation must stay visible on Live for >=24h from its
+    # last qualified observation, independent of the bounded in-memory deque,
+    # detector re-firing, or process restart. live_case_key groups repeated
+    # qualifying observations of the same subject/anomaly-family so a later
+    # one can extend (never shorten) the window instead of starting a fresh
+    # one. live_expires_at is the sole server-authoritative removal signal.
+    live_entered_at               = Column(DateTime, nullable=True)
+    last_qualified_observation_at = Column(DateTime, nullable=True)
+    live_expires_at               = Column(DateTime, nullable=True, index=True)
+    live_case_key                 = Column(String(160), nullable=True, index=True)
+
     # docs/fixes.md F-14 / Phase 2.2: persisted_events() and the edge
     # publisher's collect() all filter a recent time window by source or type
     # and sort by timestamp_utc desc. Composite indexes serve the filter and
@@ -583,6 +595,14 @@ class InvestigationHypothesisDB(Base):
         DateTime, default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+    # Durable Live retention ceiling for the published state (core.live.
+    # retention). updated_at is not usable for this: it bumps on every no-op
+    # re-save, not only when new qualified evidence arrives, so a stale
+    # candidate/collecting hypothesis could otherwise look perpetually fresh.
+    live_entered_at               = Column(DateTime, nullable=True)
+    last_qualified_observation_at = Column(DateTime, nullable=True)
+    live_expires_at               = Column(DateTime, nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_investigation_hypotheses_type_state", "hypothesis_type", "state"),

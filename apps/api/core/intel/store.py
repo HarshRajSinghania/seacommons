@@ -710,6 +710,63 @@ class IntelStore:
             return
         self._enqueue_persist(self._persist_sync, event)
 
+    @staticmethod
+    def _live_case_key_for(event: "IntelEvent") -> Optional[str]:
+        from core.live.retention import live_case_key
+
+        return live_case_key(event.type, event.metadata or {}, event.linked_mmsi)
+
+    @staticmethod
+    def _live_retention_columns(
+        event: "IntelEvent", *, prior_entered_at, prior_expires_at,
+    ) -> dict[str, Any]:
+        """Durable Live retention stamp for a persisted IntelEventDB row.
+
+        Only a qualifying AIS-evidence event gets a window; everything else
+        (the vast majority of events) gets all-None columns, unchanged from
+        before this contract existed.
+        """
+        from core.live.retention import compute_retention_window, is_qualifying_ais_evidence
+
+        metadata = event.metadata or {}
+        if not is_qualifying_ais_evidence(event.type, metadata):
+            return {
+                "live_entered_at": None,
+                "last_qualified_observation_at": None,
+                "live_expires_at": None,
+                "live_case_key": None,
+            }
+        now = datetime.now(timezone.utc)
+        entered_at, last_qualified_at, expires_at = compute_retention_window(
+            prior_entered_at=prior_entered_at, prior_expires_at=prior_expires_at, now=now,
+        )
+        return {
+            "live_entered_at": entered_at,
+            "last_qualified_observation_at": last_qualified_at,
+            "live_expires_at": expires_at,
+            "live_case_key": IntelStore._live_case_key_for(event),
+        }
+
+    @staticmethod
+    def _apply_retention_to_metadata(event: "IntelEvent", retained: dict[str, Any]) -> None:
+        """Mirror the durable retention stamp onto the in-memory event too.
+
+        Without this, an event still resident in the bounded deque (never
+        evicted, no restart) would have no way to tell feed.py it already
+        earned a durable window -- only live_retained_events()'s DB read
+        would know. Keeping both in sync means the read-side check in
+        core.live.feed is uniform regardless of whether the event came from
+        the deque or a durable re-hydration.
+        """
+        if retained.get("live_expires_at") is None:
+            return
+        event.metadata = {
+            **event.metadata,
+            "live_entered_at": retained["live_entered_at"].isoformat(),
+            "last_qualified_observation_at": retained["last_qualified_observation_at"].isoformat(),
+            "live_expires_at": retained["live_expires_at"].isoformat(),
+        }
+
     def _persist_sync(self, event: IntelEvent) -> None:
         try:
             from core.db.session import session_scope
@@ -733,6 +790,13 @@ class IntelStore:
                     merged = {**dict(existing_by_id.meta or {}), **event.metadata}
                     existing_by_id.meta = merged
                     event.metadata = merged
+                    retained = self._live_retention_columns(
+                        event, prior_entered_at=existing_by_id.live_entered_at,
+                        prior_expires_at=existing_by_id.live_expires_at,
+                    )
+                    for key, value in retained.items():
+                        setattr(existing_by_id, key, value)
+                    self._apply_retention_to_metadata(event, retained)
                     db.flush()
                     return
                 if event.url and event.type in _URL_DEDUP_TYPES:
@@ -762,6 +826,22 @@ class IntelStore:
                             existing.id,
                         )
                         return
+                prior_entered_at = prior_expires_at = None
+                case_key = self._live_case_key_for(event)
+                if case_key is not None:
+                    prior_case = (
+                        db.query(IntelEventDB)
+                        .filter(IntelEventDB.live_case_key == case_key)
+                        .order_by(IntelEventDB.created_at.desc())
+                        .first()
+                    )
+                    if prior_case is not None:
+                        prior_entered_at = prior_case.live_entered_at
+                        prior_expires_at = prior_case.live_expires_at
+                retained = self._live_retention_columns(
+                    event, prior_entered_at=prior_entered_at, prior_expires_at=prior_expires_at,
+                )
+                self._apply_retention_to_metadata(event, retained)
                 db.add(IntelEventDB(
                     id=event.id,
                     timestamp_utc=event.timestamp_utc,
@@ -776,6 +856,7 @@ class IntelStore:
                     linked_mmsi=event.linked_mmsi,
                     meta=event.metadata,
                     **event.canonical_columns(),
+                    **retained,
                 ))
         except Exception as exc:
             # WARNING, not DEBUG: this is invisible at default production log
@@ -1347,6 +1428,62 @@ class IntelStore:
                 ]
         except Exception as exc:
             logger.warning("intel_store: durable event read skipped: %s", exc)
+            return []
+
+    def live_retained_events(self, *, limit: int = 500) -> list[IntelEvent]:
+        """Durably re-hydrate every still-in-window qualified observation.
+
+        core.live.retention's whole point: visibility is a function of
+        ``live_expires_at`` alone, never of deque residency. Unlike
+        persisted_events(), the age filter is live_expires_at > now, not a
+        rolling calendar window -- a qualifying event stays eligible for the
+        entire retention window regardless of how old its timestamp_utc is.
+        """
+        try:
+            from core.db.models import IntelEventDB
+            from core.db.session import session_scope
+
+            # This project's SQLite DateTime columns round-trip naive (see
+            # core.intel.lifecycle.parse_utc and friends); a naive-UTC filter
+            # value compares correctly against them; an aware one would not
+            # reliably in the sqlite3 driver's default adapter.
+            now_naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            with session_scope() as db:
+                rows = (
+                    db.query(IntelEventDB)
+                    .filter(IntelEventDB.live_expires_at.isnot(None))
+                    .filter(IntelEventDB.live_expires_at > now_naive_utc)
+                    .order_by(IntelEventDB.live_expires_at.desc())
+                    .limit(limit)
+                    .all()
+                )
+                return [
+                    IntelEvent(
+                        id=row.id,
+                        timestamp_utc=row.timestamp_utc,
+                        type=row.type or "",
+                        severity=row.severity or "",
+                        lat=row.lat,
+                        lon=row.lon,
+                        title=row.title or "",
+                        text=row.text or "",
+                        url=row.url or "",
+                        source=row.source or "",
+                        linked_mmsi=row.linked_mmsi or "",
+                        metadata={
+                            **dict(row.meta or {}),
+                            "live_entered_at": row.live_entered_at.isoformat() if row.live_entered_at else None,
+                            "last_qualified_observation_at": (
+                                row.last_qualified_observation_at.isoformat()
+                                if row.last_qualified_observation_at else None
+                            ),
+                            "live_expires_at": row.live_expires_at.isoformat() if row.live_expires_at else None,
+                        },
+                    )
+                    for row in rows
+                ]
+        except Exception as exc:
+            logger.warning("intel_store: live-retained event read skipped: %s", exc)
             return []
 
     def events(

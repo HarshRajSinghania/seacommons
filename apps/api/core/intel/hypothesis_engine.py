@@ -20,7 +20,7 @@ from typing import Any, Optional
 from core.intel.episode_store import save_episode
 from core.intel.hypothesis import InvestigationHypothesis, new_hypothesis, transition
 from core.intel.hypothesis_eligibility import evaluate_hypothesis_eligibility
-from core.intel.hypothesis_store import get_hypothesis, save_hypothesis
+from core.intel.hypothesis_store import get_hypothesis, list_hypotheses, save_hypothesis
 from core.intel.store import IntelEvent, intel_store
 
 
@@ -278,3 +278,54 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
 
     save_hypothesis(hyp)
     return hyp
+
+
+def expire_stale_hypotheses(
+    *, now: Optional[Any] = None, stale_after: Optional[Any] = None,
+) -> int:
+    """Transition candidate/collecting hypotheses whose evidence has gone
+    quiet for 24h into "expired" (docs section 4: the 24h Live window is an
+    investigation decision window, not an indefinite hold).
+
+    Uses episode/evidence time, never updated_at: updated_at bumps on every
+    no-op re-evaluation (the same episode being re-scanned without new
+    evidence), which would make a truly stale hypothesis look perpetually
+    fresh. The expired hypothesis remains durable (for audit) but drops out
+    of both Live and Play once its state is no longer candidate/collecting.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from core.db.models import IntelEventDB, MaritimeEpisodeDB
+    from core.db.session import session_scope
+    from core.intel.lifecycle import parse_utc
+
+    now = now or datetime.now(timezone.utc)
+    stale_after = stale_after or timedelta(hours=24)
+    expired_count = 0
+    with session_scope() as db:
+        for state in ("candidate", "collecting"):
+            for hyp in list_hypotheses(state=state, limit=5000):
+                last_evidence_at = None
+                if hyp.episode_id:
+                    episode = db.get(MaritimeEpisodeDB, hyp.episode_id)
+                    if episode is not None and episode.end_at is not None:
+                        last_evidence_at = episode.end_at
+                if last_evidence_at is None and hyp.evidence_links:
+                    rows = (
+                        db.query(IntelEventDB)
+                        .filter(IntelEventDB.id.in_(list(hyp.evidence_links)))
+                        .all()
+                    )
+                    timestamps = [t for t in (parse_utc(r.timestamp_utc) for r in rows) if t is not None]
+                    if timestamps:
+                        last_evidence_at = max(timestamps)
+                if last_evidence_at is None:
+                    continue
+                if last_evidence_at.tzinfo is None:
+                    last_evidence_at = last_evidence_at.replace(tzinfo=timezone.utc)
+                if now - last_evidence_at < stale_after:
+                    continue
+                expired = transition(hyp, "expired", actor="hypothesis_engine_v1_expiry")
+                save_hypothesis(expired)
+                expired_count += 1
+    return expired_count

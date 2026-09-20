@@ -493,6 +493,20 @@ def _job_incident_watch() -> None:
         logger.warning("Scheduler incident_watch failed: %s", exc)
 
 
+def _job_expire_stale_hypotheses() -> None:
+    """Close out candidate/collecting hypotheses whose evidence went quiet
+    24h+ ago. Keeps Live/Play from holding an investigation open forever
+    just because nothing ever explicitly rejected it."""
+    try:
+        from core.intel.hypothesis_engine import expire_stale_hypotheses
+
+        expired = expire_stale_hypotheses()
+        if expired:
+            logger.info("Expired %d stale candidate/collecting hypotheses", expired)
+    except Exception as exc:
+        logger.warning("Scheduler expire_stale_hypotheses failed: %s", exc)
+
+
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
 
 def start() -> None:
@@ -530,6 +544,10 @@ def start() -> None:
         scheduler.add_job(_job_incident_watch, IntervalTrigger(minutes=5),
                           id="incident_watch", replace_existing=True,
                           max_instances=1, misfire_grace_time=300, next_run_time=_soon())
+
+        scheduler.add_job(_job_expire_stale_hypotheses, IntervalTrigger(minutes=30),
+                          id="expire_stale_hypotheses", replace_existing=True,
+                          max_instances=1, misfire_grace_time=600)
 
         scheduler.add_job(_job_satellite_enrichment, IntervalTrigger(minutes=30),
                           id="satellite_enrichment", replace_existing=True,

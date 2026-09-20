@@ -137,15 +137,39 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     }
 
 
-def _is_public_play_investigation(hypothesis) -> bool:
-    """Expose the complete investigation lifecycle in Play.
+# The public promotion boundary: only a hypothesis that has crossed review
+# (or been explicitly, durably rejected) reaches Play. candidate/collecting
+# are internal Live investigation state -- the vast majority of raw
+# detector-derived hypotheses never advance past them, and publishing every
+# one turns Play into an unfiltered detector log instead of a small number
+# of evidence-backed cases. expired is retained durably for audit but is not
+# public either (it means the cue never gathered sufficient evidence).
+_PUBLIC_PLAY_INVESTIGATION_STATES = frozenset({"review_ready", "assessed", "published", "rejected"})
 
-    Play is the archive/research surface, unlike Live. Candidate, collecting,
-    review-ready, assessed, published and rejected hypotheses are all retained
-    here with their state and evidence stage made explicit. Subject identifiers
-    are intentionally not projected into the public payload.
+
+def _is_public_play_investigation(hypothesis) -> bool:
+    """Whether this hypothesis has crossed the public promotion boundary.
+
+    Play is the archive/research surface, but it is not an unfiltered
+    detector feed: a hypothesis reaches it only once it has left
+    candidate/collecting (review_ready, assessed, published), or been
+    explicitly rejected -- a rejected hypothesis is retained as a closed
+    negative case, not silently dropped. Subject identifiers are
+    intentionally not projected into the public payload.
     """
-    return bool(hypothesis.hypothesis_type and hypothesis.state)
+    if not (hypothesis.hypothesis_type and hypothesis.state):
+        return False
+    return hypothesis.state in _PUBLIC_PLAY_INVESTIGATION_STATES
+
+
+def _archive_decision(hypothesis) -> str:
+    if hypothesis.state == "rejected":
+        return "rejected"
+    if hypothesis.state == "expired":
+        return "expired"
+    if hypothesis.state in {"candidate", "collecting"}:
+        return "internal_only"
+    return "promoted"
 
 
 def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> dict[str, Any]:
@@ -194,6 +218,16 @@ def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> 
         },
         hypothesis_type=hypothesis.hypothesis_type,
     )
+    independence_groups = list(episode.independence_groups or []) if episode is not None else []
+    verification_status = str(episode.verification_status or "") if episode is not None else ""
+    # Epistemically strict: corroborated means >=2 independent evidence
+    # lineages, never "assessed"/"confirmed" review state and never a raw
+    # evidence-link/detector count. core.intel.fusion.verification_for_event_ids
+    # is the canonical classifier that already produces both of these fields
+    # on the episode; Play only ever reads them, never re-derives its own.
+    corroborated = (
+        verification_status == "multi_source_corroborated" or len(independence_groups) >= 2
+    )
     return {
         "incident_id": hypothesis.hypothesis_id,
         "incident_status": hypothesis.state,
@@ -210,7 +244,13 @@ def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> 
         "domain": "maritime",
         "analysis_state": hypothesis.state,
         "investigation": True,
+        "hypothesis_state": hypothesis.state,
         "evidence_stage": hypothesis.evidence_stage,
+        "verification_status": verification_status,
+        "corroborated": corroborated,
+        "independence_groups": independence_groups,
+        "evidence_count": len(hypothesis.evidence_links or ()),
+        "archive_decision": _archive_decision(hypothesis),
         "review_boundary_crossed": hypothesis.state in {
             "review_ready", "assessed", "published"
         },
@@ -621,6 +661,41 @@ def play_incident_timeline(incident_id: str):
                     "geometry": geometry,
                     "properties": {"evidence_stage": hypothesis.evidence_stage},
                 })
+
+            # Bug fix: this branch used to `return` here, before ever reaching
+            # the drift/satellite enrichment queries below -- a promoted
+            # Maritime Investigation dossier could never include satellite
+            # observations, drift products, or (once linked) radio evidence.
+            # Drift and satellite are persisted keyed by the *originating*
+            # IntelEvent id, not the hypothesis_id, so key the lookup off
+            # every resolved evidence event id (both bare and "intel:"
+            # prefixed, matching drift_service's own persistence convention)
+            # -- a naive incident_id == hypothesis_id match returns nothing.
+            evidence_ids = [e.id for e in evidence_events]
+            drift_keys = [incident_id, f"intel:{incident_id}"]
+            for evidence_id in evidence_ids:
+                drift_keys.append(evidence_id)
+                drift_keys.append(f"intel:{evidence_id}")
+            drifts = (
+                db.query(DriftResultDB)
+                .filter(
+                    DriftResultDB.status == "completed",
+                    DriftResultDB.event_id.in_(drift_keys),
+                )
+                .order_by(DriftResultDB.created_at.asc())
+                .all()
+            ) if drift_keys else []
+            timeline.extend(_drift_item(row) for row in drifts)
+
+            satellite_ids = [incident_id, *evidence_ids]
+            satellites = (
+                db.query(SatelliteObservationDB)
+                .filter(SatelliteObservationDB.incident_id.in_(satellite_ids))
+                .order_by(SatelliteObservationDB.acquisition_time.asc())
+                .all()
+            ) if satellite_ids else []
+            timeline.extend(_satellite_item(row) for row in satellites)
+
             timeline = [item for item in timeline if item.get("at")]
             timeline.sort(key=lambda item: item["at"])
             return {
@@ -629,6 +704,15 @@ def play_incident_timeline(incident_id: str):
                 "main_category": "maritime",
                 "incident_type": projection["incident_type"],
                 "investigation": True,
+                "archive_decision": _archive_decision(hypothesis),
+                "verification_status": projection.get("verification_status"),
+                "corroborated": projection.get("corroborated"),
+                "independence_groups": projection.get("independence_groups"),
+                "evidence_count": projection.get("evidence_count"),
+                "reason_codes": projection.get("reason_codes"),
+                "counter_indicators": projection.get("counter_indicators"),
+                "satellite_count": len(satellites),
+                "drift_count": len(drifts),
                 "timeline": timeline, "generated_at": now.isoformat(),
             }
 

@@ -280,8 +280,21 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
     # candidates may justify investigation, but only independently
     # corroborated evidence can become a reviewable public case.
     distinct_evidence = {str(value) for value in hyp.evidence_links if value}
+    episode_groups = {
+        str(value) for value in (
+            props.get("contributing_independence_groups")
+            or props.get("independence_groups")
+            or ()
+        ) if value
+    }
+    independently_corroborated = (
+        str(props.get("verification_status") or "") == "multi_source_corroborated"
+        or len(episode_groups) >= 2
+        or int(props.get("independent_source_count") or 0) >= 2
+    )
     if (
         hyp.state == "collecting"
+        and independently_corroborated
         and decision.evidence_stage in {"corroborated", "assessed", "confirmed"}
         and len(distinct_evidence) >= 2
         and bool(hyp.reason_codes)

@@ -454,11 +454,17 @@ class AISAnomalyDetector:
                 float(event.position.get("lat") or 0.0),
                 float(event.position.get("lon") or 0.0),
             )
+            try:
+                from core.vessels.registry import registry
+                vessel_context = (getattr(registry, "_cache", {}) or {}).get(event.mmsi, {})
+            except Exception:
+                vessel_context = {}
             offshore_metadata = {
                 "anomaly_confidence": event.confidence,
                 "anomaly_evidence": event.evidence,
                 "silent_seconds": (event.evidence or {}).get("silent_seconds"),
                 "gap_reason": event.evidence if event.anomaly_type in {"gap", "long_gap"} else None,
+                "vessel_type_context": vessel_context.get("ship_type"),
             }
             offshore_qualification = qualify_offshore_anomaly(
                 event.anomaly_type, offshore_metadata, offshore_context

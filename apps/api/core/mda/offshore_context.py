@@ -5,6 +5,26 @@ from typing import Any
 OFFSHORE_COAST_KM = 40.0
 OFFSHORE_PORT_KM = 40.0
 
+_PASSENGER_HSC_TYPES = frozenset((*range(40, 50), *range(60, 70)))
+
+
+def _vessel_type_context(metadata: dict[str, Any]) -> int | None:
+    raw = metadata.get("vessel_type_context", metadata.get("ship_type"))
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_low_specificity_scheduled_context(metadata: dict[str, Any]) -> bool:
+    # Public-qualification control only: raw detector evidence stays durable.
+    ship_type = _vessel_type_context(metadata)
+    if ship_type not in _PASSENGER_HSC_TYPES:
+        return False
+    behaviour = metadata.get("behaviour_context") or {}
+    reasons = set(behaviour.get("reason_codes") or ()) if isinstance(behaviour, dict) else set()
+    return not bool(reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
+
 
 def build_offshore_context(lat: float, lon: float) -> dict[str, Any]:
     from core.mda.reference import reference
@@ -77,6 +97,17 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         if prolonged:
             reasons.append("PROLONGED_OFFSHORE_GAP")
         reasons.extend(sorted(behaviour_reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"}))
+        if (
+            qualified
+            and not baseline_unusual
+            and silent_s < 6 * 3600
+            and _is_low_specificity_scheduled_context(metadata)
+        ):
+            qualified = False
+            reasons.extend([
+                "PASSENGER_HSC_LOW_SPECIFICITY",
+                "BASELINE_ROUTE_CONSISTENT",
+            ])
     elif anomaly in {"ais_rendezvous", "rendezvous", "sts"}:
         duration = float(metadata.get("duration_min") or 0.0)
         dark = bool(metadata.get("dark"))

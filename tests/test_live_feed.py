@@ -2401,7 +2401,10 @@ def test_short_lived_aground_self_report_does_not_enter_live() -> None:
 
 
 def test_corroborated_aground_can_enter_live() -> None:
-    from core.live.projection import _public_intel_feature, is_useful_public_case_feature
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
     base = datetime.now(timezone.utc)
     event = IntelEvent(
         id="audit-aground-port-corroborated", type="distress", severity="high",
@@ -2420,3 +2423,47 @@ def test_corroborated_aground_can_enter_live() -> None:
     feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
     assert feature is not None
     assert is_useful_public_case_feature(feature) is True
+
+
+def test_assessed_single_lineage_aground_is_not_independently_corroborated() -> None:
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
+    base = datetime.now(timezone.utc)
+    event = IntelEvent(
+        id="audit-aground-assessed-single", type="distress", severity="high",
+        lat=41.37, lon=2.18, title="Vessel ran aground — ASSESSED", source="ais",
+        linked_mmsi="224000003", timestamp_utc=base.isoformat(),
+        metadata={
+            "ais_nav_status_kind": "aground", "maritime_domain": "safety",
+            "publication_status": "published", "publication_state": "published",
+            "source_policy": "official_api", "verification_status": "single_source_observed",
+            "independent_source_count": 1, "evidence_stage": "assessed",
+            "contributing_independence_groups": ["ais_sensor_lineage"],
+            "episode_update_count": 4,
+            "first_observed_at": (base - timedelta(minutes=10)).isoformat(),
+            "last_observed_at": base.isoformat(),
+        },
+    )
+    feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is False
+
+
+def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
+    event = IntelEvent(
+        id="news-support-only", type="news", severity="low",
+        lat=35.4, lon=13.9, title="Context report", source="Official NGO RSS",
+        metadata={
+            "source_policy": "official_rss",
+            "verification_status": "multi_source_corroborated",
+        },
+    )
+    feature = _public_intel_feature(event)
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is False

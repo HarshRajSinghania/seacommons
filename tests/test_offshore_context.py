@@ -179,3 +179,49 @@ def test_non_offshore_qualification_preserves_full_result_contract() -> None:
     assert result["reason_codes"] == ["NOT_OFFSHORE"]
     assert result["stage"] == "anomaly"
     assert "not offshore" in result["rationale"].lower()
+
+
+def test_passenger_hsc_gap_needs_stronger_context_before_live(monkeypatch):
+    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
+    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
+    context = build_offshore_context(35.0, 15.0)
+    result = qualify_offshore_anomaly("gap", {
+        "silent_seconds": 5 * 3600,
+        "jamming_score": 0.0,
+        "vessel_type_context": 60,
+        "gap_reason": {
+            "hypothesis": "vessel_gap",
+            "nearby_vessels_reporting_before": 8,
+            "nearby_vessels_reporting_after": 8,
+            "confidence": 0.8,
+        },
+        "behaviour_context": {"reason_codes": []},
+    }, context)
+    assert result["qualified"] is False
+    assert "PASSENGER_HSC_LOW_SPECIFICITY" in result["reason_codes"]
+    assert "BASELINE_ROUTE_CONSISTENT" in result["reason_codes"]
+
+
+def test_passenger_hsc_route_deviation_can_still_qualify(monkeypatch):
+    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
+    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
+    context = build_offshore_context(35.0, 15.0)
+    result = qualify_offshore_anomaly("gap", {
+        "silent_seconds": 5 * 3600,
+        "jamming_score": 0.0,
+        "vessel_type_context": 60,
+        "gap_reason": {
+            "hypothesis": "vessel_gap",
+            "nearby_vessels_reporting_before": 8,
+            "nearby_vessels_reporting_after": 8,
+            "confidence": 0.8,
+        },
+        "behaviour_context": {"reason_codes": ["ROUTE_DEVIATION"]},
+    }, context)
+    assert result["qualified"] is True

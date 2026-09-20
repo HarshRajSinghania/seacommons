@@ -297,6 +297,22 @@ def dedupe_public_case_items(items: list[dict[str, Any]], *, window_seconds: int
     return [item for item in items if fields(item)[4] not in duplicate_ids]
 
 
+def _is_independently_corroborated_properties(props: dict[str, Any]) -> bool:
+    verification = str(props.get("verification_status") or "")
+    groups = {
+        str(value) for value in (
+            props.get("contributing_independence_groups")
+            or props.get("independence_groups")
+            or ()
+        ) if value
+    }
+    return (
+        verification == "multi_source_corroborated"
+        or len(groups) >= 2
+        or int(props.get("independent_source_count") or 0) >= 2
+    )
+
+
 def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     """Case-surface quality gate applied after privacy/publication projection.
 
@@ -311,6 +327,16 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     event_type = str(props.get("type") or "")
     anomaly_type = str(props.get("anomaly_type") or "")
     if event_type in {"correlated_alert", "dark_candidate"}:
+        return False
+    if event_type == "news":
+        # News can support a dossier but is not a standalone Live incident.
+        return False
+    if (
+        event_type in {"twitter", "mastodon", "bluesky"}
+        and str(props.get("main_category") or "") != "humanitarian"
+    ):
+        # Keep first-party Humanitarian social reporting (e.g. Alarm Phone),
+        # while generic Maritime social chatter remains supporting evidence.
         return False
     if event_type == "vessel_identity" and anomaly_type != "sanctioned_port_call":
         return False
@@ -337,13 +363,7 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
             # while it is still being observed. A lone historical ping remains
             # available in Play but must not sit in Live indefinitely.
             return False
-        verification = str(props.get("verification_status") or "")
-        evidence_stage = str(props.get("evidence_stage") or "")
-        independently_corroborated = (
-            verification == "multi_source_corroborated"
-            or evidence_stage in {"corroborated", "assessed", "confirmed"}
-            or int(props.get("independent_source_count") or 0) >= 2
-        )
+        independently_corroborated = _is_independently_corroborated_properties(props)
         if not independently_corroborated:
             geometry = feature.get("geometry") or {}
             coordinates = geometry.get("coordinates") or []
@@ -378,21 +398,16 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     source = str(props.get("source") or "").lower()
     category = str(props.get("visual_category") or "")
     verification = str(props.get("verification_status") or "")
-    if source == "ais" and category == "navigation_casualty" and verification == "ais_transponder":
+    if source == "ais" and category == "navigation_casualty":
         nav_kind = str(props.get("ais_nav_status_kind") or "")
-        independent = int(props.get("independent_source_count") or 0) >= 2
-        evidence_stage = str(props.get("evidence_stage") or "")
-        independently_corroborated = (
-            independent
-            or evidence_stage in {"corroborated", "assessed", "confirmed"}
-        )
+        independently_corroborated = _is_independently_corroborated_properties(props)
         if nav_kind == "aground" and not independently_corroborated:
             # AIS nav-status 6 is a vessel self-report, not independent
             # evidence of a casualty. Persistence only proves that the same
             # transponder kept reporting the same status; it does not create a
             # second source. Keep it as internal evidence until corroborated.
             return False
-        if not independently_corroborated:
+        if verification == "ais_transponder" and not independently_corroborated:
             return False
     return True
 
@@ -430,7 +445,8 @@ def _public_intel_feature(
         "confirmed",
     }:
         # A published URL proves provenance, not the claims in the article.
-        # Live only carries news with an explicit corroboration decision.
+        # Generic projection remains available as evidence/context; the Live
+        # quality gate below prevents news from becoming a standalone incident.
         return None
     publication = str(event.metadata.get("publication_status") or "").lower()
     source_policy = str(event.metadata.get("source_policy") or "").lower()

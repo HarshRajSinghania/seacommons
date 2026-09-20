@@ -64,7 +64,7 @@ def _parse_live_timestamp(value: str) -> datetime | None:
 # cutover they remain internal evidence and public Live reads assessed
 # InvestigationHypothesis rows through _published_security_hypothesis_features.
 _PUBLIC_DURABLE_TYPES = frozenset({
-    "distress", "twitter", "mastodon", "bluesky", "ngo_activity", "news",
+    "distress", "twitter", "mastodon", "bluesky", "ngo_activity",
     "gdacs", "vessel_incident", "iom_incident",
 })
 

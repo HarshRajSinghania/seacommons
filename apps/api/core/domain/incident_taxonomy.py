@@ -117,31 +117,47 @@ def incident_type(
             return "distress"
         return "humanitarian_context"
 
-    # Maritime: describe the activity/pattern, not evidence status or a list hit.
-    if hypothesis_type == "dark_transit" or re.search(
-        r"dark_transit|ais_gap|dark_vessel|dark_activity|signal_gap|transponder_off",
-        tokens,
-    ):
+    # Maritime: keep observation semantics separate from hypotheses.
+    # Raw detector evidence must not inherit an allegation-strength label.
+    if hypothesis_type == "dark_transit":
         return "dark_activity"
-    if hypothesis_type == "position_spoofing" or re.search(
-        r"position_spoof|spoof|teleport|impossible_speed|position_jump|circle_spoof|gnss_manip",
-        tokens,
-    ):
+    if hypothesis_type == "position_spoofing":
         return "spoofing"
-    if hypothesis_type == "covert_rendezvous" or re.search(
+    if hypothesis_type == "covert_rendezvous":
+        return "transfer"
+    if hypothesis_type == "infrastructure_pattern":
+        return "infrastructure_pattern"
+
+    anomaly = str(meta.get("anomaly_type") or "").lower()
+    if anomaly in {"gap", "long_gap", "ais_gap", "signal_gap", "transponder_off"}:
+        return "ais_gap"
+    if anomaly in {
+        "impossible_speed", "position_jump", "teleport", "circle_spoof",
+        "static_spoof", "gnss_manipulation",
+    }:
+        return "position_anomaly"
+    if event_type == "ais_rendezvous" or anomaly in {"ais_rendezvous", "rendezvous", "sts"}:
+        return "rendezvous"
+    if anomaly in {"infra_proximity", "infrastructure_proximity", "platform_proximity"}:
+        return "infrastructure_proximity"
+    if event_type == "correlated_alert" and re.search(
         r"rendezvous|ship_to_ship|(^|_)sts(_|$)|transfer",
         tokens,
     ):
         return "transfer"
-    if hypothesis_type == "infrastructure_pattern" or re.search(
-        r"infrastructure|pipeline|cable|platform_proximity",
+    if event_type == "correlated_alert" and re.search(
+        r"position_spoof|spoof|teleport|impossible_speed|position_jump|gnss_manip",
         tokens,
     ):
-        return "infrastructure_proximity"
+        return "spoofing"
     if re.search(r"loiter|abnormal_dwell|stationary_anomaly", tokens):
         return "loitering"
     if str(meta.get("anomaly_type") or "") == "sanctioned_port_call":
         return "port_call"
+    if str(meta.get("ais_nav_status_kind") or "") == "distress_beacon" or re.search(
+        r"ais_sart|ais_mob|ais_epirb|distress_beacon", tokens,
+    ):
+        return "distress_beacon"
     if re.search(
         r"not_under_command|unable_to_man|restricted_man|aground|engine_failure|"
         r"mechanical_failure|disabled_vessel|vessel_casualty",
@@ -185,11 +201,17 @@ def taxonomy_fields(
         hypothesis_type=hypothesis_type,
     )
     verification = str(meta.get("verification_status") or "")
-    evidence_stage = str(meta.get("evidence_stage") or "")
     independent = int(meta.get("independent_source_count") or 0)
+    groups = {
+        str(value) for value in (
+            meta.get("contributing_independence_groups")
+            or meta.get("independence_groups")
+            or ()
+        ) if value
+    }
     corroborated = (
         verification == "multi_source_corroborated"
-        or evidence_stage in {"corroborated", "assessed", "confirmed"}
+        or len(groups) >= 2
         or independent >= 2
     )
     sanctions = bool(
@@ -204,6 +226,19 @@ def taxonomy_fields(
         "corroborated": corroborated,
         "sanctions_matched": sanctions,
     }
+    observation_type = str(meta.get("observation_type") or "").strip()
+    if observation_type:
+        result["observation_type"] = observation_type
+    if hypothesis_type:
+        result["hypothesis_type"] = str(hypothesis_type)
+    evidence_state = str(
+        meta.get("evidence_state")
+        or meta.get("evidence_stage")
+        or meta.get("analysis_state")
+        or ""
+    ).strip()
+    if evidence_state:
+        result["evidence_state"] = evidence_state
     if has_satellite is not None:
         result["has_satellite"] = bool(has_satellite)
     return result

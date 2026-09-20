@@ -2331,7 +2331,7 @@ def test_live_sanctioned_vessels_is_fresh_strong_identifier_subset(monkeypatch):
         ).delete(synchronize_session=False)
 
 
-def test_published_sustained_aground_enters_maritime_live(monkeypatch) -> None:
+def test_published_sustained_aground_without_corroboration_stays_out_of_live(monkeypatch) -> None:
     from core.intel.store import intel_store
 
     base = datetime.now(timezone.utc)
@@ -2363,16 +2363,7 @@ def test_published_sustained_aground_enters_maritime_live(monkeypatch) -> None:
 
     collection = public_signal_collection(mode="maritime", days=1, limit=500)
     ids = {f["properties"]["id"] for f in collection["features"]}
-    assert "intel:audit-aground-published" in ids
-    props = next(
-        f["properties"]
-        for f in collection["features"]
-        if f["properties"]["id"] == "intel:audit-aground-published"
-    )
-    assert props["main_category"] == "maritime"
-    assert props["incident_type"] == "navigation_safety"
-    assert props["verification_status"] == "ais_transponder"
-    assert props["corroborated"] is False
+    assert "intel:audit-aground-published" not in ids
 
 
 def test_short_lived_aground_self_report_does_not_enter_live() -> None:
@@ -2407,3 +2398,25 @@ def test_short_lived_aground_self_report_does_not_enter_live() -> None:
     feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
     assert feature is not None
     assert is_useful_public_case_feature(feature) is False
+
+
+def test_corroborated_aground_can_enter_live() -> None:
+    from core.live.projection import _public_intel_feature, is_useful_public_case_feature
+    base = datetime.now(timezone.utc)
+    event = IntelEvent(
+        id="audit-aground-port-corroborated", type="distress", severity="high",
+        lat=41.37, lon=2.18, title="Vessel ran aground — CONFIRMED", source="ais",
+        linked_mmsi="224000002", timestamp_utc=base.isoformat(),
+        metadata={
+            "ais_nav_status_kind": "aground", "maritime_domain": "safety",
+            "publication_status": "published", "publication_state": "published",
+            "source_policy": "official_api", "verification_status": "ais_transponder",
+            "independent_source_count": 2, "evidence_stage": "corroborated",
+            "episode_update_count": 4,
+            "first_observed_at": (base - timedelta(minutes=10)).isoformat(),
+            "last_observed_at": base.isoformat(),
+        },
+    )
+    feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is True

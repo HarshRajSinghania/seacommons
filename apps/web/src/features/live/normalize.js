@@ -89,6 +89,22 @@ export function edgeEventToFeature(event) {
         ? { sanctions_matched: props.sanctions_matched } : {}),
       ...(typeof props.has_satellite === 'boolean'
         ? { has_satellite: props.has_satellite } : {}),
+      ...(typeof props.live_entered_at === 'string'
+        ? { live_entered_at: props.live_entered_at } : {}),
+      ...(typeof props.last_qualified_observation_at === 'string'
+        ? { last_qualified_observation_at: props.last_qualified_observation_at } : {}),
+      ...(typeof props.live_expires_at === 'string'
+        ? { live_expires_at: props.live_expires_at } : {}),
+      ...(typeof props.analysis_state === 'string'
+        ? { analysis_state: props.analysis_state } : {}),
+      ...(typeof props.hypothesis_type === 'string'
+        ? { hypothesis_type: props.hypothesis_type } : {}),
+      ...(typeof props.evidence_stage === 'string'
+        ? { evidence_stage: props.evidence_stage } : {}),
+      ...(Array.isArray(props.independence_groups)
+        ? { independence_groups: props.independence_groups } : {}),
+      ...(Array.isArray(props.reason_codes) ? { reason_codes: props.reason_codes } : {}),
+      ...(Array.isArray(props.counter_indicators) ? { counter_indicators: props.counter_indicators } : {}),
       ...(typeof props.maritime_domain === 'string'
         ? { maritime_domain: props.maritime_domain } : {}),
       ...(typeof props.humanitarian_case_type === 'string'
@@ -124,10 +140,9 @@ export function receivedSignalFeatures(features) {
     const properties = feature.properties;
     const policy = String(properties.source_policy || '').toLowerCase();
     const transport = String(properties.via || properties.scrape_source || '').toLowerCase();
-    const timestampMs = Date.parse(String(properties.timestamp_utc || ''));
-    const outsideRollingLiveWindow = Number.isFinite(timestampMs)
-      && Date.now() - timestampMs > 24 * 60 * 60 * 1000;
-    return !outsideRollingLiveWindow && !BLOCKED_PUBLIC_TRANSPORTS.some(
+    const expiryMs = Date.parse(String(properties.live_expires_at || ''));
+    const serverExpired = Number.isFinite(expiryMs) && expiryMs <= Date.now();
+    return !serverExpired && !BLOCKED_PUBLIC_TRANSPORTS.some(
       (blocked) => policy === blocked || transport.includes(blocked),
     )
       && properties.type !== 'sar_model'

@@ -153,6 +153,11 @@ export default function PlayTimeline({ apiBase }) {
     () => normalizeTimeline(caseData?.timeline || []),
     [caseData],
   );
+  const dossierReasonCodes = useMemo(() => {
+    if (Array.isArray(caseData?.reason_codes)) return caseData.reason_codes;
+    if (Array.isArray(selectedIncident?.reason_codes)) return selectedIncident.reason_codes;
+    return [];
+  }, [caseData, selectedIncident]);
   const visibleTimeline = useMemo(
     () => timelineAtCutoff(fullTimeline, globalState.cutoff),
     [fullTimeline, globalState.cutoff],
@@ -552,9 +557,17 @@ export default function PlayTimeline({ apiBase }) {
           <section className="play-card play-card--rows">
             <div><span>Status</span><strong>{statusLabel(status)}</strong></div>
             <div><span>View</span><strong>{modeLabel}</strong></div>
-            <div><span>Evidence known</span><strong>{visibleTimeline.length}</strong></div>
-            {selectedIncident?.evidence_stage ? <div><span>Evidence stage</span><strong>{statusLabel(selectedIncident.evidence_stage)}</strong></div> : null}
-            {selectedIncident?.reason_codes?.length ? <div><span>Why flagged</span><strong>{selectedIncident.reason_codes.join(' · ')}</strong></div> : null}
+            <div><span>Archive decision</span><strong>{statusLabel(caseData?.archive_decision || selectedIncident?.archive_decision || '—')}</strong></div>
+            <div><span>Evidence known</span><strong>{caseData?.evidence_count ?? visibleTimeline.length}</strong></div>
+            {caseData?.verification_status ? <div><span>Verification</span><strong>{statusLabel(caseData.verification_status)}</strong></div> : null}
+            {typeof caseData?.corroborated === 'boolean' ? <div><span>Independent corroboration</span><strong>{caseData.corroborated ? 'YES' : 'NO'}</strong></div> : null}
+            {caseData?.independence_groups?.length ? <div><span>Evidence lineages</span><strong>{caseData.independence_groups.join(' · ')}</strong></div> : null}
+            {selectedIncident?.evidence_stage || caseData?.evidence_stage ? <div><span>Evidence stage</span><strong>{statusLabel(selectedIncident?.evidence_stage || caseData?.evidence_stage)}</strong></div> : null}
+            <div><span>Satellite</span><strong>{caseData?.satellite_count ?? 0}</strong></div>
+            <div><span>Radio</span><strong>{caseData?.radio_count ?? 0}</strong></div>
+            <div><span>Drift</span><strong>{caseData?.drift_count ?? 0}</strong></div>
+            {dossierReasonCodes.length > 0 ? <div><span>Why flagged</span><strong>{dossierReasonCodes.join(' · ')}</strong></div> : null}
+            {caseData?.counter_indicators?.length ? <div><span>Counter-indicators</span><strong>{caseData.counter_indicators.join(' · ')}</strong></div> : null}
             {frame.item ? <div><span>Latest at cutoff</span><strong>{frame.item.type}</strong></div> : null}
             {frameProps.model ? <div><span>Model</span><strong>{frameProps.model}</strong></div> : null}
             {frameProps.reason_code ? <div><span>Reason</span><strong>{frameProps.reason_code}</strong></div> : null}

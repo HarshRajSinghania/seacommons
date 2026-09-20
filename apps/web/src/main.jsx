@@ -1694,14 +1694,20 @@ function App() {
 
         // Civil NGO SAR vessels use the same triangle and differ only by hue.
         map.addLayer({
-          id: 'vessels-ngo-stationary', type: 'circle', source: 'vessels-ngo',
+          id: 'vessels-ngo-stationary', type: 'symbol', source: 'vessels-ngo',
           filter: ['any', ['match', ['get', 'nav_status'], [1, 5], true, false], ['<=', ['coalesce', ['get', 'speed'], 0], 0.5]],
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.28, 10, 0.44, 14, 0.56],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 3.8, 10, 5.5, 14, 6.8],
-            'circle-color': '#34d399',
-            'circle-opacity': 1,
-            'circle-stroke-color': '#021318',
-            'circle-stroke-width': 1.6,
+            'icon-color': '#8bf0c5',
+            'icon-opacity': 1,
+            'icon-halo-color': '#021318',
+            'icon-halo-width': 1.5,
           },
         });
         map.addLayer({
@@ -1727,15 +1733,21 @@ function App() {
         // category. Only the server's <=10-minute strong-identifier subset is
         // rendered, and only while the public Sanctions filter is active.
         map.addLayer({
-          id: 'sanctioned-vessels-stationary', type: 'circle', source: 'sanctioned-vessels',
+          id: 'sanctioned-vessels-stationary', type: 'symbol', source: 'sanctioned-vessels',
           filter: ['any', ['match', ['get', 'nav_status'], [1, 5], true, false], ['<=', ['coalesce', ['get', 'speed'], 0], 0.5]],
-          layout: { visibility: 'none' },
+          layout: {
+            visibility: 'none',
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.30, 10, 0.46, 14, 0.58],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 5.8, 14, 7],
-            'circle-color': '#f59e0b',
-            'circle-opacity': 0.98,
-            'circle-stroke-color': '#1c1202',
-            'circle-stroke-width': 1.7,
+            'icon-color': '#f59e0b',
+            'icon-opacity': 0.98,
+            'icon-halo-color': '#1c1202',
+            'icon-halo-width': 1.6,
           },
         });
         map.addLayer({
@@ -1830,13 +1842,19 @@ function App() {
             paint: { 'circle-radius': 13, 'circle-color': cat.color, 'circle-opacity': 0.12, 'circle-blur': 0.8 },
           });
           map.addLayer({
-            id: `intel-cat-${cat.key}`, type: 'circle', source: 'intel-events', filter: f,
+            id: `intel-cat-${cat.key}`, type: 'symbol', source: 'intel-events', filter: f,
+            layout: {
+              'icon-image': 'vessel-arrow',
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.34, 10, 0.52, 14, 0.66],
+              'icon-rotate': 0,
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
+            },
             paint: {
-              'circle-radius': ['match', ['get', 'type'], ['vessel_incident', 'gdacs', 'iom_incident'], 6, 4.5],
-              'circle-color': cat.color,
-              'circle-opacity': 0.92,
-              'circle-stroke-width': _markerStrokeW,
-              'circle-stroke-color': _markerStrokeC,
+              'icon-color': cat.color,
+              'icon-opacity': 0.96,
+              'icon-halo-color': _markerStrokeC,
+              'icon-halo-width': _markerStrokeW,
             },
           });
         }
@@ -1847,13 +1865,19 @@ function App() {
           paint: { 'circle-radius': 13, 'circle-color': 'rgba(139,240,197,0.1)', 'circle-blur': 0.8 },
         });
         map.addLayer({
-          id: 'intel-events-layer', type: 'circle', source: 'intel-events', filter: _otherFilter,
+          id: 'intel-events-layer', type: 'symbol', source: 'intel-events', filter: _otherFilter,
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.34, 10, 0.52, 14, 0.66],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': 4.5,
-            'circle-color': categoryColorExpression(),
-            'circle-opacity': 0.92,
-            'circle-stroke-width': _markerStrokeW,
-            'circle-stroke-color': _markerStrokeC,
+            'icon-color': categoryColorExpression(),
+            'icon-opacity': 0.96,
+            'icon-halo-color': _markerStrokeC,
+            'icon-halo-width': _markerStrokeW,
           },
         });
 
@@ -1971,15 +1995,21 @@ function App() {
           },
         });
         map.addLayer({
-          id: 'intel-distress-core', type: 'circle', source: 'intel-distress',
+          id: 'intel-distress-core', type: 'symbol', source: 'intel-distress',
           filter: _PRECISE_POINT_FILTER,
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.38, 10, 0.58, 14, 0.72],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': 5,
-            // Category colour, always. A resolved Alarm Phone stays red.
-            'circle-color': LIFECYCLE_CORE_COLOR,
-            'circle-opacity': ['match', ['get', 'incident_lifecycle'], 'archived', 0.6, 'resolved', 0.8, 1],
-            'circle-stroke-width': 1.5,
-            'circle-stroke-color': '#fff4bf',
+            // Humanitarian is always red; lifecycle changes opacity, never hue.
+            'icon-color': LIFECYCLE_CORE_COLOR,
+            'icon-opacity': ['match', ['get', 'incident_lifecycle'], 'archived', 0.6, 'resolved', 0.8, 1],
+            'icon-halo-color': '#fff4bf',
+            'icon-halo-width': 1.5,
           },
         });
         const distressHoverPopup = new maplibregl.Popup({

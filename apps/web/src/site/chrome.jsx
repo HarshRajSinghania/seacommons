@@ -1,15 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import HeaderLive from './HeaderLive.jsx';
 
-function useUtcClock() {
-  const [t, setT] = useState('--:--:--');
+function useClocks() {
+  const [clock, setClock] = useState({ utc: '--:--:--', local: '--:--:--' });
   useEffect(() => {
-    const tick = () => setT(new Date().toISOString().slice(11, 19));
+    const tick = () => {
+      const now = new Date();
+      setClock({
+        utc: now.toISOString().slice(11, 19),
+        local: now.toLocaleTimeString('en-GB', { hour12: false }),
+      });
+    };
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, []);
-  return t;
+  return clock;
 }
 
 const NAV = [
@@ -34,7 +40,7 @@ export function Header() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const headerRef = useRef(null);
-  const utc = useUtcClock();
+  const { utc, local } = useClocks();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -56,7 +62,7 @@ export function Header() {
         <BrandMark />
         <span>SEA<br />COMMONS</span>
       </a>
-      <span className="site-header__clock mono">UTC {utc}</span>
+      <span className="site-header__clock mono">UTC {utc} · LOCAL {local}</span>
       <HeaderLive />
 
       <button

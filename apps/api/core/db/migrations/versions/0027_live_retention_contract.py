@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0027_live_retention_contract"
-down_revision = "0026_radio_ais_associations"
+down_revision = "0027_operator_hotpath_indexes"
 branch_labels = None
 depends_on = None
 

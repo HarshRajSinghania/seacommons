@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""IHM NAVAREA III in-force warnings (docs section 9): official sources as
-evidence/context integrated into the existing SourceObservation/evidence
-architecture, not a parallel "news intelligence" pipeline. Parser tested
-against synthetic XML fixtures (no live network access in this
-environment) -- field-name mapping should be re-verified against a real
-feed pull before relying on it operationally; see the module docstring.
+"""IHM NAVAREA III official-feed parsing and persistence contracts.
+
+Fixtures include the real NAVAREASVIGOR field schema verified against IHM's
+public navareas_crudo.xml feed on 2026-09-20.
 """
 from __future__ import annotations
 
-import pytest
+from xml.etree.ElementTree import ParseError
 
+import pytest
+from defusedxml.common import DefusedXmlException
 
 _SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <warnings>
@@ -78,7 +78,7 @@ def test_skips_warning_missing_id_or_text_but_keeps_the_rest():
 def test_malformed_top_level_xml_raises_for_the_caller_to_catch():
     from core.mda.navarea3 import parse_navarea3_xml
 
-    with pytest.raises(Exception):
+    with pytest.raises(ParseError):
         parse_navarea3_xml("<not><valid xml")
 
 
@@ -91,7 +91,7 @@ def test_billion_laughs_payload_is_rejected_not_expanded():
   <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
 ]>
 <warnings><warning id="1"><text>&lol2;</text></warning></warnings>"""
-    with pytest.raises(Exception):
+    with pytest.raises(DefusedXmlException):
         parse_navarea3_xml(bomb)
 
 
@@ -111,8 +111,8 @@ def test_poll_navarea3_is_graceful_on_network_outage(monkeypatch):
 
 
 def test_poll_navarea3_ingests_and_persists_observations(monkeypatch):
-    from core.mda import navarea3
     from core.intel.store import intel_store
+    from core.mda import navarea3
 
     class _FakeResponse:
         text = _SAMPLE_XML
@@ -141,8 +141,8 @@ def test_poll_navarea3_ingests_and_persists_observations(monkeypatch):
 def test_official_warning_never_becomes_a_public_case_by_itself(monkeypatch):
     """docs section 9: official warnings contextualize a case but must never
     automatically become a vessel accusation -- ingested internal only."""
-    from core.mda import navarea3
     from core.intel.store import intel_store
+    from core.mda import navarea3
 
     class _FakeResponse:
         text = _SAMPLE_XML
@@ -163,3 +163,100 @@ def test_official_warning_never_becomes_a_public_case_by_itself(monkeypatch):
         assert event is not None
         assert event.metadata["publication_status"] == "internal"
         assert event.metadata["is_distress"] is False
+
+
+_REAL_IHM_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<dataroot generated="2026-09-17T11:27:33">
+  <NAVAREASVIGOR>
+    <nnuna>220092</nnuna>
+    <nnunaf>0092/22</nnunaf>
+    <nfemi>2022-02-25T00:00:00</nfemi>
+    <nlocae>MAR NEGRO NOROCCIDENTAL</nlocae>
+    <nlocai>BLACK SEA NORTHWESTERN PART</nlocai>
+    <ntees>ZONA DE MINAS 46-04.0N 033-12.8E</ntees>
+    <ntein>DUE TO MINE DANGER 46-04.0N 033-12.8E 46-31.7 N 030-46.6E</ntein>
+    <nasun>ZONA DE MINAS</nasun>
+    <nasuni>MINES AREA</nasuni>
+  </NAVAREASVIGOR>
+</dataroot>"""
+
+
+def test_real_ihm_navareasvigor_schema_is_parsed():
+    from core.mda.navarea3 import DEFAULT_NAVAREA3_URL, parse_navarea3_xml
+
+    warnings = parse_navarea3_xml(_REAL_IHM_XML)
+    assert DEFAULT_NAVAREA3_URL.endswith("/ihm/XML/navareas_crudo.xml")
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert warning.warning_id == "0092/22"
+    assert warning.source_record_id == "220092"
+    assert warning.issued_at == "2022-02-25T00:00:00"
+    assert warning.area == "BLACK SEA NORTHWESTERN PART"
+    assert warning.subject == "MINES AREA"
+    assert warning.text.startswith("DUE TO MINE DANGER")
+    assert warning.snapshot_generated == "2026-09-17T11:27:33"
+    assert warning.lat == pytest.approx(46.0667, abs=1e-3)
+    assert warning.lon == pytest.approx(33.2133, abs=1e-3)
+    assert len(warning.coordinates) == 2
+
+
+def test_navarea_source_revisions_are_immutable_and_distinct():
+    from core.db.models import SourceObservationDB
+    from core.db.session import session_scope
+    from core.mda.navarea3 import Navarea3Warning, _record_source_observation
+
+    base = {
+        "warning_id": "0092/22", "source_record_id": "220092",
+        "issued_at": "2022-02-25T00:00:00", "area": "BLACK SEA NORTHWESTERN PART",
+        "subject": "MINES AREA", "category": "strike_warning",
+        "lat": 46.0667, "lon": 33.2133, "coordinates": ((46.0667, 33.2133),),
+    }
+    prefix = "navarea3:0092/22:%"
+    with session_scope() as db:
+        db.query(SourceObservationDB).filter(
+            SourceObservationDB.source_name == "IHM NAVAREA III",
+            SourceObservationDB.source_id.like(prefix),
+        ).delete(synchronize_session=False)
+
+    _record_source_observation(Navarea3Warning(
+        **base, text="DUE TO MINE DANGER", snapshot_generated="2026-09-17T11:27:33",
+    ))
+    _record_source_observation(Navarea3Warning(
+        **base, text="DUE TO MINE DANGER - UPDATED", snapshot_generated="2026-09-20T10:00:00",
+    ))
+
+    with session_scope() as db:
+        rows = db.query(SourceObservationDB).filter(
+            SourceObservationDB.source_name == "IHM NAVAREA III",
+            SourceObservationDB.source_id.like(prefix),
+        ).all()
+        assert len(rows) == 2
+        assert len({row.source_id for row in rows}) == 2
+        assert {row.provenance["snapshot_generated"] for row in rows} == {
+            "2026-09-17T11:27:33", "2026-09-20T10:00:00",
+        }
+
+
+def test_navwarning_deterministic_id_refreshes_in_memory_case():
+    from core.intel.store import IntelEvent, IntelStore
+
+    store = IntelStore(maxlen=10)
+    store._persist = lambda _event: None
+    first = IntelEvent(
+        id="navarea3:0092/22", type="navwarning", title="Old title",
+        text="Old text", source="IHM NAVAREA III",
+        metadata={"publication_status": "internal"},
+    )
+    updated = IntelEvent(
+        id="navarea3:0092/22", type="navwarning", title="Updated title",
+        text="Updated text", source="IHM NAVAREA III",
+        metadata={"publication_status": "internal", "snapshot_generated": "later"},
+    )
+    assert store.add(first, dedup_key=first.id) is True
+    assert store.add(updated, dedup_key=updated.id) is False
+    current = store.get(first.id)
+    assert current is not None
+    assert current.title == "Updated title"
+    assert current.text == "Updated text"
+    assert current.metadata["snapshot_generated"] == "later"
+    assert len(store.events()) == 1

@@ -1,7 +1,7 @@
 """durable Live retention contract on intel_events and investigation_hypotheses
 
 Revision ID: 0027_live_retention_contract
-Revises: 0026_radio_ais_associations
+Revises: 0027_operator_hotpath_indexes
 Create Date: 2026-09-20
 """
 from __future__ import annotations

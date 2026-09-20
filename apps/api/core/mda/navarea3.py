@@ -1,27 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""NAVAREA III official navigational warnings (Instituto Hidrográfico de la
-Marina, Spain) -- the Western Mediterranean NAVAREA coordinator.
+"""Official NAVAREA III in-force navigational warnings from IHM Spain.
 
-Distinct from core.mda.warfare.poll_navwarnings(), which already covers the
-NGA-distributed NAVAREA IV/XII (Atlantic) broadcast-warning JSON API. This
-module is the Mediterranean-basin counterpart: a different coordinator, a
-different transport (in-force XML, not JSON), integrated into the same
-SourceObservation/evidence architecture, not a parallel "news intelligence"
-pipeline.
-
-Caveat, stated plainly rather than hidden: this parser targets the general
-shape IHM's public in-force NAVAREA III XML uses (a warnings/messages root
-with one repeated element per in-force warning, carrying an id, issue date,
-area, subject/category and free text with embedded DMM coordinates in the
-same "DD-MM.mH DDD-MM.mH" style core.mda.warfare._extract_positions already
-parses for NGA text). It has not been validated against a live pull of the
-real feed in this environment (no outbound network access here) -- treat
-field names as best-effort until checked against a real response, and keep
-parse_navarea3_xml() defensive (never raise on an unexpected element/
-attribute; skip that one warning, keep the rest).
+The operational feed is IHM's public ``navareas_crudo.xml`` document. Its
+actual schema is a ``dataroot`` containing repeated ``NAVAREASVIGOR`` rows
+with Access-style field names (nnunaf/nfemi/nlocai/nasuni/ntein). Warnings
+are stored as immutable SourceObservation revisions and one stable,
+updateable IntelEvent per official warning id. They provide context/evidence
+only and never create a vessel allegation by themselves.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -42,7 +32,8 @@ from core.mda.warfare import _extract_positions
 logger = logging.getLogger(__name__)
 
 NAVAREA3_SOURCE = "IHM NAVAREA III"
-DEFAULT_NAVAREA3_URL = "https://ihm.es/es-es/AreasHidrograficas/NAVAREAIII/Paginas/EnVigor.aspx"
+DEFAULT_NAVAREA3_URL = "https://armada.defensa.gob.es/ihm/XML/navareas_crudo.xml"
+NAVAREA3_REFERENCE_URL = "https://armada.defensa.gob.es/ihm/Aplicaciones/Navareas/Index_Navareas_xml_en.html"
 
 _GNSS_KW = re.compile(r"\b(gps|gnss|jamming|spoofing|interference)\b", re.I)
 _FIRING_KW = re.compile(r"\b(firing exercise|gunnery|live fire|missile (test|firing)|naval exercise|ejercicio)\b", re.I)
@@ -61,6 +52,7 @@ _WARNING_CATEGORIES = (
 @dataclass(frozen=True)
 class Navarea3Warning:
     warning_id: str
+    source_record_id: str
     issued_at: str
     area: str
     subject: str
@@ -69,6 +61,7 @@ class Navarea3Warning:
     lat: Optional[float]
     lon: Optional[float]
     coordinates: tuple[tuple[float, float], ...]
+    snapshot_generated: str = ""
 
 
 def _categorize(subject: str, text: str) -> str:
@@ -107,35 +100,66 @@ def _first_present(warning_el: Element, *tags: str) -> Element | None:
 
 
 def parse_navarea3_xml(xml_text: str) -> list[Navarea3Warning]:
-    """Parse IHM's in-force NAVAREA III XML into structured warnings.
+    """Parse the real IHM ``NAVAREASVIGOR`` schema defensively.
 
-    Never raises on a malformed individual warning -- that one is skipped
-    and parsing continues; the whole document only fails to parse if the
-    XML itself is not well-formed (caller's poll function already treats
-    any exception here as a graceful, logged no-op).
+    A small generic fallback remains for archived fixtures/tools, but the
+    operational mapping is based on the live official feed verified in 2026.
+    Malformed individual records are skipped without discarding the document.
     """
     root = ET.fromstring(xml_text)
+    snapshot_generated = str(root.get("generated") or "").strip()
     warning_elements = [
         el for el in root.iter()
-        if el.tag.rsplit("}", 1)[-1].lower() in {"warning", "message", "navwarning", "item"}
+        if el.tag.rsplit("}", 1)[-1].lower() == "navareasvigor"
     ]
+    real_schema = bool(warning_elements)
+    if not warning_elements:
+        warning_elements = [
+            el for el in root.iter()
+            if el.tag.rsplit("}", 1)[-1].lower()
+            in {"warning", "message", "navwarning", "item"}
+        ]
+
     warnings: list[Navarea3Warning] = []
     for el in warning_elements:
         try:
-            warning_id = (
-                el.get("id")
-                or _text_of(_first_present(el, "id", "number", "messageNumber", "warningId"))
-            ).strip()
-            issued_at = _text_of(_first_present(el, "issueDate", "date", "published", "issued")).strip()
-            area = _text_of(_first_present(el, "area", "navarea")).strip() or "NAVAREA III"
-            subject = _text_of(_first_present(el, "subject", "title", "category")).strip()
-            text = _text_of(_first_present(el, "text", "content", "description", "body")).strip()
+            if real_schema:
+                source_record_id = _text_of(_first_present(el, "nnuna")).strip()
+                warning_id = (
+                    _text_of(_first_present(el, "nnunaf")).strip()
+                    or source_record_id
+                )
+                issued_at = _text_of(_first_present(el, "nfemi")).strip()
+                area = (
+                    _text_of(_first_present(el, "nlocai")).strip()
+                    or _text_of(_first_present(el, "nlocae")).strip()
+                    or "NAVAREA III"
+                )
+                subject = (
+                    _text_of(_first_present(el, "nasuni")).strip()
+                    or _text_of(_first_present(el, "nasun")).strip()
+                )
+                text = (
+                    _text_of(_first_present(el, "ntein")).strip()
+                    or _text_of(_first_present(el, "ntees")).strip()
+                )
+            else:
+                warning_id = (
+                    el.get("id")
+                    or _text_of(_first_present(el, "id", "number", "messageNumber", "warningId"))
+                ).strip()
+                source_record_id = warning_id
+                issued_at = _text_of(_first_present(el, "issueDate", "date", "published", "issued")).strip()
+                area = _text_of(_first_present(el, "area", "navarea")).strip() or "NAVAREA III"
+                subject = _text_of(_first_present(el, "subject", "title", "category")).strip()
+                text = _text_of(_first_present(el, "text", "content", "description", "body")).strip()
             if not warning_id or not text:
                 continue
             coordinates = tuple(_extract_positions(text))
-            lat, lon = (coordinates[0] if coordinates else (None, None))
+            lat, lon = coordinates[0] if coordinates else (None, None)
             warnings.append(Navarea3Warning(
                 warning_id=warning_id,
+                source_record_id=source_record_id or warning_id,
                 issued_at=issued_at,
                 area=area,
                 subject=subject,
@@ -144,6 +168,7 @@ def parse_navarea3_xml(xml_text: str) -> list[Navarea3Warning]:
                 lat=lat,
                 lon=lon,
                 coordinates=coordinates,
+                snapshot_generated=snapshot_generated,
             ))
         except Exception:
             logger.debug("navarea3: skipping one malformed warning element", exc_info=True)
@@ -151,19 +176,42 @@ def parse_navarea3_xml(xml_text: str) -> list[Navarea3Warning]:
     return warnings
 
 
-def _record_source_observation(warning: Navarea3Warning) -> None:
+def _record_source_observation(
+    warning: Navarea3Warning, *, source_url: str = DEFAULT_NAVAREA3_URL
+) -> None:
     try:
         from core.db.session import session_scope
         from core.intel.source_observation import record_observation
 
+        payload = {
+            "warning_id": warning.warning_id,
+            "source_record_id": warning.source_record_id,
+            "issued_at": warning.issued_at,
+            "area": warning.area,
+            "subject": warning.subject,
+            "text": warning.text,
+            "category": warning.category,
+            "coordinates": [list(value) for value in warning.coordinates],
+            "snapshot_generated": warning.snapshot_generated,
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        revision = hashlib.blake2s(encoded.encode("utf-8"), digest_size=10).hexdigest()
         with session_scope() as db:
             record_observation(
                 db,
                 service="maritime", lane="safety", observation_type="official_navigational_warning",
-                source_name=NAVAREA3_SOURCE, source_policy="official_site_embed",
-                source_id=f"navarea3:{warning.warning_id}",
+                source_name=NAVAREA3_SOURCE, source_policy="official_xml_feed",
+                source_id=f"navarea3:{warning.warning_id}:{revision}",
+                source_url=source_url,
+                raw_payload_ref=NAVAREA3_REFERENCE_URL,
                 observed_at=warning.issued_at or datetime.now(timezone.utc).isoformat(),
-                raw_payload=warning.text, lat=warning.lat, lon=warning.lon,
+                raw_payload=encoded, lat=warning.lat, lon=warning.lon,
+                provenance={
+                    "official_warning_id": warning.warning_id,
+                    "source_record_id": warning.source_record_id,
+                    "snapshot_generated": warning.snapshot_generated,
+                    "feed_url": source_url,
+                },
             )
     except Exception as exc:
         logger.debug("navarea3: source_observation record skipped for %s: %s", warning.warning_id, exc)
@@ -193,7 +241,7 @@ def poll_navarea3(*, url: str = DEFAULT_NAVAREA3_URL, timeout_s: float = 30.0) -
     ingested = 0
     for warning in warnings:
         eid = f"navarea3:{warning.warning_id}"
-        _record_source_observation(warning)
+        _record_source_observation(warning, source_url=url)
         # Official warnings contextualize a case; they never become a
         # vessel accusation on their own (docs section 9) -- always
         # internal/context, never a public case by themselves.
@@ -203,16 +251,21 @@ def poll_navarea3(*, url: str = DEFAULT_NAVAREA3_URL, timeout_s: float = 30.0) -
             lat=warning.lat, lon=warning.lon,
             title=f"NAVAREA III {warning.warning_id} — {warning.subject or warning.category}"[:255],
             text=warning.text[:600], source=NAVAREA3_SOURCE,
+            url=NAVAREA3_REFERENCE_URL,
             timestamp_utc=warning.issued_at or datetime.now(timezone.utc).isoformat(),
             metadata={
                 "anomaly_type": warning.category,
                 "maritime_domain": "safety" if warning.category == "navigational_warning" else "grey_zone",
                 "is_distress": False,
                 "publication_status": "internal",
-                "source_policy": "official_site_embed",
+                "source_policy": "official_xml_feed",
                 "coordinate_source": "navarea3_text",
                 "nav_area": warning.area,
                 "warning_category": warning.category,
+                "official_warning_id": warning.warning_id,
+                "source_record_id": warning.source_record_id,
+                "snapshot_generated": warning.snapshot_generated,
+                "feed_url": url,
                 "coordinates": [list(c) for c in warning.coordinates],
             },
         ), dedup_key=eid)

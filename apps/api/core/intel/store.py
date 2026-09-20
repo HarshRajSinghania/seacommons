@@ -67,6 +67,7 @@ _MACHINE_REFRESH_TYPES = frozenset(
         "correlated_alert",
         "ais_spike",
         "ngo_activity",
+        "navwarning",
     }
 )
 

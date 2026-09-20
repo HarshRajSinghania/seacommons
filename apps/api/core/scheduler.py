@@ -493,6 +493,20 @@ def _job_incident_watch() -> None:
         logger.warning("Scheduler incident_watch failed: %s", exc)
 
 
+def _job_navarea3() -> None:
+    """IHM NAVAREA III in-force warnings (docs section 9) -- refreshed more
+    frequently than the heavy daily MDA batch, never blocking scheduler
+    startup on an outage (poll_navarea3 itself never raises)."""
+    try:
+        from core.mda.navarea3 import poll_navarea3
+
+        ingested = poll_navarea3()
+        if ingested:
+            logger.info("navarea3: %d warning(s) ingested", ingested)
+    except Exception as exc:
+        logger.warning("Scheduler navarea3 poll failed: %s", exc)
+
+
 def _job_sar_mission_enrichment() -> None:
     """Cross-check active Humanitarian incidents against the SAR/NGO
     responder registry (previously implemented but never called)."""
@@ -563,6 +577,13 @@ def start() -> None:
         scheduler.add_job(_job_sar_mission_enrichment, IntervalTrigger(minutes=15),
                           id="sar_mission_enrichment", replace_existing=True,
                           max_instances=1, misfire_grace_time=300)
+
+        # No next_run_time=_soon(): must not run synchronously as part of
+        # scheduler startup, so a NAVAREA III outage at boot time can never
+        # delay/block start().
+        scheduler.add_job(_job_navarea3, IntervalTrigger(minutes=30),
+                          id="navarea3", replace_existing=True,
+                          max_instances=1, misfire_grace_time=600)
 
         scheduler.add_job(_job_expire_stale_hypotheses, IntervalTrigger(minutes=30),
                           id="expire_stale_hypotheses", replace_existing=True,

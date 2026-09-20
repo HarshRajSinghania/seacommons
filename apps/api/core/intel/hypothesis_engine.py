@@ -68,6 +68,21 @@ def _attach_cross_modal_evidence(
         cue = (event.metadata or {}).get("darkship_cue") or {}
         if cue.get("association_status") != "unmatched_candidate":
             continue
+        # Materialize as proper, persisted satellite evidence -- not
+        # decorative images. Keyed by this event's own id (one of the IDs
+        # that ends up in the hypothesis's evidence_links via related_
+        # signal_ids), so Play's dossier can find it the same way it finds
+        # drift (docs section 6/1's play_incident_timeline fix).
+        from core.intel.satellite_observation import (
+            materialize_unmatched_sar_detections,
+            persist_observations,
+        )
+
+        satellite_observations = materialize_unmatched_sar_detections(
+            incident_id=event.id, cue=cue,
+        )
+        if satellite_observations:
+            persist_observations(satellite_observations)
         for detection in cue.get("gfw_unmatched_in_area") or ():
             if not isinstance(detection, dict):
                 continue

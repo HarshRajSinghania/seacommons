@@ -561,6 +561,13 @@ class SatelliteObservationDB(Base):
     cloud_cover = Column(Float)
     polarisation = Column(JSON)
     evidence_status = Column(String(32), nullable=False, default="contextual")
+    # Whether this detection has been associated with a specific vessel --
+    # separate from evidence_status. "unmatched_candidate" (core.mda.
+    # darkship_cue's own vocabulary): an unmatched SAR detection inside a
+    # reachable-area calculation is a candidate, never a confirmed vessel
+    # match. Null means no association question applies (e.g. a routine
+    # quicklook, not a dark-ship cue).
+    association_status = Column(String(32), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (

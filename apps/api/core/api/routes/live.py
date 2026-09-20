@@ -489,7 +489,25 @@ async def live_receiver_mesh(
         item["frequency_hz"] = runtime_row.get("frequency_hz") if item["active"] else None
         item["mode"] = runtime_row.get("mode") if item["active"] else None
         receivers.append(item)
-    return {**summary, "active": len(active_ids), "receivers": receivers}
+
+    # Decoder observability: core.radio.bridge.radio_acquisition_status()
+    # already computes this exact shape for the separate acquisition-status
+    # surface; this endpoint previously omitted all of it, making "0 decoded
+    # DSC/NAVTEX" indistinguishable from "decoder never ran" from the public
+    # API alone. Reused rather than reimplemented so the two surfaces can
+    # never disagree on decoder/structured state.
+    from core.radio.bridge import radio_acquisition_status
+
+    acquisition = radio_acquisition_status()
+
+    return {
+        **summary,
+        "active": len(active_ids),
+        "receivers": receivers,
+        "decoder": acquisition["decoder"],
+        "structured_enabled": acquisition["structured_enabled"],
+        "structured_state": acquisition["structured_state"],
+    }
 
 
 @router.get("/radio/events")

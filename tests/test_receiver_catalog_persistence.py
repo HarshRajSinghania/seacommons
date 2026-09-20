@@ -217,3 +217,30 @@ def test_live_receiver_mesh_endpoint_combines_catalog_and_active_runtime(monkeyp
     assert payload["active"] == 1
     assert payload["receivers"][0]["active"] is True
     assert "endpoint" not in str(payload)
+
+
+def test_live_receiver_mesh_exposes_decoder_observability(monkeypatch):
+    """docs section 8: "0 decoded DSC/NAVTEX" was previously indistinguishable
+    from "decoder never ran" from the public API -- /receivers/mesh omitted
+    every decoder field entirely. Reuses core.radio.bridge.radio_acquisition_
+    status() rather than reimplementing it, so the two surfaces can't drift."""
+    from fastapi.testclient import TestClient
+    from core.api.main import app
+    from core.radio import catalog_store, runtime
+
+    monkeypatch.setattr(catalog_store, "public_catalog_summary", lambda limit=16: {
+        "catalogued": 1, "reachable": 1, "review_required": 0,
+        "eligible": 1, "offline": 0, "receivers": [],
+    })
+    monkeypatch.setattr(runtime, "get_remote_radio_status", lambda include_receivers=False: {
+        "enabled": True, "started": 1, "failed": 0, "configured": 1,
+        "receivers": [], "channels": [],
+    })
+    response = TestClient(app).get("/api/v1/live/receivers/mesh?limit=8")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "decoder" in payload
+    for field in ("enabled", "decoders", "frames", "decoded", "invalid", "dropped", "errors", "queued", "worker_alive"):
+        assert field in payload["decoder"], field
+    assert "structured_enabled" in payload
+    assert payload["structured_state"] in {"disabled", "offline", "idle", "degraded", "live"}

@@ -33,7 +33,16 @@ def project_public_radio_message(row) -> dict[str, object]:
         base.update({
             "category": payload.get("category"),
             "mmsi": payload.get("mmsi"),
+            "from_mmsi": payload.get("from_mmsi"),
+            "to_mmsi": payload.get("to_mmsi"),
             "nature_code": payload.get("nature_code"),
+            "nature_description": payload.get("nature_description"),
+            "format": payload.get("format"),
+            "telecommand_1": payload.get("telecommand_1"),
+            "telecommand_2": payload.get("telecommand_2"),
+            "end_of_sequence": payload.get("end_of_sequence"),
+            "distress_time": payload.get("distress_time"),
+            "reported_frequency": payload.get("reported_frequency"),
         })
         return base
 

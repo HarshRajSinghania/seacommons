@@ -1,7 +1,7 @@
 """Public Play: privacy-safe temporal reconstruction of incidents."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from threading import Lock
 from time import monotonic
@@ -137,37 +137,35 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     }
 
 
-# The public promotion boundary: only a hypothesis that has crossed review
-# (or been explicitly, durably rejected) reaches Play. candidate/collecting
-# are internal Live investigation state -- the vast majority of raw
-# detector-derived hypotheses never advance past them, and publishing every
-# one turns Play into an unfiltered detector log instead of a small number
-# of evidence-backed cases. expired is retained durably for audit but is not
-# public either (it means the cue never gathered sufficient evidence).
-_PUBLIC_PLAY_INVESTIGATION_STATES = frozenset({"review_ready", "assessed", "published", "rejected"})
+# The public promotion boundary: candidate/collecting/expired remain durable
+# internal investigation state. review_ready+ are public. Rejected hypotheses
+# are private by default and become a public negative case only after an
+# explicit preservation decision recorded in review metadata/reason codes.
+_PUBLIC_PLAY_INVESTIGATION_STATES = frozenset({"review_ready", "assessed", "published"})
+_NEGATIVE_CASE_PRESERVE_REASON = "PRESERVE_NEGATIVE_CASE"
+
+
+def _is_preserved_rejected_case(hypothesis) -> bool:
+    return bool(
+        hypothesis.state == "rejected"
+        and hypothesis.explicit_review_done
+        and _NEGATIVE_CASE_PRESERVE_REASON in set(hypothesis.reason_codes or ())
+    )
 
 
 def _is_public_play_investigation(hypothesis) -> bool:
-    """Whether this hypothesis has crossed the public promotion boundary.
-
-    Play is the archive/research surface, but it is not an unfiltered
-    detector feed: a hypothesis reaches it only once it has left
-    candidate/collecting (review_ready, assessed, published), or been
-    explicitly rejected -- a rejected hypothesis is retained as a closed
-    negative case, not silently dropped. Subject identifiers are
-    intentionally not projected into the public payload.
-    """
     if not (hypothesis.hypothesis_type and hypothesis.state):
         return False
-    return hypothesis.state in _PUBLIC_PLAY_INVESTIGATION_STATES
+    return (
+        hypothesis.state in _PUBLIC_PLAY_INVESTIGATION_STATES
+        or _is_preserved_rejected_case(hypothesis)
+    )
 
 
 def _archive_decision(hypothesis) -> str:
-    if hypothesis.state == "rejected":
+    if _is_preserved_rejected_case(hypothesis):
         return "rejected"
-    if hypothesis.state == "expired":
-        return "expired"
-    if hypothesis.state in {"candidate", "collecting"}:
+    if hypothesis.state in {"candidate", "collecting", "rejected", "expired"}:
         return "internal_only"
     return "promoted"
 
@@ -325,6 +323,11 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
             .outerjoin(
                 MaritimeEpisodeDB,
                 InvestigationHypothesisDB.episode_id == MaritimeEpisodeDB.episode_id,
+            )
+            .filter(
+                InvestigationHypothesisDB.state.in_(
+                    (*_PUBLIC_PLAY_INVESTIGATION_STATES, "rejected")
+                )
             )
             .all()
         )
@@ -600,6 +603,39 @@ def _drift_item(row) -> dict[str, Any]:
     }
 
 
+def _radio_item(observation, association) -> dict[str, Any]:
+    from core.radio.public_messages import project_public_radio_message
+
+    public = project_public_radio_message(observation)
+    geometry = None
+    lat, lon = public.get("latitude"), public.get("longitude")
+    if lat is not None and lon is not None:
+        geometry = {"type": "Point", "coordinates": [lon, lat]}
+    return {
+        "id": f"radio:{observation.observation_id}",
+        "at": _iso(observation.observed_at),
+        "type": "radio",
+        "source": "Structured maritime radio",
+        "title": "DSC radio evidence",
+        "geometry": geometry,
+        "properties": {
+            "kind": public.get("kind"),
+            "category": public.get("category"),
+            "nature_code": public.get("nature_code"),
+            "nature_description": public.get("nature_description"),
+            "format": public.get("format"),
+            "frequency_hz": public.get("frequency_hz"),
+            "match_status": association.match_status,
+            "association_confidence": association.confidence,
+            "distance_km": association.distance_km,
+            "ais_observed_at": association.ais_observed_at,
+            "episode_eligible": bool(association.episode_eligible),
+            "source_lineage": "radio_transmission",
+            "association_uses_lineage": "ais_sensor_lineage",
+        },
+    }
+
+
 @router.get("/incidents/{incident_id}/timeline")
 def play_incident_timeline(incident_id: str):
     from sqlalchemy import or_
@@ -611,7 +647,9 @@ def play_incident_timeline(incident_id: str):
         IntelEventDB,
         InvestigationHypothesisDB,
         MaritimeEpisodeDB,
+        RadioAISAssociationDB,
         SatelliteObservationDB,
+        SourceObservationDB,
     )
     from core.db.session import session_scope
 
@@ -620,15 +658,34 @@ def play_incident_timeline(incident_id: str):
         hypothesis = db.get(InvestigationHypothesisDB, incident_id)
         if hypothesis is not None and _is_public_play_investigation(hypothesis):
             episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id) if hypothesis.episode_id else None
+            evidence_links = [
+                str(value or "").strip()
+                for value in (hypothesis.evidence_links or [])
+                if str(value or "").strip()
+            ]
+            lookup_ids: set[str] = set(evidence_links)
+            lookup_ids.update(
+                value.removeprefix("ais:")
+                for value in evidence_links
+                if value.startswith("ais:")
+            )
+            evidence_by_id = {
+                row.id: row
+                for row in (
+                    db.query(IntelEventDB)
+                    .filter(IntelEventDB.id.in_(sorted(lookup_ids)))
+                    .all()
+                    if lookup_ids else []
+                )
+            }
             evidence_events: list[Any] = []
-            for evidence_id in hypothesis.evidence_links or []:
-                raw = str(evidence_id or "").strip()
-                evidence = db.get(IntelEventDB, raw)
+            seen_evidence_ids: set[str] = set()
+            for raw in evidence_links:
+                evidence = evidence_by_id.get(raw)
                 if evidence is None and raw.startswith("ais:"):
-                    evidence = db.get(IntelEventDB, raw.removeprefix("ais:"))
-                if evidence is not None and all(
-                    existing.id != evidence.id for existing in evidence_events
-                ):
+                    evidence = evidence_by_id.get(raw.removeprefix("ais:"))
+                if evidence is not None and evidence.id not in seen_evidence_ids:
+                    seen_evidence_ids.add(evidence.id)
                     evidence_events.append(evidence)
             primary_evidence = evidence_events[0] if evidence_events else None
             projection = _investigation_projection(
@@ -659,7 +716,16 @@ def play_incident_timeline(incident_id: str):
                     "type": "evidence", "source": evidence.source,
                     "title": str(meta.get("anomaly_type") or evidence.type).replace("_", " "),
                     "geometry": geometry,
-                    "properties": {"evidence_stage": hypothesis.evidence_stage},
+                    "properties": {
+                        "evidence_stage": hypothesis.evidence_stage,
+                        "verification_status": meta.get("verification_status"),
+                        "analysis_state": meta.get("analysis_state"),
+                        "source_lineage": (
+                            meta.get("source_lineage")
+                            or meta.get("contributing_independence_groups")
+                            or meta.get("independence_groups")
+                        ),
+                    },
                 })
 
             # Bug fix: this branch used to `return` here, before ever reaching
@@ -696,6 +762,68 @@ def play_incident_timeline(incident_id: str):
             ) if satellite_ids else []
             timeline.extend(_satellite_item(row) for row in satellites)
 
+            evidence_times = [
+                parsed for parsed in (parse_utc(str(event.timestamp_utc)) for event in evidence_events)
+                if parsed is not None
+            ]
+            if episode is not None:
+                if episode.start_at is not None:
+                    evidence_times.append(
+                        episode.start_at.replace(tzinfo=timezone.utc)
+                        if episode.start_at.tzinfo is None else episode.start_at.astimezone(timezone.utc)
+                    )
+                if episode.end_at is not None:
+                    evidence_times.append(
+                        episode.end_at.replace(tzinfo=timezone.utc)
+                        if episode.end_at.tzinfo is None else episode.end_at.astimezone(timezone.utc)
+                    )
+            radio_start = min(evidence_times) - timedelta(hours=6) if evidence_times else None
+            radio_end = max(evidence_times) + timedelta(hours=6) if evidence_times else None
+            evidence_mmsis = {
+                str(event.linked_mmsi or "").strip()
+                for event in evidence_events
+                if str(event.linked_mmsi or "").strip()
+            }
+            radio_rows: list[tuple[Any, Any]] = []
+            if evidence_mmsis:
+                associations = (
+                    db.query(RadioAISAssociationDB)
+                    .filter(
+                        RadioAISAssociationDB.mmsi.in_(sorted(evidence_mmsis)),
+                        RadioAISAssociationDB.match_status.in_(("strong", "identity_only")),
+                        RadioAISAssociationDB.confidence >= 0.8,
+                    )
+                    .order_by(RadioAISAssociationDB.created_at.asc())
+                    .limit(200)
+                    .all()
+                )
+                observation_ids = [row.observation_id for row in associations]
+                observation_by_id = {
+                    row.observation_id: row
+                    for row in (
+                        db.query(SourceObservationDB)
+                        .filter(
+                            SourceObservationDB.observation_id.in_(observation_ids),
+                            SourceObservationDB.observation_type == "dsc_message",
+                        )
+                        .all()
+                        if observation_ids else []
+                    )
+                }
+                for association in associations:
+                    observation = observation_by_id.get(association.observation_id)
+                    if observation is None:
+                        continue
+                    observed_at = parse_utc(str(observation.observed_at))
+                    if observed_at is None:
+                        continue
+                    if radio_start is not None and observed_at < radio_start:
+                        continue
+                    if radio_end is not None and observed_at > radio_end:
+                        continue
+                    radio_rows.append((observation, association))
+                timeline.extend(_radio_item(observation, association) for observation, association in radio_rows)
+
             timeline = [item for item in timeline if item.get("at")]
             timeline.sort(key=lambda item: item["at"])
             return {
@@ -705,6 +833,8 @@ def play_incident_timeline(incident_id: str):
                 "incident_type": projection["incident_type"],
                 "investigation": True,
                 "archive_decision": _archive_decision(hypothesis),
+                "hypothesis_state": hypothesis.state,
+                "evidence_stage": hypothesis.evidence_stage,
                 "verification_status": projection.get("verification_status"),
                 "corroborated": projection.get("corroborated"),
                 "independence_groups": projection.get("independence_groups"),
@@ -712,6 +842,7 @@ def play_incident_timeline(incident_id: str):
                 "reason_codes": projection.get("reason_codes"),
                 "counter_indicators": projection.get("counter_indicators"),
                 "satellite_count": len(satellites),
+                "radio_count": len(radio_rows),
                 "drift_count": len(drifts),
                 "timeline": timeline, "generated_at": now.isoformat(),
             }

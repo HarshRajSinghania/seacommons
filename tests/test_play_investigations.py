@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -18,6 +19,8 @@ def _fresh_investigations():
         IntelEventDB,
         InvestigationHypothesisDB,
         MaritimeEpisodeDB,
+        RadioAISAssociationDB,
+        SourceObservationDB,
     )
     from core.db.session import session_scope
 
@@ -26,8 +29,14 @@ def _fresh_investigations():
     with session_scope() as db:
         db.query(InvestigationHypothesisDB).delete()
         db.query(MaritimeEpisodeDB).delete()
+        db.query(RadioAISAssociationDB).filter(
+            RadioAISAssociationDB.observation_id.like("obs:play-%")
+        ).delete(synchronize_session=False)
+        db.query(SourceObservationDB).filter(
+            SourceObservationDB.observation_id.like("obs:play-%")
+        ).delete(synchronize_session=False)
         db.query(IntelEventDB).filter(
-            IntelEventDB.id == "legacy-evidence-play-test"
+            IntelEventDB.id.in_(("legacy-evidence-play-test", "play-radio-evidence"))
         ).delete(synchronize_session=False)
     yield
     play_routes._play_catalog_cache.clear()
@@ -35,8 +44,14 @@ def _fresh_investigations():
     with session_scope() as db:
         db.query(InvestigationHypothesisDB).delete()
         db.query(MaritimeEpisodeDB).delete()
+        db.query(RadioAISAssociationDB).filter(
+            RadioAISAssociationDB.observation_id.like("obs:play-%")
+        ).delete(synchronize_session=False)
+        db.query(SourceObservationDB).filter(
+            SourceObservationDB.observation_id.like("obs:play-%")
+        ).delete(synchronize_session=False)
         db.query(IntelEventDB).filter(
-            IntelEventDB.id == "legacy-evidence-play-test"
+            IntelEventDB.id.in_(("legacy-evidence-play-test", "play-radio-evidence"))
         ).delete(synchronize_session=False)
 
 
@@ -204,3 +219,91 @@ def test_play_keeps_legacy_hypothesis_without_episode_using_evidence_fallback():
         "type": "Point", "coordinates": [14.75, 36.25]
     }
     assert "legacy-evidence-play-test" not in timeline.text
+
+
+def _seed_rejected_hypothesis(*, preserve: bool) -> str:
+    suffix = "preserved" if preserve else "private"
+    hyp = new_hypothesis(
+        f"hyp:v1:dark_transit:rejected-{suffix}",
+        "dark_transit",
+        ("subj:redacted",),
+    )
+    reasons = ["COUNTER_EVIDENCE_RESOLVED"]
+    if preserve:
+        reasons.append("PRESERVE_NEGATIVE_CASE")
+    hyp = replace(
+        hyp,
+        reason_codes=tuple(reasons),
+        evidence_links=("negative-evidence-a", "negative-evidence-b"),
+        evidence_stage="assessed",
+        explicit_review_done=preserve,
+    )
+    hyp = transition(hyp, "collecting", actor="test")
+    hyp = transition(hyp, "rejected", actor="test")
+    save_hypothesis(hyp)
+    return hyp.hypothesis_id
+
+
+def test_play_rejected_hypothesis_is_private_by_default():
+    hypothesis_id = _seed_rejected_hypothesis(preserve=False)
+    rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
+    assert all(item["incident_id"] != hypothesis_id for item in rows)
+
+
+def test_play_explicitly_preserved_negative_case_is_public():
+    hypothesis_id = _seed_rejected_hypothesis(preserve=True)
+    rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
+    row = next(item for item in rows if item["incident_id"] == hypothesis_id)
+    assert row["archive_decision"] == "rejected"
+    assert row["incident_status"] == "rejected"
+
+
+def test_play_timeline_includes_strong_radio_evidence_without_mmsi_leak():
+    from core.db.models import IntelEventDB, RadioAISAssociationDB, SourceObservationDB
+    from core.db.session import session_scope
+    from core.intel.hypothesis_store import get_hypothesis
+
+    now = datetime.now(timezone.utc)
+    hypothesis_id = _seed_investigation(state="review_ready")
+    with session_scope() as db:
+        db.add(IntelEventDB(
+            id="play-radio-evidence", timestamp_utc=now.isoformat(),
+            type="ais_anomaly", severity="medium", lat=35.5, lon=14.1,
+            title="AIS gap", text="", url="", source="mda",
+            linked_mmsi="211879870", meta={"anomaly_type": "gap"},
+        ))
+        payload = {
+            "category": "distress", "mmsi": "211879870",
+            "nature_code": "fire", "nature_description": "Fire, explosion",
+            "format": "distress",
+        }
+        db.add(SourceObservationDB(
+            observation_id="obs:play-radio-1", service="maritime", lane="safety",
+            observation_type="dsc_message", source_name="radio_receiver:test",
+            source_policy="structured_remote_radio_decoder", source_id="dsc:play-radio-1",
+            source_url="", observed_at=now.isoformat(), raw_payload_hash="a" * 64,
+            raw_payload_ref="", lat=35.5, lon=14.1, subject_refs=[],
+            provenance={"frequency_hz": 2187500, "structured_payload": json.dumps(payload)},
+        ))
+        db.add(RadioAISAssociationDB(
+            observation_id="obs:play-radio-1", mmsi="211879870",
+            match_status="strong", confidence=0.95, distance_km=2.1,
+            ais_observed_at=now.isoformat(), episode_eligible=True,
+        ))
+
+    hyp = get_hypothesis(hypothesis_id)
+    assert hyp is not None
+    hyp = replace(
+        hyp,
+        evidence_links=("play-radio-evidence", "sat:gfw_sar:test"),
+    )
+    save_hypothesis(hyp)
+
+    response = TestClient(app).get(f"/api/v1/play/incidents/{hypothesis_id}/timeline")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["radio_count"] == 1
+    radio = next(item for item in payload["timeline"] if item["type"] == "radio")
+    assert radio["properties"]["match_status"] == "strong"
+    assert radio["properties"]["nature_description"] == "Fire, explosion"
+    assert "211879870" not in response.text

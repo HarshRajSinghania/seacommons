@@ -493,6 +493,21 @@ def _job_incident_watch() -> None:
         logger.warning("Scheduler incident_watch failed: %s", exc)
 
 
+def _job_sar_mission_enrichment() -> None:
+    """Cross-check active Humanitarian incidents against the SAR/NGO
+    responder registry (previously implemented but never called)."""
+    try:
+        from core.intel.sar_mission_assessment import (
+            enrich_active_humanitarian_incidents_with_sar_mission,
+        )
+
+        enriched = enrich_active_humanitarian_incidents_with_sar_mission()
+        if enriched:
+            logger.info("SAR mission enrichment updated %d incident(s)", enriched)
+    except Exception as exc:
+        logger.warning("Scheduler sar_mission_enrichment failed: %s", exc)
+
+
 def _job_expire_stale_hypotheses() -> None:
     """Close out candidate/collecting hypotheses whose evidence went quiet
     24h+ ago. Keeps Live/Play from holding an investigation open forever
@@ -544,6 +559,10 @@ def start() -> None:
         scheduler.add_job(_job_incident_watch, IntervalTrigger(minutes=5),
                           id="incident_watch", replace_existing=True,
                           max_instances=1, misfire_grace_time=300, next_run_time=_soon())
+
+        scheduler.add_job(_job_sar_mission_enrichment, IntervalTrigger(minutes=15),
+                          id="sar_mission_enrichment", replace_existing=True,
+                          max_instances=1, misfire_grace_time=300)
 
         scheduler.add_job(_job_expire_stale_hypotheses, IntervalTrigger(minutes=30),
                           id="expire_stale_hypotheses", replace_existing=True,

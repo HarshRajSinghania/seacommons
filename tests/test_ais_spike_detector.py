@@ -377,6 +377,7 @@ def test_search_pattern_normalizes_active_responder_as_neutral_sar_observation()
     assert len(normalized) == 1
     ev = normalized[0]
     assert ev.metadata["activity_kind"] == "search_pattern_observed"
+    assert ev.metadata["mission_state"] == "search_pattern"
     assert ev.metadata["source_lineage"] == "ais_sensor_lineage"
     assert ev.metadata["independent_source_count"] == 1
     assert ev.metadata["verification_status"] == "single_source_observed"
@@ -385,7 +386,11 @@ def test_search_pattern_normalizes_active_responder_as_neutral_sar_observation()
     assert "does not by itself confirm" in ev.text
 
 
-def test_possible_cluster_does_not_normalize_into_public_sar_activity():
+def test_possible_cluster_normalizes_as_weak_rescue_cluster_mission_state():
+    # docs section 7 fix: this used to fall through to `return None` and was
+    # part of the production ngo_activity=0 bug -- a real cluster cue with
+    # unconfirmed convergence is weaker evidence than a converging offshore
+    # one, but it is not nothing, and must not silently vanish.
     d = AISSpikeDetector()
     d._emit(
         spike_type="possible_rescue_cluster",
@@ -398,7 +403,77 @@ def test_possible_cluster_does_not_normalize_into_public_sar_activity():
         ngo_info=get_ngo_info(_OCEAN_VIKING),
         metadata={"converging": None, "in_port_or_anchorage": False},
     )
-    assert not [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    normalized = [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    assert len(normalized) == 1
+    ev = normalized[0]
+    assert ev.metadata["activity_kind"] == "rescue_cluster_observed"
+    assert ev.metadata["mission_state"] == "rescue_cluster"
+    assert ev.metadata["independent_source_count"] == 1
+    assert "does not by itself confirm" in ev.text
+
+
+def test_sudden_stop_normalizes_as_possible_response_mission_state():
+    # Production audit (docs section 7): known fresh NGO vessels (Ocean
+    # Viking et al) with a real sudden-stop cue produced zero ngo_activity
+    # because sudden_stop was never in the normalizer's if/elif at all.
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="sudden_stop",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="high",
+        detail="Ocean Viking stopped abruptly",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={},
+    )
+    normalized = [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    assert len(normalized) == 1
+    ev = normalized[0]
+    assert ev.metadata["activity_kind"] == "possible_response_observed"
+    assert ev.metadata["mission_state"] == "possible_response"
+
+
+def test_vessel_loiter_normalizes_as_on_scene_mission_state():
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="vessel_loiter",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="medium",
+        detail="Ocean Viking loitering near a known SAR hotspot",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={},
+    )
+    normalized = [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    assert len(normalized) == 1
+    ev = normalized[0]
+    assert ev.metadata["activity_kind"] == "on_scene_observed"
+    assert ev.metadata["mission_state"] == "on_scene"
+
+
+def test_sar_ais_only_mission_activity_stays_single_source_never_auto_corroborated():
+    # SAR movement observed only through AIS remains one lineage. It must
+    # never, by itself, create false multi-source corroboration.
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="ngo_search_pattern",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="high",
+        detail="Ocean Viking executing search pattern",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={"pattern": "course_change"},
+    )
+    ev = next(e for e in intel_store.events(limit=20) if e.type == "ngo_activity")
+    assert ev.metadata["verification_status"] == "single_source_observed"
+    assert ev.metadata["independent_source_count"] == 1
+    assert ev.metadata["source_lineage"] == "ais_sensor_lineage"
 
 
 def test_recent_sar_backfill_reuses_canonical_normalization(monkeypatch):

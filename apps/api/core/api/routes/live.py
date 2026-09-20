@@ -261,6 +261,17 @@ async def live_hypotheses(limit: int = Query(100, ge=1, le=200)):
     return public_hypothesis_collection(limit=limit)
 
 
+@router.get("/sar-fleet")
+async def live_sar_fleet():
+    """Public Civil SAR fleet layer: fresh (<=10 min) AIS positions of known
+    SAR/NGO/coastguard responders only. Asset position and mission activity
+    (see /hypotheses and the ngo_activity signal type) are deliberately
+    separate -- a fresh position here never implies a rescue in progress."""
+    from core.intel.ngo_registry import public_sar_fleet_geojson
+
+    return public_sar_fleet_geojson()
+
+
 @router.get("/archives")
 async def live_archives(limit: int = Query(40, ge=1, le=200)):
     """Anonymised incident index for the Play archive timeline.

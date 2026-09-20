@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 METHOD_VERSION = "sar-mission-assessment-v1"
 _ALLOWED_STATES = {
@@ -112,6 +115,66 @@ def persist_sar_mission_assessments(
             except Exception:
                 pass
     return persisted
+
+
+def enrich_active_humanitarian_incidents_with_sar_mission(
+    *, limit: int = 200,
+) -> int:
+    """Cross-check every active/needs_review Humanitarian incident against
+    the SAR/NGO responder registry and persist the result.
+
+    persist_sar_mission_assessments() and analyze_ngo_response() both
+    already existed and were fully implemented, but nothing ever called
+    this combination in the running system -- a Humanitarian case's
+    "current assessment" had no SAR-responder context at all no matter how
+    much relevant NGO AIS activity was nearby. This is the missing caller.
+
+    SAR movement observed only through AIS remains a single lineage
+    (independence_groups always ["ais_sensor_lineage"] here, see
+    persist_sar_mission_assessments) -- it enriches the case's operational
+    picture, it never creates corroboration on its own.
+    """
+    from core.db.models import HumanitarianIncidentDB, IntelEventDB
+    from core.db.session import session_scope
+    from core.intel.ngo_response import analyze_ngo_response
+    from core.intel.store import IntelEvent
+
+    enriched = 0
+    with session_scope() as db:
+        rows = (
+            db.query(HumanitarianIncidentDB)
+            .filter(HumanitarianIncidentDB.lifecycle.in_(("active", "needs_review")))
+            .order_by(HumanitarianIncidentDB.incident_id.asc())
+            .limit(limit)
+            .all()
+        )
+        incident_ids = [row.incident_id for row in rows]
+        if not incident_ids:
+            return 0
+        events_by_id = {
+            row.id: row
+            for row in db.query(IntelEventDB).filter(IntelEventDB.id.in_(incident_ids)).all()
+        }
+        for row in rows:
+            event_row = events_by_id.get(row.incident_id)
+            if event_row is None or event_row.lat is None or event_row.lon is None:
+                continue
+            event = IntelEvent(
+                id=event_row.id, timestamp_utc=event_row.timestamp_utc,
+                type=event_row.type or "", severity=event_row.severity or "",
+                lat=event_row.lat, lon=event_row.lon, title=event_row.title or "",
+                source=event_row.source or "", metadata=dict(event_row.meta or {}),
+            )
+            try:
+                ngo_response = analyze_ngo_response(event)
+            except Exception:
+                logger.warning("SAR mission enrichment failed for %s", row.incident_id, exc_info=True)
+                continue
+            if not ngo_response.get("ngo_vessels"):
+                continue
+            persist_sar_mission_assessments(row.incident_id, ngo_response)
+            enriched += 1
+    return enriched
 
 
 def get_sar_mission_assessments(incident_id: str) -> list[dict[str, Any]]:

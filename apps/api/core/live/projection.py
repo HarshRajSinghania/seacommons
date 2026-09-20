@@ -137,6 +137,7 @@ _PUBLIC_METADATA = frozenset(
         "live_valid_for_s",
         "source_lineage",
         "activity_kind",
+        "mission_state",
         "observation_type",
         "operator_type",
         "org",

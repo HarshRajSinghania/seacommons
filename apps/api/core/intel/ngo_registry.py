@@ -199,6 +199,80 @@ def _position_status(last_seen: Any, *, now: datetime | None = None) -> str:
     return "offline"
 
 
+def _asset_state(last_seen: Any, speed_kn: Any, *, now: datetime | None = None) -> str:
+    """Asset position/movement state -- deliberately separate from
+    mission activity (core.intel.ais_spike_detector's activity_kind/
+    mission_state). A fresh SAR vessel position never implies a rescue;
+    this classifies only the vessel's own movement.
+    """
+    ais_status = _position_status(last_seen, now=now)
+    if ais_status != "live":
+        return ais_status  # "stale" or "offline"
+    try:
+        speed = float(speed_kn) if speed_kn is not None else None
+    except (TypeError, ValueError):
+        speed = None
+    if speed is None:
+        return "transit"
+    if speed < 0.5:
+        return "stationary"
+    if speed < 3.0:
+        return "slow_movement"
+    return "transit"
+
+
+def public_sar_fleet_geojson() -> dict[str, Any]:
+    """Public "Civil SAR fleet" Live layer: fresh AIS positions only.
+
+    Unlike ngo_vessel_geojson() (the full operator inventory, including
+    stale/never-seen history), this is the public projection -- only assets
+    with a genuinely fresh fix (<=10 min, same freshness bar as the
+    operator surface's "live" status) are included, and only asset/position
+    fields are exposed. Mission activity (search_pattern, on_scene, ...) is
+    a separate, case-linked concept (core.intel.ais_spike_detector) and is
+    never implied by a position appearing here.
+    """
+    from core.vessels.registry import registry  # lazy to avoid circular import
+
+    geojson = registry.get_last_known_geojson(ngo_mmsi_set())
+    now = datetime.now(timezone.utc)
+    features = []
+    for feat in geojson.get("features", []):
+        props = feat.get("properties") or {}
+        mmsi = str(props.get("mmsi", ""))
+        if not is_ngo(mmsi):
+            continue
+        if _position_status(props.get("last_seen"), now=now) != "live":
+            continue  # stale/offline positions are withheld from the public map
+        info = get_ngo_info(mmsi) or {}
+        operator_type = info.get("operator_type", "civil_ngo")
+        features.append({
+            "type": "Feature",
+            "geometry": feat.get("geometry"),
+            "properties": {
+                "mmsi": mmsi,
+                "ship_name": info.get("name") or props.get("ship_name") or mmsi,
+                "flag": info.get("flag", ""),
+                "org": info.get("org", ""),
+                "role": info.get("role", ""),
+                "operator_type": operator_type,
+                "vessel_class": "ngo" if operator_type == "civil_ngo" else "coastguard",
+                "asset_state": _asset_state(props.get("last_seen"), props.get("speed"), now=now),
+                "last_seen": props.get("last_seen"),
+                "maritime_domain": "sar",
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "meta": {
+            "count": len(features),
+            "map_position_policy": "live_only_10m",
+            "generated_at": now.isoformat(),
+        },
+    }
+
+
 def ngo_vessel_geojson() -> dict[str, Any]:
     """Operational NGO/coastguard vessel inventory enriched from the registry.
 

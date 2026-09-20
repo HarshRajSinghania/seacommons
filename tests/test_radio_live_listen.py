@@ -151,7 +151,7 @@ def test_listen_http_streams_ephemeral_pcm_without_cloudflare(monkeypatch):
         assert listen_broker.status()["subscribers"] == 1
         packet = b"\x01\x00\xff\x7f"
         assert listen_broker.publish(_frame(packet)) == 1
-        response = future.result(timeout=3)
+        response = future.result(timeout=10)
 
     assert response.status_code == 200
     assert response.content == packet

@@ -126,7 +126,7 @@ def test_emit_rescue_cluster_without_nearby_distress_is_unflagged():
         spike_type="rescue_cluster", mmsi=_OCEAN_VIKING, name="Ocean Viking",
         lat=35.51, lon=12.61, severity="high", detail="Rescue cluster: 2 vessels within 3nm",
     )
-    ev = [e for e in intel_store.events(limit=10) if e.type == "ais_spike"][0]
+    ev = next(e for e in intel_store.events(limit=10) if e.type == "ais_spike")
     assert "possible_response_to" not in ev.metadata
     assert ev.severity == "high"
 
@@ -335,6 +335,21 @@ def test_loiter_without_nav_status_is_flagged_unknown(monkeypatch):
     assert loiter[0]["metadata"]["nav_status_known"] is False
 
 
+def test_ngo_search_pattern_is_suppressed_in_port(monkeypatch):
+    monkeypatch.setattr("core.intel.ais_spike_detector.is_ngo", lambda m: m == _OCEAN_VIKING)
+    monkeypatch.setattr("core.intel.ais_spike_detector._in_port", lambda a, b: True)
+    monkeypatch.setattr("core.intel.ais_spike_detector._ngo_circular_pattern", lambda m: None)
+    det = AISSpikeDetector()
+    emitted: list = []
+    first = _stop_feature(_OCEAN_VIKING, 44.03, 10.04, speed=3.0)
+    first["properties"]["last_course"] = 10.0
+    second = _stop_feature(_OCEAN_VIKING, 44.03, 10.04, speed=3.0)
+    second["properties"]["last_course"] = 120.0
+    _scan_with(monkeypatch, det, [first], emitted)
+    _scan_with(monkeypatch, det, [second], emitted)
+    assert not any(item.get("spike_type") == "ngo_search_pattern" for item in emitted)
+
+
 def test_ngo_vessels_moored_in_port_are_not_a_rescue(monkeypatch):
     monkeypatch.setattr("core.intel.ais_spike_detector.is_ngo", lambda m: True)
     monkeypatch.setattr("core.intel.ais_spike_detector._in_hotspot", lambda a, b: None)
@@ -377,7 +392,7 @@ def test_search_pattern_normalizes_active_responder_as_neutral_sar_observation()
     assert len(normalized) == 1
     ev = normalized[0]
     assert ev.metadata["activity_kind"] == "search_pattern_observed"
-    assert ev.metadata["mission_state"] == "search_pattern"
+    assert ev.metadata["mission_state"] == "search_candidate"
     assert ev.metadata["source_lineage"] == "ais_sensor_lineage"
     assert ev.metadata["independent_source_count"] == 1
     assert ev.metadata["verification_status"] == "single_source_observed"
@@ -386,7 +401,7 @@ def test_search_pattern_normalizes_active_responder_as_neutral_sar_observation()
     assert "does not by itself confirm" in ev.text
 
 
-def test_possible_cluster_normalizes_as_weak_rescue_cluster_mission_state():
+def test_possible_cluster_without_distress_link_stays_search_candidate():
     # docs section 7 fix: this used to fall through to `return None` and was
     # part of the production ngo_activity=0 bug -- a real cluster cue with
     # unconfirmed convergence is weaker evidence than a converging offshore
@@ -407,12 +422,12 @@ def test_possible_cluster_normalizes_as_weak_rescue_cluster_mission_state():
     assert len(normalized) == 1
     ev = normalized[0]
     assert ev.metadata["activity_kind"] == "rescue_cluster_observed"
-    assert ev.metadata["mission_state"] == "rescue_cluster"
+    assert ev.metadata["mission_state"] == "search_candidate"
     assert ev.metadata["independent_source_count"] == 1
     assert "does not by itself confirm" in ev.text
 
 
-def test_sudden_stop_normalizes_as_possible_response_mission_state():
+def test_sudden_stop_without_distress_link_stays_search_candidate():
     # Production audit (docs section 7): known fresh NGO vessels (Ocean
     # Viking et al) with a real sudden-stop cue produced zero ngo_activity
     # because sudden_stop was never in the normalizer's if/elif at all.
@@ -432,10 +447,33 @@ def test_sudden_stop_normalizes_as_possible_response_mission_state():
     assert len(normalized) == 1
     ev = normalized[0]
     assert ev.metadata["activity_kind"] == "possible_response_observed"
-    assert ev.metadata["mission_state"] == "possible_response"
+    assert ev.metadata["mission_state"] == "search_candidate"
 
 
-def test_vessel_loiter_normalizes_as_on_scene_mission_state():
+def test_linked_search_pattern_preserves_case_link_for_case_assessment():
+    d = AISSpikeDetector()
+    d._emit(
+        spike_type="ngo_search_pattern",
+        mmsi=_OCEAN_VIKING,
+        name="Ocean Viking",
+        lat=35.51,
+        lon=12.61,
+        severity="high",
+        detail="Ocean Viking executing search pattern",
+        ngo_info=get_ngo_info(_OCEAN_VIKING),
+        metadata={
+            "pattern": "course_change",
+            "possible_response_to": {"case_id": "distress-linked", "distance_nm": 4.2},
+        },
+    )
+    normalized = [e for e in intel_store.events(limit=20) if e.type == "ngo_activity"]
+    assert len(normalized) == 1
+    ev = normalized[0]
+    assert ev.metadata["possible_response_to"]["case_id"] == "distress-linked"
+    assert ev.metadata["mission_state"] == "search_candidate"
+
+
+def test_vessel_loiter_without_distress_link_stays_search_candidate():
     d = AISSpikeDetector()
     d._emit(
         spike_type="vessel_loiter",
@@ -452,7 +490,7 @@ def test_vessel_loiter_normalizes_as_on_scene_mission_state():
     assert len(normalized) == 1
     ev = normalized[0]
     assert ev.metadata["activity_kind"] == "on_scene_observed"
-    assert ev.metadata["mission_state"] == "on_scene"
+    assert ev.metadata["mission_state"] == "search_candidate"
 
 
 def test_sar_ais_only_mission_activity_stays_single_source_never_auto_corroborated():

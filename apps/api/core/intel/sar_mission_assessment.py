@@ -8,12 +8,13 @@ logger = logging.getLogger(__name__)
 
 METHOD_VERSION = "sar-mission-assessment-v1"
 _ALLOWED_STATES = {
-    "unrelated", "possible_response", "approaching", "on_scene",
+    "unrelated", "search_candidate", "possible_response", "approaching", "on_scene",
     "probable_rescue_activity", "departing_scene", "post_rescue_transit",
     "insufficient_evidence",
 }
 _STATE_CONFIDENCE = {
     "unrelated": 0.4,
+    "search_candidate": 0.45,
     "possible_response": 0.5,
     "approaching": 0.65,
     "on_scene": 0.7,
@@ -86,6 +87,14 @@ def persist_sar_mission_assessments(
                 "upstream_sources": upstream,
                 "independence_groups": ["ais_sensor_lineage"],
                 "distance_nm": vessel.get("distance_nm"),
+                "distance_to_drift_nm": vessel.get("distance_to_drift_nm"),
+                "operational_distance_nm": vessel.get("operational_distance_nm"),
+                "operational_target": vessel.get("operational_target"),
+                "drift_target": vessel.get("drift_target"),
+                "sar_zones": list(vessel.get("sar_zones") or []),
+                "in_named_srr": bool(vessel.get("in_named_srr")),
+                "in_port_or_land": bool(vessel.get("in_port_or_land")),
+                "current_drift_id": (ngo_response.get("summary") or {}).get("current_drift_id"),
                 "heading_toward": bool(vessel.get("heading_toward")),
                 "eta_h": vessel.get("eta_h"),
                 "fix_age_min": vessel.get("fix_age_min"),
@@ -136,7 +145,7 @@ def enrich_active_humanitarian_incidents_with_sar_mission(
     """
     from core.db.models import HumanitarianIncidentDB, IntelEventDB
     from core.db.session import session_scope
-    from core.intel.ngo_response import analyze_ngo_response
+    from core.intel.ngo_response import _current_drift_context, analyze_ngo_response
     from core.intel.store import IntelEvent
 
     enriched = 0
@@ -166,7 +175,10 @@ def enrich_active_humanitarian_incidents_with_sar_mission(
                 source=event_row.source or "", metadata=dict(event_row.meta or {}),
             )
             try:
-                ngo_response = analyze_ngo_response(event)
+                ngo_response = analyze_ngo_response(
+                    event,
+                    drift_context=_current_drift_context(row.incident_id),
+                )
             except Exception:
                 logger.warning("SAR mission enrichment failed for %s", row.incident_id, exc_info=True)
                 continue

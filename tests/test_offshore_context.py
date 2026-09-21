@@ -169,6 +169,22 @@ def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> Non
     assert is_useful_public_case_feature(repeated) is True
 
 
+def test_sar_responder_activity_in_port_is_not_useful_public_live(monkeypatch) -> None:
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: "Marina di Carrara")
+    monkeypatch.setattr(reference, "is_land", lambda lat, lon: False)
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [10.04, 44.03]},
+        "properties": {
+            "type": "ngo_activity",
+            "observation_type": "sar_responder_activity",
+            "main_category": "humanitarian",
+            "incident_type": "sar_activity",
+        },
+    }
+    assert is_useful_public_case_feature(feature) is False
+
+
 def test_non_offshore_qualification_preserves_full_result_contract() -> None:
     result = qualify_offshore_anomaly(
         "ais_rendezvous",

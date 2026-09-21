@@ -583,6 +583,45 @@ def _transition_item(row) -> dict[str, Any]:
     }
 
 
+def _sar_mission_item(row) -> dict[str, Any]:
+    value = dict(row.value or {})
+    asset = value.get("asset_name") or value.get("asset_identity") or "SAR responder"
+    mission_state = str(value.get("mission_state") or "insufficient_evidence")
+    return {
+        "id": row.assessment_id,
+        "at": _iso(row.updated_at or row.created_at),
+        "type": "sar_mission_assessment",
+        "source": "SeaCommons AIS analysis",
+        "title": f"SAR asset assessment — {asset}",
+        "geometry": None,
+        "properties": {
+            "asset_identity": value.get("asset_identity"),
+            "asset_name": value.get("asset_name"),
+            "org": value.get("org"),
+            "mission_state": mission_state,
+            "reason_codes": list(value.get("reason_codes") or []),
+            "distance_nm": value.get("distance_nm"),
+            "distance_to_drift_nm": value.get("distance_to_drift_nm"),
+            "operational_distance_nm": value.get("operational_distance_nm"),
+            "operational_target": value.get("operational_target"),
+            "drift_target": value.get("drift_target"),
+            "current_drift_id": value.get("current_drift_id"),
+            "sar_zones": list(value.get("sar_zones") or []),
+            "in_named_srr": bool(value.get("in_named_srr")),
+            "in_port_or_land": bool(value.get("in_port_or_land")),
+            "heading_toward": bool(value.get("heading_toward")),
+            "eta_h": value.get("eta_h"),
+            "motion_flags": list(value.get("motion_flags") or []),
+            "verification_status": "single_source_observed",
+            "evidence_stage": "derived",
+            "independence_groups": list(value.get("independence_groups") or ["ais_sensor_lineage"]),
+            "confidence": row.confidence,
+            "review_state": row.review_state,
+            "method_version": row.method_version,
+        },
+    }
+
+
 def _drift_item(row) -> dict[str, Any]:
     metadata = dict(row.metadata_json or {})
     return {
@@ -641,6 +680,7 @@ def play_incident_timeline(incident_id: str):
     from sqlalchemy import or_
 
     from core.db.models import (
+        AssessmentDB,
         DriftResultDB,
         HumanitarianIncidentDB,
         IncidentTransitionDB,
@@ -872,6 +912,7 @@ def play_incident_timeline(incident_id: str):
                 item = _thread_item(incident_id, repost, reported_at=incident.reported_at if incident is not None else event.timestamp_utc)
                 if item is not None:
                     timeline.append(item)
+        sar_missions = []
         if incident is not None:
             transitions = (
                 db.query(IncidentTransitionDB)
@@ -880,6 +921,16 @@ def play_incident_timeline(incident_id: str):
                 .all()
             )
             timeline.extend(_transition_item(row) for row in transitions)
+            sar_missions = (
+                db.query(AssessmentDB)
+                .filter(
+                    AssessmentDB.incident_id == incident_id,
+                    AssessmentDB.field_type == "sar_mission",
+                )
+                .order_by(AssessmentDB.updated_at.asc(), AssessmentDB.assessment_id.asc())
+                .all()
+            )
+            timeline.extend(_sar_mission_item(row) for row in sar_missions)
 
         drifts = (
             db.query(DriftResultDB)
@@ -910,6 +961,9 @@ def play_incident_timeline(incident_id: str):
         "incident_status": incident_status,
         "surface": "play",
         "domain": domain,
+        "sar_mission_count": len(sar_missions) if incident is not None else 0,
+        "drift_count": len(drifts),
+        "satellite_count": len(satellites),
         "timeline": timeline,
         "generated_at": now.isoformat(),
     }

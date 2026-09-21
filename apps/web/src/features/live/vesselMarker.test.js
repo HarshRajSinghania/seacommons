@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-test('public vessel markers distinguish moving triangles from stationary circles', async () => {
+test('public SAR asset markers stay triangular even when stationary', async () => {
   const source = await readFile(new URL('../../main.jsx', import.meta.url), 'utf8');
   assert.match(source, /id: 'vessels-stationary-layer'.*?type: 'circle'/s);
   assert.match(source, /id: 'vessels-layer'.*?icon-image': 'vessel-arrow'/s);
-  assert.match(source, /id: 'vessels-ngo-stationary'.*?type: 'circle'/s);
+  assert.match(source, /id: 'vessels-ngo-stationary'.*?type: 'symbol'.*?icon-image': 'vessel-arrow'/s);
   assert.match(source, /id: 'vessels-ngo'.*?icon-image': 'vessel-arrow'/s);
   assert.match(source, /id: 'selected-vessel-track'.*?type: 'line'/s);
 });

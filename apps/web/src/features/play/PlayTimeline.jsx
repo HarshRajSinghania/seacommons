@@ -566,6 +566,7 @@ export default function PlayTimeline({ apiBase }) {
             <div><span>Satellite</span><strong>{caseData?.satellite_count ?? 0}</strong></div>
             <div><span>Radio</span><strong>{caseData?.radio_count ?? 0}</strong></div>
             <div><span>Drift</span><strong>{caseData?.drift_count ?? 0}</strong></div>
+            <div><span>SAR assessments</span><strong>{caseData?.sar_mission_count ?? 0}</strong></div>
             {dossierReasonCodes.length > 0 ? <div><span>Why flagged</span><strong>{dossierReasonCodes.join(' · ')}</strong></div> : null}
             {caseData?.counter_indicators?.length ? <div><span>Counter-indicators</span><strong>{caseData.counter_indicators.join(' · ')}</strong></div> : null}
             {frame.item ? <div><span>Latest at cutoff</span><strong>{frame.item.type}</strong></div> : null}

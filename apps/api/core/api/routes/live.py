@@ -204,7 +204,7 @@ async def live_signal_response(event_id: str, request: Request):
     like the other live read endpoints.
     """
     from core.api.ratelimit import rate_limit
-    from core.intel.ngo_response import analyze_ngo_response
+    from core.intel.ngo_response import _current_drift_context, analyze_ngo_response
 
     rate_limit(request, max_per_minute=30, scope="live-response")
     normalized = event_id.removeprefix("intel:")
@@ -222,7 +222,11 @@ async def live_signal_response(event_id: str, request: Request):
         if _public_intel_feature(other) is not None
     ]
     try:
-        return analyze_ngo_response(event, related_signals=related_signals)
+        return analyze_ngo_response(
+            event,
+            related_signals=related_signals,
+            drift_context=_current_drift_context(event.id),
+        )
     except ValueError:
         raise HTTPException(status_code=422, detail="Signal has no position")
 

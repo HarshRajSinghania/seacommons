@@ -338,6 +338,15 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         # Keep first-party Humanitarian social reporting (e.g. Alarm Phone),
         # while generic Maritime social chatter remains supporting evidence.
         return False
+    if (
+        event_type == "ngo_activity"
+        and str(props.get("observation_type") or "") == "sar_responder_activity"
+    ):
+        # A SAR responder is an asset/evidence source, not the humanitarian
+        # incident itself. Public Live renders the asset through /sar-fleet and
+        # attaches its motion/mission assessment to the owning distress case.
+        # Never create a second top-level Live pin/case for the responder.
+        return False
     if event_type == "vessel_identity" and anomaly_type != "sanctioned_port_call":
         return False
     if event_type == "vessel_identity" and anomaly_type == "sanctioned_port_call":

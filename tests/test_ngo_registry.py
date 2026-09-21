@@ -208,11 +208,10 @@ def test_public_sar_fleet_includes_only_fresh_positions_with_asset_state(monkeyp
     )
     result = public_sar_fleet_geojson()
     by_mmsi = {f["properties"]["mmsi"]: f["properties"] for f in result["features"]}
-    assert len(result["features"]) == 2
+    assert len(result["features"]) == 1
     assert by_mmsi[_CIVIL_NGO_MMSI]["asset_state"] == "transit"
     assert by_mmsi[_CIVIL_NGO_MMSI]["vessel_class"] == "ngo"
-    assert by_mmsi[_COASTGUARD_MMSI]["asset_state"] == "stationary"
-    assert by_mmsi[_COASTGUARD_MMSI]["vessel_class"] == "coastguard"
+    assert _COASTGUARD_MMSI not in by_mmsi
     # Mission activity is never implied by a fresh position appearing here.
     assert "mission_state" not in by_mmsi[_CIVIL_NGO_MMSI]
     assert "activity_kind" not in by_mmsi[_CIVIL_NGO_MMSI]

@@ -151,7 +151,7 @@ def test_multiple_ais_transports_remain_one_physical_independence_group():
     assert row["value"]["independence_groups"] == ["ais_sensor_lineage"]
 
 
-@pytest.mark.parametrize("state", ["unrelated", "possible_response", "approaching", "on_scene", "probable_rescue_activity"])
+@pytest.mark.parametrize("state", ["unrelated", "search_candidate", "possible_response", "approaching", "on_scene", "probable_rescue_activity"])
 def test_existing_descriptive_mission_states_persist_without_intent_inference(state):
     from core.intel.sar_mission_assessment import persist_sar_mission_assessments
 

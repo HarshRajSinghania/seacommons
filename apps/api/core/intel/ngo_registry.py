@@ -246,6 +246,8 @@ def public_sar_fleet_geojson() -> dict[str, Any]:
             continue  # stale/offline positions are withheld from the public map
         info = get_ngo_info(mmsi) or {}
         operator_type = info.get("operator_type", "civil_ngo")
+        if operator_type != "civil_ngo":
+            continue
         features.append({
             "type": "Feature",
             "geometry": feat.get("geometry"),

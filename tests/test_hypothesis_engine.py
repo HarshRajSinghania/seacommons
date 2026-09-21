@@ -255,9 +255,16 @@ def test_v1_corroborated_gap_links_persisted_episode() -> None:
     assert hyp is not None
     assert hyp.episode_id == episode_id
     assert hyp.hypothesis_id == f"hyp:v1:dark_transit:{episode_id}"
-    assert hyp.state == "review_ready"
+    # Independent two-lineage corroboration clears the same evidence bar
+    # can_publish() re-verifies, so the automatic engine (2026-09-21 product
+    # decision, docs/current_work.md) carries it all the way to "published"
+    # itself -- no human analyst transition() call is required or possible.
+    assert hyp.state == "published"
     assert hyp.evidence_stage == "corroborated"
-    assert [entry.new_state for entry in hyp.audit_history[-2:]] == ["collecting", "review_ready"]
+    assert [entry.new_state for entry in hyp.audit_history[-4:]] == [
+        "collecting", "review_ready", "assessed", "published",
+    ]
+    assert all(entry.actor == "hypothesis_engine_v1" for entry in hyp.audit_history[-4:])
     with session_scope() as db:
         assert db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).count() == 1
         row = db.query(InvestigationHypothesisDB).filter_by(hypothesis_id=hyp.hypothesis_id).one()
@@ -336,7 +343,7 @@ def test_v1_engine_never_relinks_or_mutates_legacy_null_episode_hypothesis() -> 
     assert new_hyp is not None
     assert new_hyp.hypothesis_id == f"hyp:v1:dark_transit:{episode_id}"
     assert new_hyp.episode_id == episode_id
-    assert new_hyp.state == "review_ready"
+    assert new_hyp.state == "published"
     with session_scope() as db:
         legacy = db.get(InvestigationHypothesisDB, legacy_id)
         assert legacy is not None

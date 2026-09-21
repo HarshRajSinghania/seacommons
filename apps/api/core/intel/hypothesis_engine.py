@@ -18,7 +18,12 @@ from dataclasses import replace
 from typing import Any, Optional
 
 from core.intel.episode_store import save_episode
-from core.intel.hypothesis import InvestigationHypothesis, new_hypothesis, transition
+from core.intel.hypothesis import (
+    InvestigationHypothesis,
+    can_publish,
+    new_hypothesis,
+    transition,
+)
 from core.intel.hypothesis_eligibility import evaluate_hypothesis_eligibility
 from core.intel.hypothesis_store import get_hypothesis, list_hypotheses, save_hypothesis
 from core.intel.store import IntelEvent, intel_store
@@ -303,6 +308,43 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
 
         hyp = transition(hyp, "review_ready", actor="hypothesis_engine_v1")
         record_hypothesis_transition(hyp.hypothesis_type, hyp.state)
+
+    # Automatic publication (product decision, 2026-09-21 -- see
+    # docs/current_work.md and docs/superpowers/plans/2026-09-21-live-
+    # pipeline-funnel-audit.md): this replaces the human analyst
+    # `transition(hyp, "assessed"/"published", actor="analyst:...")` step
+    # docs/fixes.md M14.6 originally required as "the only path past
+    # candidate/collecting". It does NOT relax any evidence requirement --
+    # review_ready was already gated on the same independent-corroboration/
+    # evidence_stage/reason_codes bar can_publish() re-verifies below, and
+    # every gate above (per-hypothesis-type evidence gates, the low-
+    # specificity independent-corroboration gate, docs/fixes.md M6's own
+    # six gate functions) still requires >=2 independent evidence lineages
+    # before a hypothesis is even eligible to reach this point. What
+    # changes is only who/what performs the review_ready -> assessed ->
+    # published transition: the same system actor
+    # ("hypothesis_engine_v1") that already performs every earlier
+    # transition, recorded honestly in audit_history rather than
+    # attributed to a human. has_unresolved_blocking_identity_conflict and
+    # allegation_shaped_wording are never set true by this engine today
+    # (both stay at their False default), so can_publish() cannot yet
+    # block on either -- if a future hypothesis_type sets
+    # allegation_shaped_wording, can_publish() will correctly stop this
+    # automatic path at "assessed" and require a human explicit_review_done
+    # without any change needed here.
+    if hyp.state == "review_ready":
+        from core.observability import record_hypothesis_transition
+
+        hyp = transition(hyp, "assessed", actor="hypothesis_engine_v1")
+        record_hypothesis_transition(hyp.hypothesis_type, hyp.state)
+
+    if hyp.state == "assessed":
+        publishable, _reason = can_publish(hyp)
+        if publishable:
+            from core.observability import record_hypothesis_transition
+
+            hyp = transition(hyp, "published", actor="hypothesis_engine_v1")
+            record_hypothesis_transition(hyp.hypothesis_type, hyp.state)
 
     save_hypothesis(hyp)
     return hyp

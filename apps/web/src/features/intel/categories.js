@@ -169,6 +169,14 @@ export function categoryOf(type) {
 }
 
 export function signalCategoryOf(properties = {}) {
+  // `properties.incident_type` must already be a member of the closed set
+  // apps/api/core/domain/incident_taxonomy.py's STABLE_MARITIME_INCIDENT_TYPES
+  // / STABLE_HUMANITARIAN_INCIDENT_TYPES defines (mirrored below by
+  // SIGNALS_MACRO_GROUPS in main.jsx) -- the backend's own property test
+  // enforces this. A raw, ungrouped `incident_type` here silently drops the
+  // feature from the map (activeSignalCategories.has() below returns
+  // false), which is exactly the production defect that module exists to
+  // prevent going forward.
   const explicit = String(properties.incident_type || '').trim();
   const aliases = {
     incident: 'navigation_safety',

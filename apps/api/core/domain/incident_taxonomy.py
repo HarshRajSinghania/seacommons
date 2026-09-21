@@ -19,6 +19,41 @@ from typing import Any, Mapping
 MAIN_HUMANITARIAN = "humanitarian"
 MAIN_MARITIME = "maritime"
 
+# The stable, closed, UI-facing topic buckets `incident_type` may return.
+# `observation_type` is evidence-level and open-ended (whatever a detector
+# calls its own finding); `incident_type` is the fixed vocabulary the public
+# selector taxonomy (apps/web/src/main.jsx SIGNALS_MACRO_GROUPS) is built
+# from and must never grow silently just because a new detector label
+# reached this module. A bucket name is a topic ("Spoofing / position
+# integrity"), never a certainty claim -- confidence lives in
+# evidence_state/hypothesis_type/verification_status instead.
+STABLE_HUMANITARIAN_INCIDENT_TYPES = frozenset({
+    "rescue", "distress", "missing", "shipwreck", "pushback",
+    "land_humanitarian", "resolution", "migration_incident", "sar_activity",
+    "humanitarian_context",
+})
+STABLE_MARITIME_INCIDENT_TYPES = frozenset({
+    "dark_activity", "spoofing", "transfer", "infrastructure_proximity",
+    "loitering", "navigation_safety", "identity_integrity", "port_call",
+    "piracy_security", "environmental_hazard", "context_report",
+    "public_observation", "maritime_context",
+})
+
+# observation_type() -> the closed maritime bucket it belongs to. Every value
+# observation_type() can produce for a maritime signal must be mapped here
+# (or fall through incident_type()'s regex chain below); the property test
+# in tests/test_incident_taxonomy.py fails closed if a new detector label is
+# added to observation_type() without a matching bucket.
+_OBSERVATION_TYPE_BUCKETS: dict[str, str] = {
+    "distress_beacon": "navigation_safety",
+    "ais_gap": "dark_activity",
+    "position_anomaly": "spoofing",
+    "rendezvous": "transfer",
+    "infrastructure_proximity": "infrastructure_proximity",
+    "loitering": "loitering",
+    "port_call": "port_call",
+}
+
 
 def is_independently_corroborated(metadata: Mapping[str, Any] | None) -> bool:
     """Return whether metadata carries independent-source corroboration.
@@ -204,8 +239,9 @@ def incident_type(
         humanitarian_case_type=humanitarian_case_type,
         metadata=meta,
     )
-    if observed != "maritime_context":
-        return observed
+    bucket = _OBSERVATION_TYPE_BUCKETS.get(observed)
+    if bucket is not None:
+        return bucket
     # Derived/fused event families may describe an assessed activity while
     # retaining the underlying observation separately.
     if event_type == "correlated_alert" and re.search(

@@ -75,6 +75,16 @@ Current Play production verification after PR #165: counts and first page agree 
 
 Packet I remains accepted/closed with deterministic Chromium as a blocking Full CI gate and a read-only production smoke path. No AIS fusion cutover or audio evidence persistence is authorized; AIS runtime remains legacy and `AUDIO_EVIDENCE_ENABLED=false`.
 
+## 2026-09-21 — Live/Play stable incident taxonomy closure
+
+Plan: `docs/superpowers/plans/2026-09-21-live-taxonomy-closure-design-note.md`.
+
+Production defect (self-introduced same session, commit `e3144ea`): `incident_type()` started returning raw, open-ended `observation_type` labels (`distress_beacon`, `ais_gap`, `position_anomaly`) directly instead of mapping them into the closed, stable topic-bucket vocabulary the public selector taxonomy (`apps/web/src/main.jsx` `SIGNALS_MACRO_GROUPS`) is built from. A raw label with no matching bucket/alias silently drops the feature from the Live map filter while the backend Live count still includes it — reproduced with the reported real case (two AIS-MOB/distress-beacon observations near Mallorca).
+
+Fix: `core/domain/incident_taxonomy.py` now maps every `observation_type` value into `STABLE_MARITIME_INCIDENT_TYPES` / `STABLE_HUMANITARIAN_INCIDENT_TYPES` (closed frozensets, e.g. `distress_beacon → navigation_safety`, `ais_gap → dark_activity`, `position_anomaly → spoofing`) before it can reach a public projection, with a property test (`tests/test_incident_taxonomy.py::test_incident_type_is_always_a_member_of_the_closed_stable_set`) that fails closed if a future detector label has no bucket. Frontend `SIGNALS_MACRO_GROUPS`/`categories.js` needed no behavioural change (both already contain exactly the backend's 13 maritime + 10 humanitarian stable keys) — added cross-reference comments only.
+
+Architectural finding from the same investigation, recorded so it is not re-derived from zero next session: the "should Live be case/episode-first" question was researched (internal docs + external OSINT/Bellingcat/Sentinel-1 methodology) and answered — it already is SeaCommons' own documented target model (`docs/fixes.md` §0, `docs/updates.md` §0), and Maritime Intelligence already implements it (`MaritimeEpisodeDB` + `InvestigationHypothesisDB` gate all raw AIS anomaly/rendezvous/spoofing detector output from public Live; only a published hypothesis reaches it — `core/live/feed.py::_published_security_hypothesis_features`). The real, named, not-yet-built gap is Humanitarian cross-source correlation: `HumanitarianIncidentDB` is explicitly documented 1:1 with its originating event (`apps/api/core/db/models.py:619-633`, "no cross-source correlation exists yet"), and that work is already scoped as **`docs/updates.md` §7 P2.1 — CorrelationDecision**, gated to start only after the Humanitarian vertical is canonical. Building a case-panel UI or a correlation matcher was deliberately deferred out of this packet (design note §4/§7) — recommended as the next packet.
+
 ## Loop order
 
 1. Remote Maritime Radio v1 — software-only receiver abstraction, identity/capability/health, KiwiSDR/OpenWebRX adapters, bounded observations.

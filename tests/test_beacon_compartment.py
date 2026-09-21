@@ -209,6 +209,44 @@ def test_fresh_uncorroborated_beacon_in_port_stays_observation(monkeypatch) -> N
     assert is_useful_public_case_feature(feature) is False
 
 
+def test_two_distinct_beacons_render_as_two_separate_live_features(monitor) -> None:
+    """Regression fixture for the reported production case: two AIS-MOB
+    observations near Mallorca. Each is its own evidence observation with
+    its own MMSI; neither the taxonomy projection nor the Live feed may
+    merge them into one item or drop one for lacking a stable incident_type
+    bucket (docs/superpowers/plans/2026-09-21-live-taxonomy-closure-design-
+    note.md)."""
+    from core.live.feed import public_signal_collection
+
+    mmsi_a = f"972{uuid.uuid4().int % 1_000_000:06d}"
+    mmsi_b = f"972{uuid.uuid4().int % 1_000_000:06d}"
+    monitor.on_position(mmsi_a, "", 39.55, 2.65, 0.0, 0)
+    monitor.on_position(mmsi_b, "", 39.60, 2.70, 0.0, 0)
+
+    from core.intel.store import intel_store
+
+    for mmsi in (mmsi_a, mmsi_b):
+        event = next(e for e in intel_store.events(limit=50) if e.linked_mmsi == mmsi)
+        event.metadata["last_observed_at"] = datetime.now(timezone.utc).isoformat()
+
+    collection = public_signal_collection(mode="maritime", limit=500, days=1)
+    features_by_mmsi = {
+        mmsi: [
+            f for f in collection["features"]
+            if str(f["properties"].get("linked_mmsi") or "") == mmsi
+        ]
+        for mmsi in (mmsi_a, mmsi_b)
+    }
+    for mmsi, features in features_by_mmsi.items():
+        assert len(features) == 1, (mmsi, features)
+        props = features[0]["properties"]
+        assert props["incident_type"] == "navigation_safety"
+        assert props["main_category"] == "maritime"
+        assert props["observation_type"] == "distress_beacon"
+    # Two distinct observations, not one merged/deduplicated casualty.
+    assert features_by_mmsi[mmsi_a][0]["properties"]["id"] != features_by_mmsi[mmsi_b][0]["properties"]["id"]
+
+
 def test_independently_corroborated_beacon_can_remain_live_in_port(monkeypatch) -> None:
     from core.live.projection import is_useful_public_case_feature
     from core.mda.reference import reference

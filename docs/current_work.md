@@ -1,5 +1,7 @@
 # Current work — Evidence Fusion Development Loop
 
+> **2026-09-21 current OSINT/Live handoff:** see `docs/OSINT_LIVE_HANDOFF_2026-09-21.md`. It supersedes the older release/baseline notes below for the active Live/Play/AIS-coverage/satellite work. Current review branch is `feat/ais-coverage-witness`, PR #206, based on `origin/main` `e75ce40`.
+
 > **Canonical loop:** `docs/superpowers/plans/2026-09-06-evidence-fusion-development-loop.md`
 > **Current packet:** none — Packet J accepted/closed
 > **Last closed packet plan:** `docs/superpowers/plans/2026-09-09-outbound-http-ssrf-hardening-v1.md`

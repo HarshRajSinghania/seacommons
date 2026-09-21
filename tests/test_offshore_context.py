@@ -110,6 +110,37 @@ def test_published_qualified_offshore_gap_reaches_live_as_evidence_not_case():
     assert is_useful_public_case_feature(feature) is True
 
 
+def test_persisted_fishing_and_passenger_gap_need_stronger_public_context() -> None:
+    def feature(ship_type: int, *, reasons: list[str] | None = None, corroborated: bool = False):
+        return {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [15.0, 35.0]},
+            "properties": {
+                "type": "ais_anomaly",
+                "incident_type": "ais_gap",
+                "anomaly_type": "gap",
+                "ship_type": ship_type,
+                "analysis_state": "evidence_candidate",
+                "offshore_anomaly_qualified": True,
+                "offshore_reason_codes": reasons or [
+                    "OFFSHORE_CONTEXT",
+                    "LOCAL_AIS_COVERAGE_HEALTHY",
+                    "PROLONGED_OFFSHORE_GAP",
+                ],
+                "verification_status": (
+                    "multi_source_corroborated" if corroborated else "single_source_observed"
+                ),
+                "corroborated": corroborated,
+            },
+        }
+
+    assert is_useful_public_case_feature(feature(30)) is False
+    assert is_useful_public_case_feature(feature(60)) is False
+    assert is_useful_public_case_feature(feature(30, reasons=["ROUTE_DEVIATION"])) is True
+    assert is_useful_public_case_feature(feature(60, corroborated=True)) is True
+    assert is_useful_public_case_feature(feature(80)) is True
+
+
 def test_offshore_gap_below_gap_reason_confidence_stays_anomaly(monkeypatch):
     monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
     monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)

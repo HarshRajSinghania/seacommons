@@ -634,6 +634,7 @@ class MdaWatch:
         from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
         offshore_context = build_offshore_context(lat, lon)
         rendezvous_meta = {
+            "vessel_type_contexts": [vessel.get("ship_type") for vessel in info],
             "duration_min": round(dur_min, 1),
             "sts_zone": zone,
             "tanker": tanker,
@@ -899,6 +900,7 @@ class MdaWatch:
             from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
             anomaly_type = "long_gap" if (time.time() - last.ts) > 6 * 3600 else "gap"
             gap_meta = {
+                "vessel_type_context": ship_type,
                 "silent_seconds": int(time.time() - last.ts),
                 "jamming_score": jam,
                 "gap_reason": (

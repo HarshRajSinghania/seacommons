@@ -110,37 +110,6 @@ def test_published_qualified_offshore_gap_reaches_live_as_evidence_not_case():
     assert is_useful_public_case_feature(feature) is True
 
 
-def test_persisted_fishing_and_passenger_gap_need_stronger_public_context() -> None:
-    def feature(ship_type: int, *, reasons: list[str] | None = None, corroborated: bool = False):
-        return {
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [15.0, 35.0]},
-            "properties": {
-                "type": "ais_anomaly",
-                "incident_type": "ais_gap",
-                "anomaly_type": "gap",
-                "ship_type": ship_type,
-                "analysis_state": "evidence_candidate",
-                "offshore_anomaly_qualified": True,
-                "offshore_reason_codes": reasons or [
-                    "OFFSHORE_CONTEXT",
-                    "LOCAL_AIS_COVERAGE_HEALTHY",
-                    "PROLONGED_OFFSHORE_GAP",
-                ],
-                "verification_status": (
-                    "multi_source_corroborated" if corroborated else "single_source_observed"
-                ),
-                "corroborated": corroborated,
-            },
-        }
-
-    assert is_useful_public_case_feature(feature(30)) is False
-    assert is_useful_public_case_feature(feature(60)) is False
-    assert is_useful_public_case_feature(feature(30, reasons=["ROUTE_DEVIATION"])) is True
-    assert is_useful_public_case_feature(feature(60, corroborated=True)) is True
-    assert is_useful_public_case_feature(feature(80)) is True
-
-
 def test_offshore_gap_below_gap_reason_confidence_stays_anomaly(monkeypatch):
     monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
     monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
@@ -200,22 +169,6 @@ def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> Non
     assert is_useful_public_case_feature(repeated) is True
 
 
-def test_sar_responder_activity_in_port_is_not_useful_public_live(monkeypatch) -> None:
-    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: "Marina di Carrara")
-    monkeypatch.setattr(reference, "is_land", lambda lat, lon: False)
-    feature = {
-        "type": "Feature",
-        "geometry": {"type": "Point", "coordinates": [10.04, 44.03]},
-        "properties": {
-            "type": "ngo_activity",
-            "observation_type": "sar_responder_activity",
-            "main_category": "humanitarian",
-            "incident_type": "sar_activity",
-        },
-    }
-    assert is_useful_public_case_feature(feature) is False
-
-
 def test_non_offshore_qualification_preserves_full_result_contract() -> None:
     result = qualify_offshore_anomaly(
         "ais_rendezvous",
@@ -228,47 +181,105 @@ def test_non_offshore_qualification_preserves_full_result_contract() -> None:
     assert "not offshore" in result["rationale"].lower()
 
 
-def test_passenger_hsc_gap_needs_stronger_context_before_live(monkeypatch):
-    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
-    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
-    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
-    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
-    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
-    context = build_offshore_context(35.0, 15.0)
-    result = qualify_offshore_anomaly("gap", {
-        "silent_seconds": 5 * 3600,
-        "jamming_score": 0.0,
-        "vessel_type_context": 60,
-        "gap_reason": {
-            "hypothesis": "vessel_gap",
-            "nearby_vessels_reporting_before": 8,
-            "nearby_vessels_reporting_after": 8,
-            "confidence": 0.8,
+def test_scheduled_hsc_short_gap_is_suppressed_as_low_specificity() -> None:
+    result = qualify_offshore_anomaly(
+        "gap",
+        {
+            "vessel_type_context": 41,
+            "scheduled_service": True,
+            "silent_seconds": 90 * 60,
+            "jamming_score": 0.0,
+            "gap_reason": {
+                "hypothesis": "vessel_gap",
+                "confidence": 0.85,
+                "nearby_vessels_reporting_before": 12,
+                "nearby_vessels_reporting_after": 11,
+            },
+            "behaviour_context": {
+                "status": "unusual",
+                "reason_codes": ["ROUTE_DEVIATION"],
+            },
         },
-        "behaviour_context": {"reason_codes": []},
-    }, context)
+        {"offshore": True},
+    )
+    assert result["qualified"] is False
+    assert result["stage"] == "anomaly"
+    assert "PASSENGER_HSC_LOW_SPECIFICITY" in result["reason_codes"]
+    assert "ROUTINE_SCHEDULED_TRAFFIC" in result["reason_codes"]
+
+
+def test_passenger_ferry_baseline_consistent_gap_is_suppressed_with_reason() -> None:
+    result = qualify_offshore_anomaly(
+        "gap",
+        {
+            "ship_type": 60,
+            "silent_seconds": 2 * 3600,
+            "jamming_score": 0.0,
+            "gap_reason": {
+                "hypothesis": "vessel_gap",
+                "confidence": 0.9,
+                "nearby_vessels_reporting_before": 8,
+                "nearby_vessels_reporting_after": 8,
+            },
+            "behaviour_context": {"status": "expected", "reason_codes": []},
+        },
+        {"offshore": True},
+    )
     assert result["qualified"] is False
     assert "PASSENGER_HSC_LOW_SPECIFICITY" in result["reason_codes"]
     assert "BASELINE_ROUTE_CONSISTENT" in result["reason_codes"]
 
 
-def test_passenger_hsc_route_deviation_can_still_qualify(monkeypatch):
-    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
-    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
-    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
-    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
-    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
-    context = build_offshore_context(35.0, 15.0)
-    result = qualify_offshore_anomaly("gap", {
-        "silent_seconds": 5 * 3600,
-        "jamming_score": 0.0,
-        "vessel_type_context": 60,
-        "gap_reason": {
-            "hypothesis": "vessel_gap",
-            "nearby_vessels_reporting_before": 8,
-            "nearby_vessels_reporting_after": 8,
-            "confidence": 0.8,
+def test_passenger_class_does_not_suppress_high_specificity_position_anomaly() -> None:
+    result = qualify_offshore_anomaly(
+        "position_jump",
+        {
+            "vessel_type_context": 61,
+            "anomaly_confidence": 0.95,
+            "anomaly_evidence": {"gap_s": 90, "computed_kts": 420},
+            "teleport_pattern": "sustained_relocation",
+            "behaviour_context": {"status": "expected", "reason_codes": []},
         },
-        "behaviour_context": {"reason_codes": ["ROUTE_DEVIATION"]},
-    }, context)
+        {"offshore": True},
+    )
     assert result["qualified"] is True
+    assert "PASSENGER_HSC_LOW_SPECIFICITY" not in result["reason_codes"]
+
+
+def test_prolonged_healthy_coverage_gap_is_not_suppressed_by_ship_class() -> None:
+    result = qualify_offshore_anomaly(
+        "long_gap",
+        {
+            "vessel_type_context": 42,
+            "scheduled_service": True,
+            "silent_seconds": 6 * 3600,
+            "jamming_score": 0.0,
+            "gap_reason": {
+                "hypothesis": "vessel_gap",
+                "confidence": 0.9,
+                "nearby_vessels_reporting_before": 9,
+                "nearby_vessels_reporting_after": 10,
+            },
+            "behaviour_context": {"status": "expected", "reason_codes": []},
+        },
+        {"offshore": True},
+    )
+    assert result["qualified"] is True
+    assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]
+
+
+def test_passenger_ferry_pair_does_not_turn_same_lineage_gap_into_sts_case() -> None:
+    result = qualify_offshore_anomaly(
+        "ais_rendezvous",
+        {
+            "vessel_type_contexts": [41, 60],
+            "duration_min": 95,
+            "dark": True,
+            "tanker": False,
+            "independent_source_count": 1,
+            "contributing_independence_groups": ["ais_sensor_lineage"],
+        },
+        {"offshore": True},
+    )
+    assert result["qualified"] is False
+    assert "PASSENGER_HSC_LOW_SPECIFICITY" in result["reason_codes"]

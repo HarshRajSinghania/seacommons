@@ -98,15 +98,14 @@ def test_billion_laughs_payload_is_rejected_not_expanded():
 def test_poll_navarea3_is_graceful_on_network_outage(monkeypatch):
     from core.mda import navarea3
 
-    def _raise(*_args, **_kwargs):
-        raise ConnectionError("no route to host")
+    class _FailingClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
 
-    class _FakeHttpx:
-        @staticmethod
-        def get(*args, **kwargs):
+        def request(self, *_args, **_kwargs):
             raise ConnectionError("no route to host")
 
-    monkeypatch.setitem(__import__("sys").modules, "httpx", _FakeHttpx)
+    monkeypatch.setattr("core.net.outbound.FixedOriginClient", _FailingClient)
     assert navarea3.poll_navarea3() == 0
 
 
@@ -115,17 +114,19 @@ def test_poll_navarea3_ingests_and_persists_observations(monkeypatch):
     from core.mda import navarea3
 
     class _FakeResponse:
-        text = _SAMPLE_XML
+        body = _SAMPLE_XML.encode("utf-8")
 
         def raise_for_status(self):
             return None
 
-    class _FakeHttpx:
-        @staticmethod
-        def get(*args, **kwargs):
+    class _FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def request(self, *_args, **_kwargs):
             return _FakeResponse()
 
-    monkeypatch.setitem(__import__("sys").modules, "httpx", _FakeHttpx)
+    monkeypatch.setattr("core.net.outbound.FixedOriginClient", _FakeClient)
 
     ingested = navarea3.poll_navarea3()
     assert ingested == 3
@@ -145,17 +146,19 @@ def test_official_warning_never_becomes_a_public_case_by_itself(monkeypatch):
     from core.mda import navarea3
 
     class _FakeResponse:
-        text = _SAMPLE_XML
+        body = _SAMPLE_XML.encode("utf-8")
 
         def raise_for_status(self):
             return None
 
-    class _FakeHttpx:
-        @staticmethod
-        def get(*args, **kwargs):
+    class _FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def request(self, *_args, **_kwargs):
             return _FakeResponse()
 
-    monkeypatch.setitem(__import__("sys").modules, "httpx", _FakeHttpx)
+    monkeypatch.setattr("core.net.outbound.FixedOriginClient", _FakeClient)
     navarea3.poll_navarea3()
 
     for warning_id in ("120/26", "121/26", "122/26"):

@@ -229,11 +229,13 @@ def poll_navarea3(*, url: str = DEFAULT_NAVAREA3_URL, timeout_s: float = 30.0) -
     from core.intel.store import IntelEvent, intel_store
 
     try:
-        import httpx
+        from core.net.outbound import FixedOriginClient
+        from core.net.policy import JSON_TEXT
 
-        response = httpx.get(url, timeout=timeout_s)
+        client = FixedOriginClient(("https://armada.defensa.gob.es",), timeout=timeout_s)
+        response = client.request(url, contract=JSON_TEXT)
         response.raise_for_status()
-        warnings = parse_navarea3_xml(response.text)
+        warnings = parse_navarea3_xml(response.body.decode("utf-8", errors="replace"))
     except Exception as exc:
         logger.info("navarea3 poll skipped: %s", exc)
         return 0

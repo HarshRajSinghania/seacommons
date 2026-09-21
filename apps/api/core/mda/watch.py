@@ -892,7 +892,11 @@ class MdaWatch:
                 "behaviour_context": behaviour_context,
                 "vessel_type_context": ship_type,
             }
-            offshore_context = build_offshore_context(last.lat, last.lon)
+            offshore_context = build_offshore_context(
+                last.lat,
+                last.lon,
+                include_ais_coverage=True,
+            )
             offshore_qualification = qualify_offshore_anomaly(anomaly_type, gap_meta, offshore_context)
             intel_store.add(IntelEvent(
                 id=f"aisgap:{mmsi}",
@@ -1012,7 +1016,7 @@ class MdaWatch:
                             flag=v.get("flag") or "")
             serious = {"sanctions_hit"} & set(result["risk_flags"])
             weak = {f for f in result["risk_flags"] if f.startswith("mmsi_")} | \
-                   ({"imo_checksum_fail"} & set(result["risk_flags"]))
+                   ({"imo_checksum_fail", "sanctions_identity_conflict"} & set(result["risk_flags"]))
             if not serious and len(weak) < 1:
                 continue
             if self._recently_emitted(f"ident:{mmsi}", 24 * 3600):

@@ -131,7 +131,10 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         )
         hypotheses_total = (
             db.query(func.count(InvestigationHypothesisDB.hypothesis_id))
-            .filter(InvestigationHypothesisDB.updated_at >= cutoff)
+            .filter(
+                InvestigationHypothesisDB.updated_at >= cutoff,
+                InvestigationHypothesisDB.state.notin_(("expired", "rejected")),
+            )
             .scalar()
             or 0
         )
@@ -176,10 +179,15 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
         )
         newest_raw = db.query(func.max(SourceObservationDB.received_at)).scalar()
         newest_parsed = db.query(func.max(IntelEventDB.received_at)).scalar()
+        newest_active_hypothesis = (
+            db.query(func.max(InvestigationHypothesisDB.updated_at))
+            .filter(InvestigationHypothesisDB.state.notin_(("expired", "rejected")))
+            .scalar()
+        )
         newest_analysis = max(
             (
                 db.query(func.max(MaritimeEpisodeDB.updated_at)).scalar(),
-                db.query(func.max(InvestigationHypothesisDB.updated_at)).scalar(),
+                newest_active_hypothesis,
             ),
             key=lambda value: value or datetime.min,
         )
@@ -254,7 +262,7 @@ def build_public_status(hours: int = 24) -> dict[str, Any]:
             "raw_observations": "Immutable source envelopes received during the selected window.",
             "parsed_events": "Normalized IntelEvent records produced during the selected window.",
             "derived_cues": "Rule/model outputs such as AIS integrity, rendezvous or dark-gap cues; not findings.",
-            "analysis_outputs": "Recognized maritime episodes plus investigation hypotheses updated during the selected window.",
+            "analysis_outputs": "Recognized maritime episodes plus non-expired, non-rejected investigation hypotheses updated during the selected window.",
             "corroborated_episodes": "Episodes supported by at least two independent evidence lineages.",
             "review_ready": "Corroborated investigations ready for human review; not findings of illegality.",
             "live": "Cases/signals that currently satisfy the public Live publication gate.",

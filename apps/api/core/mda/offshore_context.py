@@ -26,7 +26,12 @@ def _is_low_specificity_scheduled_context(metadata: dict[str, Any]) -> bool:
     return not bool(reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
 
 
-def build_offshore_context(lat: float, lon: float) -> dict[str, Any]:
+def build_offshore_context(
+    lat: float,
+    lon: float,
+    *,
+    include_ais_coverage: bool = False,
+) -> dict[str, Any]:
     from core.mda.reference import reference
 
     nearest_port, port_km = reference.nearest_port_km(lat, lon)
@@ -40,6 +45,14 @@ def build_offshore_context(lat: float, lon: float) -> dict[str, Any]:
         and port_km >= OFFSHORE_PORT_KM
         and not anchorage
     )
+    coverage = []
+    if include_ais_coverage:
+        try:
+            from core.mda.ais_coverage import coverage_witnesses
+
+            coverage = coverage_witnesses(lat, lon)
+        except Exception:
+            coverage = []
     return {
         "distance_from_coast_km": coast_km,
         "nearest_port": nearest_port,
@@ -48,6 +61,7 @@ def build_offshore_context(lat: float, lon: float) -> dict[str, Any]:
         "sts_zone": sts_zone,
         "chokepoint": (chokepoint or {}).get("name") if isinstance(chokepoint, dict) else None,
         "offshore": offshore,
+        "ais_coverage_witnesses": coverage,
         "coastline_source": "Natural Earth lowres (context only)",
     }
 
@@ -74,6 +88,11 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
     anomaly = str(anomaly_type or "").lower()
     behaviour = metadata.get("behaviour_context") or {}
     behaviour_reasons = set(behaviour.get("reason_codes") or ()) if isinstance(behaviour, dict) else set()
+    coverage_witnesses = context.get("ais_coverage_witnesses") or []
+    if coverage_witnesses:
+        # Same AIS sensor family: useful evidence about receiver coverage, but
+        # never an independent corroborating lineage for vessel behaviour.
+        reasons.append("COMMUNITY_AIS_COVERAGE_PRESENT")
 
     if anomaly in {"gap", "long_gap"}:
         gap = metadata.get("gap_reason") or metadata.get("anomaly_evidence") or {}

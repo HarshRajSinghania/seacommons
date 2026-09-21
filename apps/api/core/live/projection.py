@@ -373,6 +373,15 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
             # available in Play but must not sit in Live indefinitely.
             return False
         independently_corroborated = _is_independently_corroborated_properties(props)
+        if (
+            not independently_corroborated
+            and not bool(props.get("beacon_repeat_confirmed"))
+            and int(props.get("episode_update_count") or 0) < 2
+        ):
+            # A dedicated MMSI prefix identifies the beacon class, not a
+            # casualty. Require a repeated active transmission before a
+            # single-source AIS beacon can enter public Live.
+            return False
         if not independently_corroborated:
             geometry = feature.get("geometry") or {}
             coordinates = geometry.get("coordinates") or []

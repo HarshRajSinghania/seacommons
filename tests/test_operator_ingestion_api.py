@@ -78,6 +78,67 @@ def test_operator_funnel_exposes_full_evidence_ladder(monkeypatch):
     ]
     assert "hypothesis_states" in payload["diagnostics"]
     assert "episode_verification" in payload["diagnostics"]
+    hypotheses = next(stage for stage in payload["stages"] if stage["id"] == "hypotheses")
+    assert hypotheses["label"] == "Active hypotheses"
+    assert "expired_or_rejected_hypotheses_excluded" in payload["diagnostics"]
+
+
+def test_operator_funnel_does_not_count_expiry_housekeeping_as_recent_hypothesis(monkeypatch):
+    from datetime import datetime, timezone
+
+    import core.api.routes.operator_ingestion as operator_route
+    from core.api.main import app
+    from core.config import config
+    from core.db.models import InvestigationHypothesisDB
+    from core.db.session import session_scope
+
+    monkeypatch.setattr(config, "OPERATOR_GATEWAY_SECRET", "operator-secret")
+    client = TestClient(app)
+    headers = {"x-seacommons-operator-gateway": "operator-secret"}
+
+    operator_route._fast_cache.clear()
+    baseline = client.get(
+        "/api/v1/operator/ingestion/funnel?hours=24", headers=headers
+    ).json()
+    baseline_count = next(
+        stage["count"] for stage in baseline["stages"] if stage["id"] == "hypotheses"
+    )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    ids = ("test-active-hypothesis-24h", "test-expired-hypothesis-24h")
+    with session_scope() as db:
+        db.query(InvestigationHypothesisDB).filter(
+            InvestigationHypothesisDB.hypothesis_id.in_(ids)
+        ).delete(synchronize_session=False)
+        for hypothesis_id, state in zip(ids, ("candidate", "expired"), strict=True):
+            db.add(InvestigationHypothesisDB(
+                hypothesis_id=hypothesis_id,
+                hypothesis_type="dark_transit",
+                subject_ids=["subj:test"],
+                state=state,
+                reason_codes=["gap"],
+                counter_indicators=[],
+                evidence_links=["event:test"],
+                evidence_stage="derived",
+                created_at=now,
+                updated_at=now,
+            ))
+    try:
+        operator_route._fast_cache.clear()
+        payload = client.get(
+            "/api/v1/operator/ingestion/funnel?hours=24", headers=headers
+        ).json()
+        count = next(
+            stage["count"] for stage in payload["stages"] if stage["id"] == "hypotheses"
+        )
+        assert count == baseline_count + 1
+        assert payload["diagnostics"]["expired_or_rejected_hypotheses_excluded"] >= 1
+    finally:
+        with session_scope() as db:
+            db.query(InvestigationHypothesisDB).filter(
+                InvestigationHypothesisDB.hypothesis_id.in_(ids)
+            ).delete(synchronize_session=False)
+        operator_route._fast_cache.clear()
 
 
 def test_operator_pipeline_map_documents_gap_semantics(monkeypatch):

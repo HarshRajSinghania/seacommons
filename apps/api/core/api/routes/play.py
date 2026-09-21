@@ -990,6 +990,8 @@ def _satellite_item(row) -> dict[str, Any]:
             "cloud_cover": row.cloud_cover,
             "polarisation": row.polarisation,
             "evidence_status": row.evidence_status,
+            "association_status": row.association_status,
+            "case_targets": list((row.provenance or {}).get("case_targets") or []),
             "provenance": row.provenance or {},
         },
     }

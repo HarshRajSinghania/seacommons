@@ -83,11 +83,17 @@ def _high_specificity_dark_gap_ready(events: list[Any], props: dict[str, Any]) -
             continue
         if float(gap.get("confidence") or 0.0) < 0.7:
             continue
-        if int(gap.get("nearby_vessels_reporting_before") or 0) < 5:
-            continue
-        if int(gap.get("nearby_vessels_reporting_after") or 0) < 5:
-            continue
-        if float(gap.get("coverage_ratio") or 0.0) < 0.7:
+        nearby_coverage = (
+            int(gap.get("nearby_vessels_reporting_before") or 0) >= 5
+            and int(gap.get("nearby_vessels_reporting_after") or 0) >= 5
+            and float(gap.get("coverage_ratio") or 0.0) >= 0.7
+        )
+        offshore_context = meta.get("offshore_context") or {}
+        community_coverage = bool(
+            offshore_context.get("ais_coverage_witnesses")
+            or "COMMUNITY_AIS_COVERAGE_PRESENT" in (meta.get("offshore_reason_codes") or ())
+        )
+        if not (nearby_coverage or community_coverage):
             continue
         if float(meta.get("jamming_score") or 0.0) >= 0.3:
             continue

@@ -71,7 +71,7 @@ def test_parse_public_aiscatcher_station_profile() -> None:
     assert row.status == "active"
     assert row.lat == 36.070315
     assert row.lon == 14.235899
-    assert row.last_received_at == datetime(2026, 9, 21, 12, 36, 59)
+    assert row.last_received_at == datetime(2026, 9, 21, 12, 36, 59, tzinfo=timezone.utc).replace(tzinfo=None)
     assert row.online_24h == 0.98
     assert round(row.max_reception_km or 0, 1) == 39.3
     assert row.messages_1h == 808
@@ -142,3 +142,35 @@ def test_community_station_is_coverage_context_not_corroboration() -> None:
     assert result["qualified"] is False
     assert "COMMUNITY_AIS_COVERAGE_PRESENT" in result["reason_codes"]
     assert "LOCAL_AIS_COVERAGE_HEALTHY" not in result["reason_codes"]
+
+
+def test_community_station_can_replace_neighbour_count_for_valid_vessel_gap() -> None:
+    result = qualify_offshore_anomaly(
+        "long_gap",
+        {
+            "silent_seconds": 7 * 3600,
+            "jamming_score": 0.0,
+            "gap_reason": {
+                "hypothesis": "vessel_gap",
+                "confidence": 0.82,
+                "coverage_ratio": 0.0,
+                "nearby_vessels_reporting_before": 0,
+                "nearby_vessels_reporting_after": 0,
+            },
+            "behaviour_context": {"reason_codes": ["INSUFFICIENT_HISTORY"]},
+        },
+        {
+            "offshore": True,
+            "ais_coverage_witnesses": [
+                {
+                    "network": "aiscatcher_community",
+                    "station_id": "3372",
+                    "coverage_role": "same_lineage_coverage_witness",
+                }
+            ],
+        },
+    )
+    assert result["qualified"] is True
+    assert "COMMUNITY_AIS_COVERAGE_PRESENT" in result["reason_codes"]
+    assert "LOCAL_AIS_COVERAGE_HEALTHY" in result["reason_codes"]
+    assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]

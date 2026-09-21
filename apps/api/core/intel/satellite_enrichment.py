@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from core.intel.lifecycle import parse_utc
 from core.intel.satellite_observation import persist_observations
@@ -13,7 +15,111 @@ logger = logging.getLogger(__name__)
 SATELLITE_HISTORY_DAYS = 7
 PLAY_HUMANITARIAN_HISTORY_DAYS = 30
 SATELLITE_RECHECK_MINUTES = 30
+MAX_CASE_TARGETS = 4
 _DIRECTIONS = ("reverse", "nearest", "forward")
+
+
+def _sample_indices(length: int, wanted: int) -> list[int]:
+    if length <= 0 or wanted <= 0:
+        return []
+    if length <= wanted:
+        return list(range(length))
+    if wanted == 1:
+        return [length - 1]
+    return sorted({
+        round(index * (length - 1) / (wanted - 1))
+        for index in range(wanted)
+    })
+
+
+def _trajectory_targets(
+    trajectory: dict[str, Any] | None,
+    *,
+    drift_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0 or not isinstance(trajectory, dict):
+        return []
+    geometry = trajectory.get("geometry") or {}
+    coordinates = geometry.get("coordinates") or []
+    properties = trajectory.get("properties") or {}
+    timestamps = properties.get("timestamps_utc") or properties.get("times") or []
+    if (
+        geometry.get("type") != "LineString"
+        or not isinstance(coordinates, list)
+        or not isinstance(timestamps, list)
+        or len(coordinates) != len(timestamps)
+        or len(coordinates) < 2
+    ):
+        return []
+    candidates = list(range(1, len(coordinates)))
+    selected_positions = _sample_indices(len(candidates), limit)
+    targets: list[dict[str, Any]] = []
+    for pos in selected_positions:
+        index = candidates[pos]
+        point = coordinates[index]
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        target_time = parse_utc(str(timestamps[index]))
+        if target_time is None:
+            continue
+        targets.append({
+            "role": "drift_trajectory",
+            "lat": float(point[1]),
+            "lon": float(point[0]),
+            "at": target_time,
+            "drift_id": drift_id,
+            "trajectory_index": index,
+        })
+    return targets
+
+
+def _case_satellite_targets(event) -> list[dict[str, Any]]:
+    event_time = parse_utc(event.timestamp_utc) or datetime.now(timezone.utc)
+    targets: list[dict[str, Any]] = [{
+        "role": "reported_origin",
+        "lat": float(event.lat),
+        "lon": float(event.lon),
+        "at": event_time,
+    }]
+    try:
+        from core.db.models import DriftResultDB, HumanitarianIncidentDB
+        from core.db.session import session_scope
+
+        with session_scope() as db:
+            incident = db.get(HumanitarianIncidentDB, event.id)
+            if incident is None or not incident.current_drift_id:
+                return targets
+            drift = db.get(DriftResultDB, incident.current_drift_id)
+            if drift is None or drift.status != "completed":
+                return targets
+            trajectory = dict(drift.trajectory or {})
+            drift_id = str(drift.drift_id)
+        targets.extend(_trajectory_targets(
+            trajectory,
+            drift_id=drift_id,
+            limit=max(0, MAX_CASE_TARGETS - 1),
+        ))
+    except Exception:
+        logger.debug("Satellite case targets unavailable for %s", event.id, exc_info=True)
+    return targets[:MAX_CASE_TARGETS]
+
+
+def _annotate_target(observation, target: dict[str, Any], direction: str):
+    provenance = dict(observation.provenance or {})
+    target_record = {
+        "role": str(target.get("role") or "case_target"),
+        "lat": round(float(target["lat"]), 6),
+        "lon": round(float(target["lon"]), 6),
+        "at": target["at"].astimezone(timezone.utc).isoformat(),
+        "search_direction": direction,
+    }
+    if target.get("drift_id"):
+        target_record["drift_id"] = str(target["drift_id"])
+    if target.get("trajectory_index") is not None:
+        target_record["trajectory_index"] = int(target["trajectory_index"])
+    provenance["case_targets"] = [target_record]
+    return replace(observation, provenance=provenance)
 
 
 def is_satellite_enrichment_candidate(
@@ -50,28 +156,44 @@ def enrich_event(
     provider=None,
     include_viirs: bool = True,
 ) -> dict[str, int]:
-    """Collect reverse/nearest/forward evidence without blocking on one failure."""
+    """Collect bounded satellite context along the case's temporal path.
+
+    The reported origin gets reverse/nearest/forward searches. When a
+    Humanitarian incident owns a current drift trajectory, up to three sampled
+    trajectory points are searched with nearest only. Scene metadata stays
+    contextual until an actual vessel/detection association is made elsewhere.
+    """
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    event_time = parse_utc(event.timestamp_utc) or now
+    targets = _case_satellite_targets(event)
     report = {"persisted": 0, "errors": 0}
-    for direction in _DIRECTIONS:
-        try:
-            observations = resolve_for_incident(
-                incident_id=event.id,
-                lat=float(event.lat), lon=float(event.lon),
-                event_time=event_time,
-                direction=direction,
-                provider=provider,
-                include_viirs=include_viirs,
-                now=now,
-            )
-            report["persisted"] += persist_observations(observations)
-        except Exception as exc:
-            report["errors"] += 1
-            logger.info(
-                "Satellite %s lookup unavailable for event=%s: %s",
-                direction, event.id, type(exc).__name__,
-            )
+    for target_index, target in enumerate(targets):
+        directions = _DIRECTIONS if target_index == 0 else ("nearest",)
+        for direction in directions:
+            try:
+                observations = resolve_for_incident(
+                    incident_id=event.id,
+                    lat=float(target["lat"]),
+                    lon=float(target["lon"]),
+                    event_time=target["at"],
+                    direction=direction,
+                    provider=provider,
+                    include_viirs=include_viirs,
+                    now=now,
+                )
+                annotated = [
+                    _annotate_target(observation, target, direction)
+                    for observation in observations
+                ]
+                report["persisted"] += persist_observations(annotated)
+            except Exception as exc:
+                report["errors"] += 1
+                logger.info(
+                    "Satellite %s lookup unavailable for event=%s target=%s: %s",
+                    direction,
+                    event.id,
+                    target.get("role"),
+                    type(exc).__name__,
+                )
     return report
 
 

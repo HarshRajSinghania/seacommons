@@ -80,6 +80,55 @@ def test_association_status_persists_and_round_trips():
     assert reloaded[0].association_status == "unmatched_candidate"
 
 
+def test_duplicate_scene_merges_case_targets_without_double_counting():
+    from datetime import datetime, timezone
+
+    from core.intel.satellite_observation import (
+        SatelliteObservation,
+        list_incident_observations,
+        persist_observations,
+    )
+
+    base = {
+        "observation_id": "sat-assoc-test-merge:scene",
+        "incident_id": "sat-assoc-test-merge",
+        "provider": "copernicus",
+        "mission": "Sentinel-1",
+        "product_id": "S1_MERGE",
+        "acquisition_time": "2026-09-17T10:00:00+00:00",
+        "discovered_at": datetime.now(timezone.utc).isoformat(),
+        "footprint": None,
+        "bbox": [14.0, 35.0, 14.5, 35.5],
+        "sensor_type": "sar",
+        "temporal_relation": "nearest",
+        "temporal_delta_s": 0.0,
+        "asset_ref": "",
+        "source_url": "",
+    }
+    origin = SatelliteObservation(
+        **base,
+        provenance={"case_targets": [{
+            "role": "reported_origin", "lat": 35.1, "lon": 14.1,
+            "at": "2026-09-17T09:00:00+00:00", "search_direction": "nearest",
+        }]},
+    )
+    drift = SatelliteObservation(
+        **base,
+        provenance={"case_targets": [{
+            "role": "drift_trajectory", "lat": 35.2, "lon": 14.2,
+            "at": "2026-09-17T11:00:00+00:00", "search_direction": "nearest",
+            "drift_id": "drift-1", "trajectory_index": 2,
+        }]},
+    )
+
+    assert persist_observations([origin]) == 1
+    assert persist_observations([drift]) == 0
+    reloaded = list_incident_observations("sat-assoc-test-merge")
+    assert len(reloaded) == 1
+    targets = reloaded[0].provenance["case_targets"]
+    assert {row["role"] for row in targets} == {"reported_origin", "drift_trajectory"}
+
+
 def test_regular_satellite_observation_has_no_association_status_by_default():
     """A routine quicklook (no dark-ship cue) never gets association_status
     invented -- it only applies where a real candidate-match question

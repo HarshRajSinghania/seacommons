@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
-from urllib.request import Request, urlopen
+
+from core.net.outbound import FixedOriginClient
+from core.net.policy import JSON_TEXT
 
 NETWORK = "aiscatcher_community"
 PROFILE_URL = "https://www.aiscatcher.org/station/{station_id}"
@@ -92,12 +94,14 @@ def parse_station_profile(station_id: str, raw: str) -> ParsedStation:
 
 
 def _fetch_profile(station_id: str) -> str:
-    request = Request(
+    client = FixedOriginClient(("https://www.aiscatcher.org",), timeout=8.0)
+    response = client.request(
         PROFILE_URL.format(station_id=station_id),
+        contract=JSON_TEXT,
         headers={"User-Agent": "SeaCommons/1.0 coverage-witness"},
     )
-    with urlopen(request, timeout=8) as response:
-        return response.read(500_000).decode("utf-8", errors="replace")
+    response.raise_for_status()
+    return response.body.decode("utf-8", errors="replace")
 def refresh_public_coverage_snapshots(
     *,
     fetch_profile=_fetch_profile,

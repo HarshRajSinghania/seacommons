@@ -102,14 +102,16 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         gap_hypothesis = str(gap.get("hypothesis") or "vessel_gap")
         gap_confidence = float(gap.get("confidence") or 0.0)
         jam = float(metadata.get("jamming_score") or 0.0)
+        neighbour_coverage = nearby_before >= 5 and nearby_after >= 5
+        community_coverage = bool(coverage_witnesses)
         healthy_local_coverage = (
-            nearby_before >= 5 and nearby_after >= 5
+            (neighbour_coverage or community_coverage)
             and gap_hypothesis != "coverage_gap"
             and gap_confidence >= 0.70
             and jam < 0.3
         )
         baseline_unusual = bool(behaviour_reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
-        prolonged = silent_s >= 4 * 3600 and nearby_before >= 5 and nearby_after >= 5
+        prolonged = silent_s >= 4 * 3600 and healthy_local_coverage
         qualified = silent_s >= 3600 and healthy_local_coverage and (baseline_unusual or prolonged)
         if healthy_local_coverage:
             reasons.append("LOCAL_AIS_COVERAGE_HEALTHY")

@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 
 import pytest
-
 from core.intel.store import IntelEvent
 
 
@@ -74,6 +73,37 @@ def test_long_isolated_gap_enters_collecting_as_derived_investigation() -> None:
     assert decision.hypothesis_type == "dark_transit"
     assert decision.may_advance_collecting is True
     assert decision.evidence_stage == "derived"
+
+
+def test_long_gap_with_community_coverage_witness_enters_collecting() -> None:
+    mod = _eligibility()
+    event = _event(
+        "gap:community", "gap",
+        gap_reason={
+            "hypothesis": "vessel_gap", "confidence": 0.82,
+            "coverage_ratio": 0.0,
+            "nearby_vessels_reporting_before": 0,
+            "nearby_vessels_reporting_after": 0,
+        },
+        silent_seconds=5 * 3600,
+        jamming_score=0.0,
+        port_or_anchorage=None,
+        pre_gap_speed_kn=9.0,
+        offshore_context={
+            "ais_coverage_witnesses": [{
+                "network": "aiscatcher_community",
+                "station_id": "3372",
+                "coverage_role": "same_lineage_coverage_witness",
+            }]
+        },
+        offshore_reason_codes=["OFFSHORE_CONTEXT", "COMMUNITY_AIS_COVERAGE_PRESENT"],
+    )
+    decision = mod.evaluate_hypothesis_eligibility(
+        _episode("gap_episode", "single_source_observed", 1), [event]
+    )
+    assert decision.eligible is True
+    assert decision.hypothesis_type == "dark_transit"
+    assert decision.may_advance_collecting is True
 
 
 def test_long_gap_near_port_stays_unpromoted() -> None:

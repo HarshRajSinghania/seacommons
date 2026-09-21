@@ -224,12 +224,21 @@ class MdaWatch:
                         stored_silent = float(metadata.get("silent_seconds") or 0.0)
                         emitted_at = parse_utc(row.timestamp_utc)
                         gap_reason = metadata.get("gap_reason") or {}
+                        stored_offshore = metadata.get("offshore_context") or {}
+                        community_coverage = bool(
+                            stored_offshore.get("ais_coverage_witnesses")
+                            or "COMMUNITY_AIS_COVERAGE_PRESENT"
+                            in (metadata.get("offshore_reason_codes") or ())
+                        )
+                        neighbour_coverage = (
+                            int(gap_reason.get("nearby_vessels_reporting_before") or 0) >= 5
+                            and int(gap_reason.get("nearby_vessels_reporting_after") or 0) >= 5
+                        )
                         worth_lookup = (
                             isinstance(gap_reason, dict)
                             and gap_reason.get("hypothesis") == "vessel_gap"
                             and float(gap_reason.get("confidence") or 0.0) >= 0.7
-                            and int(gap_reason.get("nearby_vessels_reporting_before") or 0) >= 5
-                            and int(gap_reason.get("nearby_vessels_reporting_after") or 0) >= 5
+                            and (neighbour_coverage or community_coverage)
                             and float(metadata.get("jamming_score") or 0.0) < 0.3
                         )
                         latest = None
@@ -325,18 +334,31 @@ class MdaWatch:
 
                 gap_reason = metadata.get("gap_reason") or {}
                 silent_seconds = float(metadata.get("silent_seconds") or 0.0)
+                stored_offshore = metadata.get("offshore_context") or {}
+                community_coverage = bool(
+                    stored_offshore.get("ais_coverage_witnesses")
+                    or "COMMUNITY_AIS_COVERAGE_PRESENT"
+                    in (metadata.get("offshore_reason_codes") or ())
+                )
+                neighbour_coverage = (
+                    int(gap_reason.get("nearby_vessels_reporting_before") or 0) >= 5
+                    and int(gap_reason.get("nearby_vessels_reporting_after") or 0) >= 5
+                )
                 if (
                     not isinstance(gap_reason, dict)
                     or gap_reason.get("hypothesis") != "vessel_gap"
                     or float(gap_reason.get("confidence") or 0.0) < 0.7
-                    or int(gap_reason.get("nearby_vessels_reporting_before") or 0) < 5
-                    or int(gap_reason.get("nearby_vessels_reporting_after") or 0) < 5
+                    or not (neighbour_coverage or community_coverage)
                     or not (4 * 3600 <= silent_seconds <= 12 * 3600)
                     or float(metadata.get("jamming_score") or 0.0) >= 0.3
                 ):
                     continue
 
-                context = build_offshore_context(float(row.lat), float(row.lon))
+                context = build_offshore_context(
+                    float(row.lat),
+                    float(row.lon),
+                    include_ais_coverage=True,
+                )
                 qualification = qualify_offshore_anomaly(
                     str(metadata.get("anomaly_type") or "gap"),
                     metadata,

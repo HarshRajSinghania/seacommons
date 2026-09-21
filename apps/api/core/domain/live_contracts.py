@@ -227,6 +227,12 @@ class LiveSignalProperties(BaseModel):
     text: Literal[""] = ""
     source: str = Field(default="", max_length=64)
     url: str = ""
+    # Durable Live retention contract (core.live.retention). Present only for
+    # a qualified observation that has earned a floor; absence does not mean
+    # "not qualified", only "predates this contract" or "not this family".
+    live_entered_at: datetime | None = None
+    last_qualified_observation_at: datetime | None = None
+    live_expires_at: datetime | None = None
 
 
 class LiveSignalFeature(BaseModel):

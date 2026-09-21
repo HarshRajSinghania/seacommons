@@ -414,6 +414,18 @@ def test_satellite_candidate_moves_dark_transit_into_collecting():
     assert hyp.evidence_stage == "derived"
     assert any(link.startswith("sat:gfw_sar:") for link in hyp.evidence_links)
 
+    # The unmatched SAR detection is materialized as proper, persisted
+    # satellite evidence -- not decorative -- keyed by the originating
+    # event's id (which play.py's timeline resolves via evidence_links),
+    # never claiming a vessel match.
+    from core.intel.satellite_observation import list_incident_observations
+
+    observations = list_incident_observations(gap.id)
+    assert len(observations) == 1
+    assert observations[0].association_status == "unmatched_candidate"
+    assert observations[0].provider == "gfw"
+    assert observations[0].footprint == {"type": "Point", "coordinates": [14.15, 35.53]}
+
 
 def test_durable_hypothesis_sampler_keeps_gap_family_under_spoof_flood():
     from datetime import datetime, timezone

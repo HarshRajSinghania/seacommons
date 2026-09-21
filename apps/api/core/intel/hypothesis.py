@@ -94,6 +94,14 @@ class InvestigationHypothesis:
     allegation_shaped_wording: bool = False
     explicit_review_done: bool = False
     audit_history: tuple[AuditEntry, ...] = field(default_factory=tuple)
+    # Durable Live retention ceiling (core.live.retention), populated only
+    # while state == "published" -- see core.intel.hypothesis_store.
+    # save_hypothesis(), the sole writer. A published hypothesis is
+    # otherwise terminal with no expiry transition, so without this a
+    # published Maritime Intelligence case could stay on Live indefinitely.
+    live_entered_at: Optional[datetime] = None
+    last_qualified_observation_at: Optional[datetime] = None
+    live_expires_at: Optional[datetime] = None
 
 
 def _evidence_snapshot_hash(hypothesis: InvestigationHypothesis) -> str:

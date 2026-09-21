@@ -33,6 +33,7 @@ SPEED_SPIKE_KN = 18.0        # rescue sprint: above this, flag a speed spike
 RELATED_SIGNAL_RADIUS_NM = 50.0  # cross-check radius for other live signals
 SPIKE_LOOKBACK_HOURS = 6     # how far back to pull detector motion flags
 _MIN_ETA_SPEED_KN = 1.0      # never divide by zero when computing ETA
+ON_SCENE_SPEED_MAX_KN = 5.0  # slow manoeuvring threshold near a distress/drift envelope
 
 # spike_type (from ais_spike_detector) → motion flag label shown in the UI
 _SPIKE_FLAGS = {
@@ -78,6 +79,77 @@ def _parse_iso(value: Any) -> Optional[datetime]:
         return None
 
 
+def _iter_lonlat(value: Any):
+    """Yield [lon, lat] coordinate pairs from a GeoJSON-ish object."""
+    if isinstance(value, dict):
+        if value.get("type") == "Feature":
+            yield from _iter_lonlat(value.get("geometry"))
+            return
+        if "coordinates" in value:
+            yield from _iter_lonlat(value.get("coordinates"))
+            return
+        for item in value.values():
+            yield from _iter_lonlat(item)
+        return
+    if not isinstance(value, (list, tuple)):
+        return
+    if len(value) >= 2 and all(isinstance(v, (int, float)) for v in value[:2]):
+        yield float(value[0]), float(value[1])
+        return
+    for item in value:
+        yield from _iter_lonlat(item)
+
+
+def _current_drift_context(incident_id: str) -> dict[str, Any] | None:
+    """Load the canonical current drift owned by one HumanitarianIncident."""
+    try:
+        from core.db.models import DriftResultDB, HumanitarianIncidentDB
+        from core.db.session import session_scope
+        with session_scope() as db:
+            incident = db.get(HumanitarianIncidentDB, incident_id)
+            if incident is None or not incident.current_drift_id:
+                return None
+            drift = db.get(DriftResultDB, incident.current_drift_id)
+            if drift is None or drift.status != "completed":
+                return None
+            return {
+                "drift_id": drift.drift_id,
+                "trajectory": drift.trajectory,
+                "cone_24h": drift.cone_24h,
+                "impact_point": drift.impact_point,
+            }
+    except Exception:
+        logger.debug("ngo_response: current drift unavailable for %s", incident_id, exc_info=True)
+        return None
+
+
+def _nearest_drift_target(
+    lat: float, lon: float, drift_context: dict[str, Any] | None,
+) -> tuple[float | None, tuple[float, float] | None]:
+    if not drift_context:
+        return None, None
+    best_distance: float | None = None
+    best_point: tuple[float, float] | None = None
+    for key in ("trajectory", "cone_24h", "impact_point"):
+        for p_lon, p_lat in _iter_lonlat(drift_context.get(key)):
+            distance = _haversine_nm(lat, lon, p_lat, p_lon)
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_point = (p_lat, p_lon)
+    return best_distance, best_point
+
+
+def _sar_zone_context(lat: float, lon: float) -> list[dict[str, Any]]:
+    try:
+        from core.zones.classifier import classify_point
+        return [
+            {"id": str(zone.get("id") or ""), "name": str(zone.get("name") or "")}
+            for zone in classify_point(lat, lon)
+        ]
+    except Exception:
+        return []
+
+
 def _recent_spike_flags(mmsi: str, now: datetime) -> list[str]:
     """Reuse the spike detector's stored observations for this MMSI."""
     try:
@@ -99,7 +171,8 @@ def _recent_spike_flags(mmsi: str, now: datetime) -> list[str]:
 
 
 def _vessel_row(props: dict[str, Any], coords: list[Any],
-                lat: float, lon: float, now: datetime) -> dict[str, Any]:
+                lat: float, lon: float, now: datetime,
+                drift_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """One NGO vessel's cross-check against the episode."""
     mmsi = str(props.get("mmsi") or "")
     name = str(props.get("ship_name") or mmsi or "Unknown")
@@ -109,12 +182,28 @@ def _vessel_row(props: dict[str, Any], coords: list[Any],
     v_lon = float(coords[0])
 
     distance_nm = _haversine_nm(lat, lon, v_lat, v_lon)
+    drift_distance_nm, drift_target = _nearest_drift_target(v_lat, v_lon, drift_context)
+    operational_distance_nm = min(
+        distance_nm,
+        drift_distance_nm if drift_distance_nm is not None else distance_nm,
+    )
+    target_lat, target_lon = (lat, lon)
+    target_kind = "distress_origin"
+    if drift_target is not None and drift_distance_nm is not None and drift_distance_nm < distance_nm:
+        target_lat, target_lon = drift_target
+        target_kind = "current_drift"
+
     bearing_to_episode = _bearing_deg(v_lat, v_lon, lat, lon)
+    bearing_to_operational_target = _bearing_deg(v_lat, v_lon, target_lat, target_lon)
     course_known = speed_kn > 0.1
     heading_toward = bool(
-        course_known and _bearing_delta(course_deg, bearing_to_episode) <= APPROACHING_WINDOW_DEG
+        course_known
+        and _bearing_delta(course_deg, bearing_to_operational_target) <= APPROACHING_WINDOW_DEG
     )
-    eta_h = distance_nm / max(speed_kn, _MIN_ETA_SPEED_KN) if speed_kn > 0.1 else None
+    eta_h = (
+        operational_distance_nm / max(speed_kn, _MIN_ETA_SPEED_KN)
+        if speed_kn > 0.1 else None
+    )
 
     last_seen = str(props.get("last_seen") or props.get("timestamp_utc") or "")
     seen_dt = _parse_iso(last_seen)
@@ -125,6 +214,21 @@ def _vessel_row(props: dict[str, Any], coords: list[Any],
     motion_flags = _recent_spike_flags(mmsi, now)
     if speed_kn >= SPEED_SPIKE_KN and "speed_spike" not in motion_flags:
         motion_flags.insert(0, "speed_spike")
+    rescue_motion = any(
+        flag in {"search_pattern", "rescue_cluster", "sudden_stop", "loitering"}
+        for flag in motion_flags
+    )
+
+    sar_zones = _sar_zone_context(v_lat, v_lon)
+    in_named_srr = any(zone.get("id") != "high_seas" for zone in sar_zones)
+    in_port_or_land = False
+    try:
+        from core.mda.reference import reference
+        in_port_or_land = bool(
+            reference.in_port_or_anchorage(v_lat, v_lon) or reference.is_land(v_lat, v_lon)
+        )
+    except Exception:
+        pass
 
     track_providers = sorted({str(v) for v in (props.get("sources") or []) if str(v)})
     upstream_sources = sorted({str(v) for v in (props.get("upstream_sources") or []) if str(v)})
@@ -136,19 +240,24 @@ def _vessel_row(props: dict[str, Any], coords: list[Any],
     except Exception:
         coverage_status = "coverage_unknown"
 
-    if coverage_status == "provider_degraded":
-        mission_state = "possible_response" if heading_toward or distance_nm <= RELATED_SIGNAL_RADIUS_NM else "unrelated"
-    elif distance_nm <= 20 and any(
-        flag in {"search_pattern", "rescue_cluster", "sudden_stop", "loitering"}
-        for flag in motion_flags
-    ):
+    if in_port_or_land:
+        mission_state = "unrelated"
+    elif coverage_status == "provider_degraded":
+        mission_state = (
+            "possible_response"
+            if heading_toward or operational_distance_nm <= RELATED_SIGNAL_RADIUS_NM
+            else ("search_candidate" if rescue_motion and in_named_srr else "unrelated")
+        )
+    elif operational_distance_nm <= 20 and rescue_motion:
         mission_state = "probable_rescue_activity"
-    elif distance_nm <= 20:
+    elif operational_distance_nm <= 20 and speed_kn <= ON_SCENE_SPEED_MAX_KN:
         mission_state = "on_scene"
     elif heading_toward:
         mission_state = "approaching"
-    elif distance_nm <= RELATED_SIGNAL_RADIUS_NM:
+    elif operational_distance_nm <= RELATED_SIGNAL_RADIUS_NM:
         mission_state = "possible_response"
+    elif rescue_motion and in_named_srr:
+        mission_state = "search_candidate"
     else:
         mission_state = "unrelated"
 
@@ -161,7 +270,18 @@ def _vessel_row(props: dict[str, Any], coords: list[Any],
         "lat": v_lat,
         "lon": v_lon,
         "distance_nm": round(distance_nm, 2),
+        "distance_to_drift_nm": round(drift_distance_nm, 2) if drift_distance_nm is not None else None,
+        "operational_distance_nm": round(operational_distance_nm, 2),
+        "operational_target": target_kind,
+        "drift_target": (
+            {"lat": round(target_lat, 5), "lon": round(target_lon, 5)}
+            if target_kind == "current_drift" else None
+        ),
+        "sar_zones": sar_zones,
+        "in_named_srr": in_named_srr,
+        "in_port_or_land": in_port_or_land,
         "bearing_to_episode_deg": round(bearing_to_episode, 1),
+        "bearing_to_operational_target_deg": round(bearing_to_operational_target, 1),
         "course_deg": round(course_deg, 1) if course_known else None,
         "speed_kn": round(speed_kn, 1),
         "heading_toward": heading_toward,
@@ -185,7 +305,11 @@ def _build_geojson(episode_lat: float, episode_lon: float, rows: list[dict[str, 
         features.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": [
-                [episode_lon, episode_lat], [row["lon"], row["lat"]]
+                (
+                    [row["drift_target"]["lon"], row["drift_target"]["lat"]]
+                    if row.get("drift_target") else [episode_lon, episode_lat]
+                ),
+                [row["lon"], row["lat"]],
             ]},
             "properties": {
                 "mmsi": row["mmsi"],
@@ -193,6 +317,9 @@ def _build_geojson(episode_lat: float, episode_lon: float, rows: list[dict[str, 
                 "org": row["org"],
                 "heading_toward": row["heading_toward"],
                 "distance_nm": row["distance_nm"],
+                "operational_distance_nm": row["operational_distance_nm"],
+                "operational_target": row["operational_target"],
+                "mission_state": row["mission_state"],
             },
         })
         features.append({
@@ -204,6 +331,9 @@ def _build_geojson(episode_lat: float, episode_lon: float, rows: list[dict[str, 
                 "org": row["org"],
                 "heading_toward": row["heading_toward"],
                 "distance_nm": row["distance_nm"],
+                "operational_distance_nm": row["operational_distance_nm"],
+                "operational_target": row["operational_target"],
+                "mission_state": row["mission_state"],
                 "eta_h": row["eta_h"],
                 "speed_kn": row["speed_kn"],
             },
@@ -217,6 +347,7 @@ def analyze_ngo_response(
     now: Optional[datetime] = None,
     registry_geojson: Optional[dict[str, Any]] = None,
     related_signals: Optional[list[Any]] = None,
+    drift_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Compute the NGO cross-check for a positioned episode.
 
@@ -260,14 +391,14 @@ def analyze_ngo_response(
             assets_within_50nm += 1
         if not is_ngo(mmsi):
             continue
-        if dist > MAX_RADIUS_NM:
+        row = _vessel_row(props, coords, lat, lon, now, drift_context=drift_context)
+        if float(row["operational_distance_nm"]) > MAX_RADIUS_NM:
             continue
-        row = _vessel_row(props, coords, lat, lon, now)
         rows.append(row)
-        if dist <= RELATED_SIGNAL_RADIUS_NM:
+        if float(row["operational_distance_nm"]) <= RELATED_SIGNAL_RADIUS_NM:
             ngo_within_50nm += 1
 
-    rows.sort(key=lambda r: (not r["heading_toward"], r["distance_nm"]))
+    rows.sort(key=lambda r: (not r["heading_toward"], r["operational_distance_nm"]))
 
     # ── Cross-check: other live signals near this episode ─────────────────────
     related: list[dict[str, Any]] = []
@@ -335,12 +466,14 @@ def analyze_ngo_response(
             "fastest_approach_name": fastest["name"] if fastest else None,
             "assets_within_50nm": assets_within_50nm,
             "related_signals": len(related),
+            "current_drift_id": drift_context.get("drift_id") if drift_context else None,
         },
         "ngo_vessels": rows,
         "cross_check": {
             "related_signals": related,
             "total_vessels_within_50nm": assets_within_50nm,
             "ngo_vessels_within_50nm": ngo_within_50nm,
+            "current_drift_id": drift_context.get("drift_id") if drift_context else None,
         },
         "geojson": _build_geojson(lat, lon, rows),
     }

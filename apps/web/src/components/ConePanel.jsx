@@ -430,7 +430,7 @@ function EvidenceSources({ props, feature }) {
   );
 }
 
-function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels, onTriggerIntelDrift }) {
+function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels, onTriggerIntelDrift, sarResponse }) {
   const props = panel.feature?.properties || {};
   const mmsi = props.linked_mmsi || props.mmsi;
   const isVesselReport = props.entity_kind === 'vessel' || props.report_type === 'vessel';
@@ -594,8 +594,14 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
         <Row label="Event" value={eventType} />
         <Row label="Status" value={lifecycle} color={color} />
         {props.verification_status && <Row label="Verification" value={String(props.verification_status).replace(/_/g, ' ')} />}
+        {typeof props.corroborated === 'boolean' && <Row label="Independent corroboration" value={props.corroborated ? 'YES' : 'NO'} />}
+        {Array.isArray(props.independence_groups) && props.independence_groups.length > 0 && <Row label="Evidence lineages" value={props.independence_groups.join(' · ')} />}
         {props.live_role && <Row label="Live level" value={String(props.live_role).replace(/_/g, ' ')} />}
         {props.analysis_state && <Row label="Evidence stage" value={String(props.analysis_state).replace(/_/g, ' ')} />}
+        {props.hypothesis_type && <Row label="Hypothesis" value={String(props.hypothesis_type).replace(/_/g, ' ')} />}
+        {props.live_entered_at && <Row label="Entered Live" value={new Date(props.live_entered_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} />}
+        {props.last_qualified_observation_at && <Row label="Latest qualified evidence" value={new Date(props.last_qualified_observation_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} />}
+        {props.live_expires_at && <Row label="Decision window until" value={new Date(props.live_expires_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} />}
         {props.resolution_state && <Row label="Resolution" value={String(props.resolution_state).replace(/_/g, ' ')} />}
         <Row label="Reported" value={when ? new Date(when).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—'} />
         {coords && <Row label="Coordinates" value={`${Number(coords[1]).toFixed(5)}, ${Number(coords[0]).toFixed(5)}`} mono />}
@@ -709,6 +715,8 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
             <small>Proximity and loitering are anomaly context, not proof of interference or intent.</small>
           </div>
         )}
+        {Array.isArray(props.reason_codes) && props.reason_codes.length > 0 && <Row label="Reason codes" value={props.reason_codes.join(' · ')} />}
+        {Array.isArray(props.counter_indicators) && props.counter_indicators.length > 0 && <Row label="Counter-indicators" value={props.counter_indicators.join(' · ')} />}
         {props.status_note && <p className="intel-report-note">{props.status_note}</p>}
         {!driftFeature && coords && props.drift_eligible && onTriggerIntelDrift && (
           <button
@@ -726,6 +734,30 @@ function IntelView({ panel, apiBase, publicMode, intelDrifts, loadNearestVessels
           </button>
         )}
       </div>
+
+      {isHumanitarian && Array.isArray(sarResponse?.ngo_vessels) && sarResponse.ngo_vessels.length > 0 && (
+        <div className="cone-section">
+          <SectionLabel>SAR asset evidence</SectionLabel>
+          {sarResponse?.summary?.current_drift_id && (
+            <Row label="Operational drift" value={sarResponse.summary.current_drift_id} mono />
+          )}
+          {sarResponse.ngo_vessels.slice(0, 6).map((asset) => (
+            <div className="mda-sanctions" key={asset.mmsi || asset.name}>
+              <strong>{asset.name || asset.mmsi || 'SAR asset'}</strong>
+              {asset.org && <span>{asset.org}</span>}
+              <span>Mission assessment · {String(asset.mission_state || 'insufficient_evidence').replace(/_/g, ' ')}</span>
+              <span>Target · {asset.operational_target === 'current_drift' ? 'current drift' : 'reported distress position'}</span>
+              {Number.isFinite(Number(asset.operational_distance_nm)) && <span>{Number(asset.operational_distance_nm).toFixed(1)} nm from operational target</span>}
+              {Number.isFinite(Number(asset.distance_to_drift_nm)) && <span>{Number(asset.distance_to_drift_nm).toFixed(1)} nm from drift geometry</span>}
+              {asset.heading_toward && <span>Course consistent with approach</span>}
+              {Number.isFinite(Number(asset.eta_h)) && <span>ETA ~{Number(asset.eta_h).toFixed(1)} h</span>}
+              {Array.isArray(asset.motion_flags) && asset.motion_flags.length > 0 && <span>Motion · {asset.motion_flags.join(' · ')}</span>}
+              {Array.isArray(asset.sar_zones) && asset.sar_zones.length > 0 && <span>Zone · {asset.sar_zones.map((zone) => zone.name || zone.id).filter(Boolean).join(' · ')}</span>}
+            </div>
+          ))}
+          <p className="intel-report-note">AIS asset position and movement are evidence about a possible SAR response. They do not identify the asset as the vessel in distress and do not confirm a rescue without independent case evidence.</p>
+        </div>
+      )}
 
       {coords && loadNearestVessels && (
         <div className="cone-section">
@@ -1220,6 +1252,7 @@ export default function MapFloatingPanel({
   intelDrifts,
   loadNearestVessels,
   onTriggerIntelDrift,
+  sarResponse,
 }) {
   if (!panel) return null;
 
@@ -1279,6 +1312,7 @@ export default function MapFloatingPanel({
           intelDrifts={intelDrifts}
           loadNearestVessels={loadNearestVessels}
           onTriggerIntelDrift={onTriggerIntelDrift}
+          sarResponse={sarResponse}
         />
       )}
     </div>

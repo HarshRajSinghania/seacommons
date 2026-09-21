@@ -43,6 +43,7 @@ from core.live.projection import (
     dedupe_public_case_items,
     is_useful_public_case_feature,
 )
+from core.live.retention import is_live_retained
 from core.live.vessel_episodes import (
     add_nearby_humanitarian_context,
     coalesce_security_vessel_episodes,
@@ -50,12 +51,20 @@ from core.live.vessel_episodes import (
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_live_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
 # Public received/safety types that must survive in-memory deque churn. Raw
 # Security detector families are intentionally absent: after the canonical
 # cutover they remain internal evidence and public Live reads assessed
 # InvestigationHypothesis rows through _published_security_hypothesis_features.
 _PUBLIC_DURABLE_TYPES = frozenset({
-    "distress", "twitter", "mastodon", "bluesky", "ngo_activity", "news",
+    "distress", "twitter", "mastodon", "bluesky", "ngo_activity",
     "gdacs", "vessel_incident", "iom_incident",
 })
 
@@ -315,6 +324,15 @@ def public_signal_collection(
             durable_public_by_id[event.id] = event
             durable_sanction_port_calls.append(event)
     durable_public = list(durable_public_by_id.values())
+    # core.live.retention: a qualified AIS-evidence event (ais_anomaly /
+    # ais_rendezvous) must stay visible for its full 24h window regardless of
+    # deque residency or process restart. These types are deliberately absent
+    # from _PUBLIC_DURABLE_TYPES above (most rows of these types are internal
+    # evidence, not public); live_retained_events() re-hydrates only the
+    # subset that already earned a durable retention window.
+    durable_live_retained = intel_store.live_retained_events(limit=_LIVE_DURABLE_SCAN_LIMIT)
+    for event in durable_live_retained:
+        durable_public_by_id.setdefault(event.id, event)
     by_id = {event.id: event for event in durable_alarm_phone}
     by_id.update(durable_public_by_id)
     # In-memory objects contain the most recent metadata observations and must
@@ -399,7 +417,18 @@ def public_signal_collection(
             # by the same age window, no pulsing lifecycle. Kept in a separate
             # bucket and capped so a chatty context source can never crowd a
             # genuine distress report out of the window.
-            if not lifecycle.is_within_live_retention_window(event, now=now):
+            #
+            # core.live.retention: an event that already earned a durable
+            # retention window (qualified AIS evidence) is governed by
+            # live_expires_at alone -- server-authoritative, independent of
+            # this event row's own timestamp age or resolved/explained
+            # operational state. Everything else keeps the rolling 24-hour
+            # public timeline contract from core.intel.lifecycle.
+            live_expires_raw = (event.metadata or {}).get("live_expires_at")
+            if live_expires_raw:
+                if not is_live_retained(_parse_live_timestamp(live_expires_raw), now=now):
+                    continue
+            elif not lifecycle.is_within_live_retention_window(event, now=now):
                 continue
             mode_context[event_mode].append(feature)
 

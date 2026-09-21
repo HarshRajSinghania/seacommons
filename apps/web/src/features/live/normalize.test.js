@@ -113,11 +113,11 @@ test('replaces stale drift features when an operator event update arrives', () =
   assert.equal(result.features[1].properties.version, undefined);
 });
 
-test('browser keeps all Live event roles for the rolling 24h window', () => {
+test('browser trusts server-authoritative Live expiry instead of event age', () => {
   const originalNow = Date.now;
   Date.now = () => Date.parse('2026-09-19T18:00:00Z');
   try {
-    const feature = (id, timestamp) => ({
+    const feature = (id, timestamp, liveExpiresAt) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [12, 38] },
       properties: {
@@ -125,13 +125,13 @@ test('browser keeps all Live event roles for the rolling 24h window', () => {
         type: 'ngo_activity',
         source: 'SeaCommons AIS analysis',
         live_role: 'humanitarian_observation',
-        live_valid_for_s: 6 * 3600,
         timestamp_utc: timestamp,
+        live_expires_at: liveExpiresAt,
       },
     });
-    const recent = feature('recent', '2026-09-19T10:00:00Z');
-    const expired = feature('expired', '2026-09-18T17:00:00Z');
-    assert.deepEqual(receivedSignalFeatures([recent, expired]), [recent]);
+    const retainedOldObservation = feature('retained', '2026-09-18T17:00:00Z', '2026-09-19T20:00:00Z');
+    const expired = feature('expired', '2026-09-19T17:00:00Z', '2026-09-19T17:30:00Z');
+    assert.deepEqual(receivedSignalFeatures([retainedOldObservation, expired]), [retainedOldObservation]);
   } finally {
     Date.now = originalNow;
   }

@@ -20,7 +20,7 @@ from typing import Any, Optional
 from core.intel.episode_store import save_episode
 from core.intel.hypothesis import InvestigationHypothesis, new_hypothesis, transition
 from core.intel.hypothesis_eligibility import evaluate_hypothesis_eligibility
-from core.intel.hypothesis_store import get_hypothesis, save_hypothesis
+from core.intel.hypothesis_store import get_hypothesis, list_hypotheses, save_hypothesis
 from core.intel.store import IntelEvent, intel_store
 
 
@@ -68,6 +68,21 @@ def _attach_cross_modal_evidence(
         cue = (event.metadata or {}).get("darkship_cue") or {}
         if cue.get("association_status") != "unmatched_candidate":
             continue
+        # Materialize as proper, persisted satellite evidence -- not
+        # decorative images. Keyed by this event's own id (one of the IDs
+        # that ends up in the hypothesis's evidence_links via related_
+        # signal_ids), so Play's dossier can find it the same way it finds
+        # drift (docs section 6/1's play_incident_timeline fix).
+        from core.intel.satellite_observation import (
+            materialize_unmatched_sar_detections,
+            persist_observations,
+        )
+
+        satellite_observations = materialize_unmatched_sar_detections(
+            incident_id=event.id, cue=cue,
+        )
+        if satellite_observations:
+            persist_observations(satellite_observations)
         for detection in cue.get("gfw_unmatched_in_area") or ():
             if not isinstance(detection, dict):
                 continue
@@ -265,8 +280,21 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
     # candidates may justify investigation, but only independently
     # corroborated evidence can become a reviewable public case.
     distinct_evidence = {str(value) for value in hyp.evidence_links if value}
+    episode_groups = {
+        str(value) for value in (
+            props.get("contributing_independence_groups")
+            or props.get("independence_groups")
+            or ()
+        ) if value
+    }
+    independently_corroborated = (
+        str(props.get("verification_status") or "") == "multi_source_corroborated"
+        or len(episode_groups) >= 2
+        or int(props.get("independent_source_count") or 0) >= 2
+    )
     if (
         hyp.state == "collecting"
+        and independently_corroborated
         and decision.evidence_stage in {"corroborated", "assessed", "confirmed"}
         and len(distinct_evidence) >= 2
         and bool(hyp.reason_codes)
@@ -278,3 +306,54 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
 
     save_hypothesis(hyp)
     return hyp
+
+
+def expire_stale_hypotheses(
+    *, now: Optional[Any] = None, stale_after: Optional[Any] = None,
+) -> int:
+    """Transition candidate/collecting hypotheses whose evidence has gone
+    quiet for 24h into "expired" (docs section 4: the 24h Live window is an
+    investigation decision window, not an indefinite hold).
+
+    Uses episode/evidence time, never updated_at: updated_at bumps on every
+    no-op re-evaluation (the same episode being re-scanned without new
+    evidence), which would make a truly stale hypothesis look perpetually
+    fresh. The expired hypothesis remains durable (for audit) but drops out
+    of both Live and Play once its state is no longer candidate/collecting.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from core.db.models import IntelEventDB, MaritimeEpisodeDB
+    from core.db.session import session_scope
+    from core.intel.lifecycle import parse_utc
+
+    now = now or datetime.now(timezone.utc)
+    stale_after = stale_after or timedelta(hours=24)
+    expired_count = 0
+    with session_scope() as db:
+        for state in ("candidate", "collecting"):
+            for hyp in list_hypotheses(state=state, limit=5000):
+                last_evidence_at = None
+                if hyp.episode_id:
+                    episode = db.get(MaritimeEpisodeDB, hyp.episode_id)
+                    if episode is not None and episode.end_at is not None:
+                        last_evidence_at = episode.end_at
+                if last_evidence_at is None and hyp.evidence_links:
+                    rows = (
+                        db.query(IntelEventDB)
+                        .filter(IntelEventDB.id.in_(list(hyp.evidence_links)))
+                        .all()
+                    )
+                    timestamps = [t for t in (parse_utc(r.timestamp_utc) for r in rows) if t is not None]
+                    if timestamps:
+                        last_evidence_at = max(timestamps)
+                if last_evidence_at is None:
+                    continue
+                if last_evidence_at.tzinfo is None:
+                    last_evidence_at = last_evidence_at.replace(tzinfo=timezone.utc)
+                if now - last_evidence_at < stale_after:
+                    continue
+                expired = transition(hyp, "expired", actor="hypothesis_engine_v1_expiry")
+                save_hypothesis(expired)
+                expired_count += 1
+    return expired_count

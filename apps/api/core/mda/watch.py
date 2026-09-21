@@ -890,6 +890,7 @@ class MdaWatch:
                     if gap_reason is not None else None
                 ),
                 "behaviour_context": behaviour_context,
+                "vessel_type_context": ship_type,
             }
             offshore_context = build_offshore_context(last.lat, last.lon)
             offshore_qualification = qualify_offshore_anomaly(anomaly_type, gap_meta, offshore_context)

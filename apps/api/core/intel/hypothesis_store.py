@@ -62,6 +62,9 @@ def to_row_kwargs(hypothesis: InvestigationHypothesis) -> dict:
         "allegation_shaped_wording": hypothesis.allegation_shaped_wording,
         "explicit_review_done": hypothesis.explicit_review_done,
         "audit_history": [_audit_entry_to_dict(e) for e in hypothesis.audit_history],
+        "live_entered_at": hypothesis.live_entered_at,
+        "last_qualified_observation_at": hypothesis.last_qualified_observation_at,
+        "live_expires_at": hypothesis.live_expires_at,
     }
 
 
@@ -80,6 +83,9 @@ def _from_row(row) -> InvestigationHypothesis:
         allegation_shaped_wording=bool(row.allegation_shaped_wording),
         explicit_review_done=bool(row.explicit_review_done),
         audit_history=tuple(_audit_entry_from_dict(e) for e in (row.audit_history or ())),
+        live_entered_at=getattr(row, "live_entered_at", None),
+        last_qualified_observation_at=getattr(row, "last_qualified_observation_at", None),
+        live_expires_at=getattr(row, "live_expires_at", None),
     )
 
 
@@ -98,11 +104,26 @@ def save_hypothesis(hypothesis: InvestigationHypothesis) -> None:
     """Upsert by hypothesis_id -- callers always pass the full current
     dataclass state (core.intel.hypothesis.transition() returns a new
     instance rather than mutating), so this always replaces every column,
-    same convention as core.db.store's other upsert-by-id writers."""
+    same convention as core.db.store's other upsert-by-id writers.
+
+    The sole writer of the durable Live retention ceiling: while
+    state == "published", every save extends the window from the
+    hypothesis's own (already-loaded) prior live_entered_at/live_expires_at
+    -- never from updated_at, which bumps on every no-op re-save."""
     from core.db.models import InvestigationHypothesisDB
     from core.db.session import session_scope
+    from core.live.retention import compute_retention_window
 
     kwargs = to_row_kwargs(hypothesis)
+    if hypothesis.state == "published":
+        entered_at, last_qualified_at, expires_at = compute_retention_window(
+            prior_entered_at=hypothesis.live_entered_at,
+            prior_expires_at=hypothesis.live_expires_at,
+            now=datetime.now(timezone.utc),
+        )
+        kwargs["live_entered_at"] = entered_at
+        kwargs["last_qualified_observation_at"] = last_qualified_at
+        kwargs["live_expires_at"] = expires_at
     with session_scope() as db:
         row = db.query(InvestigationHypothesisDB).filter(
             InvestigationHypothesisDB.hypothesis_id == hypothesis.hypothesis_id

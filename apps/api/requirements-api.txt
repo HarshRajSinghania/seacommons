@@ -18,6 +18,7 @@ rich>=13.7
 python-dateutil>=2.9
 python-dotenv>=1.0
 requests>=2.31
+defusedxml>=0.7
 PyJWT[crypto]>=2.8
 python-multipart>=0.0.9
 minio>=7.2

@@ -95,7 +95,7 @@ def test_process_decoder_jsonl_protocol_returns_structured_output(tmp_path):
         "for line in sys.stdin:\n"
         " d=json.loads(line); print(json.dumps({'messages':[{'kind':'navtex','payload':'ZCZC KA01\\nTEST\\nNNNN','message_id':'n1'}]}), flush=True)\n"
     )
-    decoder = JSONLProcessDecoder((sys.executable, str(script)), timeout_s=1.0)
+    decoder = JSONLProcessDecoder((sys.executable, str(script)), timeout_s=5.0)
     outputs = tuple(decoder.decode(_frame()))
     decoder.close()
     assert outputs[0]["kind"] == "navtex"

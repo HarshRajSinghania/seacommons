@@ -216,6 +216,14 @@ def _nearby_active_distress(lat: float, lon: float) -> Optional[dict[str, Any]]:
 
 
 def _in_port(lat: float, lon: float) -> bool:
+    # Prefer the shared maritime reference layer so ports not in the small
+    # legacy fallback list (for example Marina di Carrara) are still excluded.
+    try:
+        from core.mda.reference import reference
+        if reference.in_port_or_anchorage(lat, lon) or reference.is_land(lat, lon):
+            return True
+    except Exception:
+        pass
     for pz in PORT_ZONES:
         if _haversine_nm(lat, lon, pz["lat"], pz["lon"]) <= pz["radius_nm"]:
             return True
@@ -416,7 +424,7 @@ class AISSpikeDetector:
                     del prev["loiter_start"]
 
                 # ── Rule 3: NGO search pattern ─────────────────────────────────
-                if is_ngo(mmsi):
+                if is_ngo(mmsi) and open_water:
                     delta = _bearing_delta(prev["course"], v["course"])
                     zigzag = (delta >= SEARCH_BEARING_DELTA
                               and STOP_THRESHOLD_KN < v["speed"] <= SEARCH_SPEED_MAX_KN)
@@ -727,6 +735,18 @@ def _normalized_sar_activity(
 
     One AIS lineage can establish the observed track pattern; it cannot by itself
     establish that a casualty existed or that a rescue occurred.
+
+    Every _RESCUE_RELEVANT_SPIKES member is handled here -- production audit
+    (docs section 7) found known fresh SAR-responder AIS behaviour (sudden
+    stops, loitering, an unconverged/unclear cluster) silently producing zero
+    ngo_activity, because only ngo_search_pattern and one narrow rescue_cluster
+    combination were ever normalized; sudden_stop, vessel_loiter and every
+    other rescue_cluster/possible_rescue_cluster shape fell through to
+    `return None`. mission_state follows the spec's asset-vs-mission split
+    (core.intel.ngo_registry docstring): this is always a *mission* state,
+    never a claim about the vessel's raw position/movement (core.live.feed's
+    Civil SAR fleet layer covers that separately) -- and never, by itself,
+    proof a rescue occurred.
     """
     if not responder or responder.get("status") != "active":
         return None
@@ -734,6 +754,7 @@ def _normalized_sar_activity(
     spike_type = str(meta.get("spike_type") or "")
     if spike_type == "ngo_search_pattern":
         activity_kind = "search_pattern_observed"
+        mission_state = "search_candidate"
         label = "search-pattern activity"
         observation = "AIS track shows repeated low-speed course changes consistent with a search pattern."
     elif (
@@ -742,8 +763,40 @@ def _normalized_sar_activity(
         and meta.get("in_port_or_anchorage") is False
     ):
         activity_kind = "responder_convergence_observed"
+        mission_state = (
+            "probable_rescue_activity" if meta.get("possible_response_to") else "search_candidate"
+        )
         label = "multi-vessel convergence"
         observation = "AIS tracks show a known SAR responder converging with nearby vessels offshore."
+    elif spike_type in {"rescue_cluster", "possible_rescue_cluster"}:
+        # A cluster that didn't meet the stricter converging/offshore bar
+        # above is still a real, weaker cue -- vessels close together, not
+        # yet shown to be closing distance or clearly offshore. Retained as
+        # evidence rather than dropped, at the weakest mission state.
+        activity_kind = "rescue_cluster_observed"
+        mission_state = (
+            "possible_response" if meta.get("possible_response_to") else "search_candidate"
+        )
+        label = "vessel cluster"
+        observation = "AIS tracks show a known SAR responder near other vessels; convergence not yet confirmed."
+    elif spike_type == "sudden_stop":
+        activity_kind = "possible_response_observed"
+        mission_state = (
+            "possible_response" if meta.get("possible_response_to") else "search_candidate"
+        )
+        label = "sudden stop"
+        observation = "AIS track shows a known SAR responder stopping abruptly in open water."
+    elif spike_type == "vessel_loiter":
+        # vessel_loiter already requires open water + proximity to a known
+        # SAR hotspot (module docstring, rule 4) -- a responder stationary
+        # there for a sustained period is a real on-scene cue, not proof of
+        # rescue.
+        activity_kind = "on_scene_observed"
+        mission_state = (
+            "on_scene" if meta.get("possible_response_to") else "search_candidate"
+        )
+        label = "sustained loiter near a known SAR area"
+        observation = "AIS track shows a known SAR responder stationary near a known SAR hotspot."
     else:
         return None
 
@@ -782,6 +835,7 @@ def _normalized_sar_activity(
             "evidence_count": 1,
             "live_valid_for_s": 24 * 3600,
             "activity_kind": activity_kind,
+            "mission_state": mission_state,
             "observation_type": "sar_responder_activity",
             "operator_type": responder.get("operator_type") or "unknown",
             "org": responder.get("org"),

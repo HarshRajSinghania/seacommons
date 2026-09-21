@@ -8,7 +8,12 @@ from typing import Mapping, Any
 
 from core.radio.structured import DSCObservation
 
-_DSC_FIELDS = frozenset({"category", "mmsi", "latitude", "longitude", "nature_code"})
+_DSC_FIELDS = frozenset({
+    "category", "mmsi", "latitude", "longitude", "nature_code",
+    "format", "from_mmsi", "to_mmsi", "nature_description",
+    "telecommand_1", "telecommand_2", "end_of_sequence", "distress_time",
+    "reported_frequency",
+})
 
 
 def _stable_decoder_id(
@@ -61,6 +66,7 @@ def normalize_dsc_decoder_message(
     present = tuple(sorted(key for key in _DSC_FIELDS if key in payload and payload.get(key) is not None))
     latitude = payload.get("latitude")
     longitude = payload.get("longitude")
+    reported_frequency = payload.get("reported_frequency")
 
     return DSCObservation(
         receiver_id=receiver_id,
@@ -76,6 +82,15 @@ def normalize_dsc_decoder_message(
         longitude=float(longitude) if longitude is not None else None,
         nature_code=str(payload.get("nature_code") or "").strip() or None,
         field_presence=present,
+        format=str(payload.get("format") or "").strip() or None,
+        from_mmsi=str(payload.get("from_mmsi") or "").strip() or None,
+        to_mmsi=str(payload.get("to_mmsi") or "").strip() or None,
+        nature_description=str(payload.get("nature_description") or "").strip() or None,
+        telecommand_1=str(payload.get("telecommand_1") or "").strip() or None,
+        telecommand_2=str(payload.get("telecommand_2") or "").strip() or None,
+        end_of_sequence=str(payload.get("end_of_sequence") or "").strip() or None,
+        distress_time=str(payload.get("distress_time") or "").strip() or None,
+        reported_frequency=float(reported_frequency) if reported_frequency is not None else None,
     )
 
 

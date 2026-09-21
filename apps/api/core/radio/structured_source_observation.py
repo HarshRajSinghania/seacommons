@@ -23,6 +23,15 @@ def _dsc_payload(observation: DSCObservation) -> dict[str, object]:
         "longitude": observation.longitude,
         "nature_code": observation.nature_code,
         "field_presence": list(observation.field_presence),
+        "format": observation.format,
+        "from_mmsi": observation.from_mmsi,
+        "to_mmsi": observation.to_mmsi,
+        "nature_description": observation.nature_description,
+        "telecommand_1": observation.telecommand_1,
+        "telecommand_2": observation.telecommand_2,
+        "end_of_sequence": observation.end_of_sequence,
+        "distress_time": observation.distress_time,
+        "reported_frequency": observation.reported_frequency,
     }
 
 

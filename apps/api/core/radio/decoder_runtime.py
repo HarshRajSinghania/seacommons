@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import queue
-import select
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -198,6 +197,8 @@ class JSONLProcessDecoder:
         self._accepted_frequencies_hz = accepted_frequencies_hz
         self._frequency_tolerance_hz = max(0, int(frequency_tolerance_hz))
         self._process: subprocess.Popen[str] | None = None
+        self._responses: queue.Queue[str | Exception] | None = None
+        self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
 
     def _ensure_process(self) -> subprocess.Popen[str]:
@@ -205,7 +206,7 @@ class JSONLProcessDecoder:
         if process is not None and process.poll() is None:
             return process
         self.close()
-        self._process = subprocess.Popen(
+        process = subprocess.Popen(
             self._command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -214,7 +215,30 @@ class JSONLProcessDecoder:
             bufsize=1,
             close_fds=True,
         )
-        return self._process
+        responses: queue.Queue[str | Exception] = queue.Queue(maxsize=1)
+
+        def read_responses() -> None:
+            assert process.stdout is not None
+            try:
+                while True:
+                    line = process.stdout.readline(self._max_output_chars + 1)
+                    if not line:
+                        responses.put(EOFError("decoder process closed stdout"))
+                        return
+                    responses.put(line)
+            except Exception as exc:
+                responses.put(exc)
+
+        reader = threading.Thread(
+            target=read_responses,
+            daemon=True,
+            name="radio-decoder-stdout",
+        )
+        self._process = process
+        self._responses = responses
+        self._reader = reader
+        reader.start()
+        return process
 
     def decode(self, frame: EphemeralRadioFrame) -> Iterable[Mapping[str, object]]:
         if self._accepted_frequencies_hz is not None and not any(
@@ -247,11 +271,19 @@ class JSONLProcessDecoder:
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(json.dumps(envelope, separators=(",", ":")) + "\n")
             process.stdin.flush()
-            ready, _, _ = select.select([process.stdout], [], [], self._timeout_s)
-            if not ready:
-                raise TimeoutError("decoder response timeout")
-            line = process.stdout.readline(self._max_output_chars + 1)
+            responses = self._responses
+            assert responses is not None
+            try:
+                response = responses.get(timeout=self._timeout_s)
+            except queue.Empty as exc:
+                self.close()
+                raise TimeoutError("decoder response timeout") from exc
+            if isinstance(response, Exception):
+                self.close()
+                raise response
+            line = response
             if len(line) > self._max_output_chars:
+                self.close()
                 raise ValueError("decoder output exceeds bound")
         payload = json.loads(line)
         messages = payload.get("messages", []) if isinstance(payload, Mapping) else []
@@ -261,6 +293,8 @@ class JSONLProcessDecoder:
 
     def close(self) -> None:
         process, self._process = self._process, None
+        self._responses = None
+        self._reader = None
         if process is None:
             return
         try:

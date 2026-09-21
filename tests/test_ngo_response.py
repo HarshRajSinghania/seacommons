@@ -151,6 +151,98 @@ def test_recent_spike_flags_are_reused(monkeypatch):
     assert "speed_spike" not in flags
 
 
+def test_current_drift_can_link_search_pattern_to_distress_far_from_origin(monkeypatch):
+    from core.vessels.ais_coverage import CoverageAssessment, coverage_state
+
+    monkeypatch.setattr(
+        coverage_state,
+        "assess",
+        lambda **_kwargs: CoverageAssessment(
+            status="coverage_present",
+            active_upstreams=frozenset({"aisstream"}),
+            degraded_upstreams=frozenset(),
+            confidence=0.95,
+            reason_codes=("COVERAGE_PRESENT",),
+            gap_eligible=True,
+        ),
+    )
+    store = _blank_spike_store(monkeypatch)
+    now = datetime.now(timezone.utc)
+    store.add(IntelEvent(
+        id="search-drift-1",
+        type="ais_spike",
+        severity="high",
+        lat=39.0,
+        lon=18.0,
+        title="AIS: Search Pattern — Ocean Viking",
+        source="AIS Registry",
+        linked_mmsi="258479000",
+        metadata={"spike_type": "ngo_search_pattern"},
+        timestamp_utc=(now - timedelta(minutes=10)).isoformat(),
+    ), dedup_key="search-drift-1")
+
+    episode = _public_event("ep-drift", 35.5, 12.6)
+    geo = _fake_registry([
+        ("258479000", "Ocean Viking", 39.0, 18.0, 3.0, 90.0, now.isoformat()),
+    ])
+    drift = {
+        "drift_id": "drift-ep-drift",
+        "trajectory": {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[17.8, 38.9], [18.0, 39.0]]},
+            "properties": {},
+        },
+        "cone_24h": None,
+        "impact_point": None,
+    }
+
+    result = analyze_ngo_response(
+        episode,
+        now=now,
+        registry_geojson=geo,
+        drift_context=drift,
+    )
+    vessel = result["ngo_vessels"][0]
+    assert vessel["distance_nm"] > 250
+    assert vessel["distance_to_drift_nm"] == 0
+    assert vessel["operational_target"] == "current_drift"
+    assert vessel["mission_state"] == "probable_rescue_activity"
+    assert result["summary"]["current_drift_id"] == "drift-ep-drift"
+
+
+def test_search_pattern_in_srr_without_nearby_distress_stays_candidate(monkeypatch):
+    store = _blank_spike_store(monkeypatch)
+    now = datetime.now(timezone.utc)
+    store.add(IntelEvent(
+        id="search-candidate-1",
+        type="ais_spike",
+        severity="high",
+        lat=35.5,
+        lon=12.6,
+        title="AIS: Search Pattern — Ocean Viking",
+        source="AIS Registry",
+        linked_mmsi="258479000",
+        metadata={"spike_type": "ngo_search_pattern"},
+        timestamp_utc=(now - timedelta(minutes=10)).isoformat(),
+    ), dedup_key="search-candidate-1")
+    monkeypatch.setattr(
+        "core.intel.ngo_response._sar_zone_context",
+        lambda lat, lon: [{"id": "malta_srr", "name": "Maltese SRR"}],
+    )
+    monkeypatch.setattr(
+        "core.intel.ngo_response._haversine_nm",
+        lambda lat1, lon1, lat2, lon2: 100.0,
+    )
+    episode = _public_event("ep-far", 37.0, 15.0)
+    geo = _fake_registry([
+        ("258479000", "Ocean Viking", 35.5, 12.6, 3.0, 180.0, now.isoformat()),
+    ])
+    result = analyze_ngo_response(episode, now=now, registry_geojson=geo)
+    vessel = result["ngo_vessels"][0]
+    assert vessel["in_named_srr"] is True
+    assert vessel["mission_state"] == "search_candidate"
+
+
 def test_speed_spike_flag_on_sprint(monkeypatch):
     _blank_spike_store(monkeypatch)
     now = datetime.now(timezone.utc)

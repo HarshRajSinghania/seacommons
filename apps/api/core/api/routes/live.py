@@ -204,7 +204,7 @@ async def live_signal_response(event_id: str, request: Request):
     like the other live read endpoints.
     """
     from core.api.ratelimit import rate_limit
-    from core.intel.ngo_response import analyze_ngo_response
+    from core.intel.ngo_response import _current_drift_context, analyze_ngo_response
 
     rate_limit(request, max_per_minute=30, scope="live-response")
     normalized = event_id.removeprefix("intel:")
@@ -222,7 +222,11 @@ async def live_signal_response(event_id: str, request: Request):
         if _public_intel_feature(other) is not None
     ]
     try:
-        return analyze_ngo_response(event, related_signals=related_signals)
+        return analyze_ngo_response(
+            event,
+            related_signals=related_signals,
+            drift_context=_current_drift_context(event.id),
+        )
     except ValueError:
         raise HTTPException(status_code=422, detail="Signal has no position")
 
@@ -259,6 +263,17 @@ async def live_hypotheses(limit: int = Query(100, ge=1, le=200)):
     from core.intel.hypothesis_publication import public_hypothesis_collection
 
     return public_hypothesis_collection(limit=limit)
+
+
+@router.get("/sar-fleet")
+async def live_sar_fleet():
+    """Public Civil SAR fleet layer: fresh (<=10 min) AIS positions of known
+    SAR/NGO/coastguard responders only. Asset position and mission activity
+    (see /hypotheses and the ngo_activity signal type) are deliberately
+    separate -- a fresh position here never implies a rescue in progress."""
+    from core.intel.ngo_registry import public_sar_fleet_geojson
+
+    return public_sar_fleet_geojson()
 
 
 @router.get("/archives")
@@ -478,7 +493,25 @@ async def live_receiver_mesh(
         item["frequency_hz"] = runtime_row.get("frequency_hz") if item["active"] else None
         item["mode"] = runtime_row.get("mode") if item["active"] else None
         receivers.append(item)
-    return {**summary, "active": len(active_ids), "receivers": receivers}
+
+    # Decoder observability: core.radio.bridge.radio_acquisition_status()
+    # already computes this exact shape for the separate acquisition-status
+    # surface; this endpoint previously omitted all of it, making "0 decoded
+    # DSC/NAVTEX" indistinguishable from "decoder never ran" from the public
+    # API alone. Reused rather than reimplemented so the two surfaces can
+    # never disagree on decoder/structured state.
+    from core.radio.bridge import radio_acquisition_status
+
+    acquisition = radio_acquisition_status()
+
+    return {
+        **summary,
+        "active": len(active_ids),
+        "receivers": receivers,
+        "decoder": acquisition["decoder"],
+        "structured_enabled": acquisition["structured_enabled"],
+        "structured_state": acquisition["structured_state"],
+    }
 
 
 @router.get("/radio/events")

@@ -676,11 +676,13 @@ function App() {
     },
   });
   const [liveEstimateClock, setLiveEstimateClock] = useState(Date.now());
+  const [selectedSarResponse, setSelectedSarResponse] = useState(null);
   const [signalsExpanded, setSignalsExpanded] = useState(false);
   const [expandedMacros, setExpandedMacros] = useState(() => new Set());
   const [liveFacets, setLiveFacets] = useState(() => ({
     satellite: false,
     sanctions: false,
+    sar_fleet: false,
   }));
   const [showAisAlerts, setShowAisAlerts] = useState(false);
   const [showVesselLinks, setShowVesselLinks] = useState(false);
@@ -785,6 +787,45 @@ function App() {
     ));
     return canonicalFeature ? { ...mapPanel, feature: canonicalFeature } : mapPanel;
   }, [intelEvents, mapPanel]);
+
+  useEffect(() => {
+    let alive = true;
+    const map = mapRef.current;
+    const empty = { type: 'FeatureCollection', features: [] };
+    const clearResponse = () => {
+      if (!alive) return;
+      setSelectedSarResponse(null);
+      map?.getSource('ngo-response-lines')?.setData(empty);
+      map?.getSource('ngo-response-points')?.setData(empty);
+    };
+    if (!isPublicLiveHost || !mapReady || !selectedIntelEventId || resolvedMapPanel?.type !== 'intel') {
+      clearResponse();
+      return () => { alive = false; };
+    }
+    const props = resolvedMapPanel.feature?.properties || {};
+    const isHumanitarian = props.main_category === 'humanitarian'
+      || Boolean(props.humanitarian_case_id)
+      || Boolean(props.is_distress)
+      || props.maritime_domain === 'sar';
+    if (!isHumanitarian || props.entity_kind === 'vessel' || props.report_type === 'vessel') {
+      clearResponse();
+      return () => { alive = false; };
+    }
+    const rawId = String(selectedIntelEventId).replace(/^intel:/, '');
+    fetchJson(apiBase, `/api/v1/live/signals/${encodeURIComponent(rawId)}/response`, undefined, 8000)
+      .then((data) => {
+        if (!alive) return;
+        setSelectedSarResponse(data || null);
+        const features = Array.isArray(data?.geojson?.features) ? data.geojson.features : [];
+        const lines = features.filter((feature) => feature.geometry?.type === 'LineString');
+        const points = features.filter((feature) => feature.geometry?.type === 'Point');
+        const currentMap = mapRef.current;
+        currentMap?.getSource('ngo-response-lines')?.setData({ type: 'FeatureCollection', features: lines });
+        currentMap?.getSource('ngo-response-points')?.setData({ type: 'FeatureCollection', features: points });
+      })
+      .catch(() => clearResponse());
+    return () => { alive = false; };
+  }, [apiBase, isPublicLiveHost, mapReady, resolvedMapPanel, selectedIntelEventId]);
 
   function panelFocusCoordinates(panel) {
     const geometry = panel?.feature?.geometry;
@@ -1102,32 +1143,32 @@ function App() {
   }, [apiBase]);
 
   useEffect(() => {
-    // Public Live is case/activity-first, not a fleet tracker. The complete
-    // civil/state SAR registry belongs to the controlled operational console.
-    // This also prevents stale responder AIS positions from being mistaken for
-    // a current rescue operation on live.seacommons.org.
-    if (isPublicDemoHost || isPublicLiveHost) {
+    if (isPublicDemoHost) {
       setNgoVessels({ type: 'FeatureCollection', features: [] });
       return undefined;
     }
-    const path = '/api/v1/intel/ngo';
+    const path = isPublicLiveHost
+      ? (liveFacets.sar_fleet ? '/api/v1/live/sar-fleet' : null)
+      : '/api/v1/intel/ngo';
+    if (!path) {
+      setNgoVessels({ type: 'FeatureCollection', features: [] });
+      return undefined;
+    }
     let alive = true;
+    let timer = null;
     async function loadNgoVessels() {
       try {
-        const data = await fetchJson(apiBase, path);
-        if (alive && data.features) {
-          // docs/fixes.md F-13: keep the WHOLE fleet response (including
-          // registered vessels currently AIS-offline, geometry:null). The
-          // map source is filtered to positioned features at its own
-          // boundary (sarMapFeatures); the fleet panel needs them all.
-          setNgoVessels(data);
-        }
-      } catch { /* ignore */ }
-      if (alive) window.setTimeout(loadNgoVessels, 15_000);
+        const data = await fetchJson(apiBase, path, undefined, 8000);
+        if (alive && data?.features) setNgoVessels(data);
+      } catch { /* keep last good frame */ }
+      if (alive) timer = window.setTimeout(loadNgoVessels, 15_000);
     }
     loadNgoVessels();
-    return () => { alive = false; };
-  }, [apiBase, isPublicLiveHost, isPublicDemoHost]);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, isPublicLiveHost, isPublicDemoHost, liveFacets.sar_fleet]);
 
   useEffect(() => {
     if (!isPublicLiveHost || !liveFacets.sanctions) {
@@ -1694,14 +1735,20 @@ function App() {
 
         // Civil NGO SAR vessels use the same triangle and differ only by hue.
         map.addLayer({
-          id: 'vessels-ngo-stationary', type: 'circle', source: 'vessels-ngo',
+          id: 'vessels-ngo-stationary', type: 'symbol', source: 'vessels-ngo',
           filter: ['any', ['match', ['get', 'nav_status'], [1, 5], true, false], ['<=', ['coalesce', ['get', 'speed'], 0], 0.5]],
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.28, 10, 0.44, 14, 0.56],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 3.8, 10, 5.5, 14, 6.8],
-            'circle-color': '#34d399',
-            'circle-opacity': 1,
-            'circle-stroke-color': '#021318',
-            'circle-stroke-width': 1.6,
+            'icon-color': '#8bf0c5',
+            'icon-opacity': 1,
+            'icon-halo-color': '#021318',
+            'icon-halo-width': 1.5,
           },
         });
         map.addLayer({
@@ -1727,15 +1774,21 @@ function App() {
         // category. Only the server's <=10-minute strong-identifier subset is
         // rendered, and only while the public Sanctions filter is active.
         map.addLayer({
-          id: 'sanctioned-vessels-stationary', type: 'circle', source: 'sanctioned-vessels',
+          id: 'sanctioned-vessels-stationary', type: 'symbol', source: 'sanctioned-vessels',
           filter: ['any', ['match', ['get', 'nav_status'], [1, 5], true, false], ['<=', ['coalesce', ['get', 'speed'], 0], 0.5]],
-          layout: { visibility: 'none' },
+          layout: {
+            visibility: 'none',
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.30, 10, 0.46, 14, 0.58],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 5.8, 14, 7],
-            'circle-color': '#f59e0b',
-            'circle-opacity': 0.98,
-            'circle-stroke-color': '#1c1202',
-            'circle-stroke-width': 1.7,
+            'icon-color': '#f59e0b',
+            'icon-opacity': 0.98,
+            'icon-halo-color': '#1c1202',
+            'icon-halo-width': 1.6,
           },
         });
         map.addLayer({
@@ -1830,13 +1883,19 @@ function App() {
             paint: { 'circle-radius': 13, 'circle-color': cat.color, 'circle-opacity': 0.12, 'circle-blur': 0.8 },
           });
           map.addLayer({
-            id: `intel-cat-${cat.key}`, type: 'circle', source: 'intel-events', filter: f,
+            id: `intel-cat-${cat.key}`, type: 'symbol', source: 'intel-events', filter: f,
+            layout: {
+              'icon-image': 'vessel-arrow',
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.34, 10, 0.52, 14, 0.66],
+              'icon-rotate': 0,
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
+            },
             paint: {
-              'circle-radius': ['match', ['get', 'type'], ['vessel_incident', 'gdacs', 'iom_incident'], 6, 4.5],
-              'circle-color': cat.color,
-              'circle-opacity': 0.92,
-              'circle-stroke-width': _markerStrokeW,
-              'circle-stroke-color': _markerStrokeC,
+              'icon-color': cat.color,
+              'icon-opacity': 0.96,
+              'icon-halo-color': _markerStrokeC,
+              'icon-halo-width': _markerStrokeW,
             },
           });
         }
@@ -1847,13 +1906,19 @@ function App() {
           paint: { 'circle-radius': 13, 'circle-color': 'rgba(139,240,197,0.1)', 'circle-blur': 0.8 },
         });
         map.addLayer({
-          id: 'intel-events-layer', type: 'circle', source: 'intel-events', filter: _otherFilter,
+          id: 'intel-events-layer', type: 'symbol', source: 'intel-events', filter: _otherFilter,
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.34, 10, 0.52, 14, 0.66],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': 4.5,
-            'circle-color': categoryColorExpression(),
-            'circle-opacity': 0.92,
-            'circle-stroke-width': _markerStrokeW,
-            'circle-stroke-color': _markerStrokeC,
+            'icon-color': categoryColorExpression(),
+            'icon-opacity': 0.96,
+            'icon-halo-color': _markerStrokeC,
+            'icon-halo-width': _markerStrokeW,
           },
         });
 
@@ -1971,15 +2036,21 @@ function App() {
           },
         });
         map.addLayer({
-          id: 'intel-distress-core', type: 'circle', source: 'intel-distress',
+          id: 'intel-distress-core', type: 'symbol', source: 'intel-distress',
           filter: _PRECISE_POINT_FILTER,
+          layout: {
+            'icon-image': 'vessel-arrow',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 5, 0.38, 10, 0.58, 14, 0.72],
+            'icon-rotate': 0,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
           paint: {
-            'circle-radius': 5,
-            // Category colour, always. A resolved Alarm Phone stays red.
-            'circle-color': LIFECYCLE_CORE_COLOR,
-            'circle-opacity': ['match', ['get', 'incident_lifecycle'], 'archived', 0.6, 'resolved', 0.8, 1],
-            'circle-stroke-width': 1.5,
-            'circle-stroke-color': '#fff4bf',
+            // Humanitarian is always red; lifecycle changes opacity, never hue.
+            'icon-color': LIFECYCLE_CORE_COLOR,
+            'icon-opacity': ['match', ['get', 'incident_lifecycle'], 'archived', 0.6, 'resolved', 0.8, 1],
+            'icon-halo-color': '#fff4bf',
+            'icon-halo-width': 1.5,
           },
         });
         const distressHoverPopup = new maplibregl.Popup({
@@ -3558,6 +3629,7 @@ function App() {
             intelDrifts={displayedIntelDrifts}
             loadNearestVessels={loadNearestVessels}
             onTriggerIntelDrift={triggerIntelDrift}
+            sarResponse={selectedSarResponse}
           />
         )}
         {['cone', 'trajectory', 'intel', 'radio_receiver', 'radio_message'].includes(mapPanel?.type) && conePanelHidden && (
@@ -3774,6 +3846,7 @@ function App() {
                       {[
                         ['satellite', 'Satellite'],
                         ['sanctions', 'Sanctions'],
+                        ['sar_fleet', 'Civil SAR fleet'],
                       ].map(([key, label]) => (
                         <a
                           key={key}

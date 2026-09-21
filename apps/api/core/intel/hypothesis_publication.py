@@ -61,8 +61,18 @@ def public_hypothesis_collection(limit: int = 100) -> dict[str, Any]:
     assessed() call re-verifies that independently rather than trusting
     the persisted state column alone.
     """
+    from core.live.retention import is_live_retained
+
+    now = datetime.now(timezone.utc)
     features = []
     for hypothesis in list_hypotheses(state="published", limit=limit):
+        # core.live.retention ceiling: published is otherwise a terminal
+        # state with no expiry transition, so without this a published case
+        # could stay on Live forever. None (a row saved before this contract
+        # existed, or not yet re-saved since) fails open -- it is not
+        # evidence the case should be hidden.
+        if hypothesis.live_expires_at is not None and not is_live_retained(hypothesis.live_expires_at, now=now):
+            continue
         record = _record_for_hypothesis(hypothesis)
         projected = project_public_maritime_assessed(record, hypothesis=hypothesis)
         if projected is None or projected.get("lat") is None or projected.get("lon") is None:

@@ -28,6 +28,85 @@ def _response(*, state="probable_rescue_activity", coverage="coverage_present", 
     }
 
 
+def test_enrich_active_humanitarian_incidents_wires_analyze_and_persist(monkeypatch):
+    """persist_sar_mission_assessments()/analyze_ngo_response() both already
+    existed fully implemented but nothing in the running system ever called
+    this combination -- enrich_active_humanitarian_incidents_with_sar_mission()
+    is the missing caller, run every 15 min by the scheduler."""
+    from core.db.models import HumanitarianIncidentDB, IntelEventDB
+    from core.db.session import session_scope
+    from core.intel import sar_mission_assessment as module
+
+    incident_id = "sar-enrich-test-incident"
+    with session_scope() as db:
+        db.query(HumanitarianIncidentDB).filter(
+            HumanitarianIncidentDB.incident_id == incident_id
+        ).delete()
+        db.query(IntelEventDB).filter(IntelEventDB.id == incident_id).delete()
+        db.add(IntelEventDB(
+            id=incident_id, timestamp_utc="2026-09-20T10:00:00+00:00",
+            type="distress", severity="high", lat=35.5, lon=14.1,
+            title="Distress report", source="Alarm Phone", meta={},
+        ))
+        db.add(HumanitarianIncidentDB(
+            incident_id=incident_id, lifecycle="active", incident_status="active",
+            case_type="distress",
+        ))
+
+    import core.intel.ngo_response as ngo_response_module
+
+    monkeypatch.setattr(ngo_response_module, "analyze_ngo_response", lambda event, **kw: _response())
+
+    enriched = module.enrich_active_humanitarian_incidents_with_sar_mission()
+    assert enriched >= 1
+
+    rows = module.get_sar_mission_assessments(incident_id)
+    assert len(rows) == 1
+    assert rows[0]["value"]["mission_state"] == "probable_rescue_activity"
+    # SAR AIS movement is one lineage -- it must never fabricate corroboration.
+    assert rows[0]["value"]["independence_groups"] == ["ais_sensor_lineage"]
+
+    with session_scope() as db:
+        db.query(HumanitarianIncidentDB).filter(
+            HumanitarianIncidentDB.incident_id == incident_id
+        ).delete()
+        db.query(IntelEventDB).filter(IntelEventDB.id == incident_id).delete()
+
+
+def test_enrich_active_humanitarian_incidents_skips_incidents_with_no_position():
+    from core.db.models import HumanitarianIncidentDB, IntelEventDB
+    from core.db.session import session_scope
+    from core.intel.sar_mission_assessment import (
+        enrich_active_humanitarian_incidents_with_sar_mission,
+    )
+
+    incident_id = "sar-enrich-no-position"
+    with session_scope() as db:
+        db.query(HumanitarianIncidentDB).filter(
+            HumanitarianIncidentDB.incident_id == incident_id
+        ).delete()
+        db.query(IntelEventDB).filter(IntelEventDB.id == incident_id).delete()
+        db.add(IntelEventDB(
+            id=incident_id, timestamp_utc="2026-09-20T10:00:00+00:00",
+            type="distress", severity="high", lat=None, lon=None,
+            title="Distress report, no position", source="Alarm Phone", meta={},
+        ))
+        db.add(HumanitarianIncidentDB(
+            incident_id=incident_id, lifecycle="active", incident_status="active",
+            case_type="distress",
+        ))
+
+    # Must not raise (ValueError from analyze_ngo_response's own lat/lon
+    # guard) -- the caller filters unpositioned incidents out first.
+    enrich_active_humanitarian_incidents_with_sar_mission()
+
+    with session_scope() as db:
+        db.query(HumanitarianIncidentDB).filter(
+            HumanitarianIncidentDB.incident_id == incident_id
+        ).delete()
+        db.query(IntelEventDB).filter(IntelEventDB.id == incident_id).delete()
+
+
 def test_persisted_sar_mission_assessment_is_idempotent_per_incident_asset():
     from core.intel.sar_mission_assessment import (
         get_sar_mission_assessments,
@@ -72,7 +151,7 @@ def test_multiple_ais_transports_remain_one_physical_independence_group():
     assert row["value"]["independence_groups"] == ["ais_sensor_lineage"]
 
 
-@pytest.mark.parametrize("state", ["unrelated", "possible_response", "approaching", "on_scene", "probable_rescue_activity"])
+@pytest.mark.parametrize("state", ["unrelated", "search_candidate", "possible_response", "approaching", "on_scene", "probable_rescue_activity"])
 def test_existing_descriptive_mission_states_persist_without_intent_inference(state):
     from core.intel.sar_mission_assessment import persist_sar_mission_assessments
 

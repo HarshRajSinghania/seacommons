@@ -2179,7 +2179,7 @@ def test_concluded_sosmed_report_is_not_reopened_by_ambiguous_self_reply() -> No
     assert state == "resolved"
     assert lifecycle.is_directly_concluded(event) is True
 
-def test_normalized_sar_responder_activity_is_observation_not_case(monkeypatch) -> None:
+def test_normalized_sar_responder_activity_is_evidence_not_standalone_live_case(monkeypatch) -> None:
     event = IntelEvent(
         id="saractivity:test",
         type="ngo_activity",
@@ -2211,18 +2211,10 @@ def test_normalized_sar_responder_activity_is_observation_not_case(monkeypatch) 
     monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [event])
     monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
     collection = public_signal_collection(limit=50, mode="humanitarian")
-    assert collection["meta"]["total"] == 1
-    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 1
-    props = collection["features"][0]["properties"]
-    assert props["live_role"] == "humanitarian_observation"
-    assert props["evidence_stage"] == "derived"
-    assert props["verification_status"] == "single_source_observed"
-    assert props["visual_category"] == "civil_sar"
-    assert "linked_mmsi" not in props
-    assert "mmsi" not in props
-    assert "vessel_name" not in props
+    assert collection["meta"]["total"] == 0
+    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 0
 
-def test_sar_responder_activity_remains_visible_inside_24h_live_window(monkeypatch) -> None:
+def test_sar_responder_activity_stays_off_standalone_live_even_inside_24h_window(monkeypatch) -> None:
     stale = IntelEvent(
         id="saractivity:stale",
         timestamp_utc=(datetime.now(timezone.utc) - timedelta(hours=7)).isoformat(),
@@ -2250,9 +2242,8 @@ def test_sar_responder_activity_remains_visible_inside_24h_live_window(monkeypat
     monkeypatch.setattr(intel_store, "events", lambda **_kwargs: [stale])
     monkeypatch.setattr(intel_store, "persisted_events", lambda **_kwargs: [])
     collection = public_signal_collection(limit=50, mode="humanitarian")
-    assert collection["meta"]["total"] == 1
-    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 1
-    assert collection["features"][0]["properties"]["id"] == "intel:saractivity:stale"
+    assert collection["meta"]["total"] == 0
+    assert collection["meta"]["role_counts"]["humanitarian_observation"] == 0
 
 def test_live_sanctioned_vessels_is_fresh_strong_identifier_subset(monkeypatch):
     from core.db.models import SanctionedVesselDB
@@ -2401,7 +2392,10 @@ def test_short_lived_aground_self_report_does_not_enter_live() -> None:
 
 
 def test_corroborated_aground_can_enter_live() -> None:
-    from core.live.projection import _public_intel_feature, is_useful_public_case_feature
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
     base = datetime.now(timezone.utc)
     event = IntelEvent(
         id="audit-aground-port-corroborated", type="distress", severity="high",
@@ -2420,3 +2414,47 @@ def test_corroborated_aground_can_enter_live() -> None:
     feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
     assert feature is not None
     assert is_useful_public_case_feature(feature) is True
+
+
+def test_assessed_single_lineage_aground_is_not_independently_corroborated() -> None:
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
+    base = datetime.now(timezone.utc)
+    event = IntelEvent(
+        id="audit-aground-assessed-single", type="distress", severity="high",
+        lat=41.37, lon=2.18, title="Vessel ran aground — ASSESSED", source="ais",
+        linked_mmsi="224000003", timestamp_utc=base.isoformat(),
+        metadata={
+            "ais_nav_status_kind": "aground", "maritime_domain": "safety",
+            "publication_status": "published", "publication_state": "published",
+            "source_policy": "official_api", "verification_status": "single_source_observed",
+            "independent_source_count": 1, "evidence_stage": "assessed",
+            "contributing_independence_groups": ["ais_sensor_lineage"],
+            "episode_update_count": 4,
+            "first_observed_at": (base - timedelta(minutes=10)).isoformat(),
+            "last_observed_at": base.isoformat(),
+        },
+    )
+    feature = _public_intel_feature(event, allowed_domains=frozenset({"safety"}))
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is False
+
+
+def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
+    from core.live.projection import (
+        _public_intel_feature,
+        is_useful_public_case_feature,
+    )
+    event = IntelEvent(
+        id="news-support-only", type="news", severity="low",
+        lat=35.4, lon=13.9, title="Context report", source="Official NGO RSS",
+        metadata={
+            "source_policy": "official_rss",
+            "verification_status": "multi_source_corroborated",
+        },
+    )
+    feature = _public_intel_feature(event)
+    assert feature is not None
+    assert is_useful_public_case_feature(feature) is False

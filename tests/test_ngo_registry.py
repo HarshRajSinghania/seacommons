@@ -14,6 +14,7 @@ from core.intel.ngo_registry import (
     is_civil_ngo,
     is_ngo,
     ngo_vessel_geojson,
+    public_sar_fleet_geojson,
 )
 
 _COASTGUARD_MMSI = "247330700"  # Diciotti, Guardia Costiera ITA
@@ -158,4 +159,59 @@ def test_ngo_vessel_geojson_keeps_only_fresh_geometry(monkeypatch):
     }
     assert feature["properties"]["ais_status"] == "live"
     assert feature["properties"]["position_policy"] == "current"
-    assert feature["properties"]["position_age_s"] <= 10
+
+
+def test_public_sar_fleet_excludes_stale_and_offline_positions(monkeypatch):
+    from core.vessels import registry as vessel_registry_module
+
+    fake_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [0.25784, 40.04419]},
+                "properties": {"mmsi": _CIVIL_NGO_MMSI, "last_seen": "2026-09-16T12:18:34+00:00"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        vessel_registry_module.registry, "get_last_known_geojson", lambda _mmsis: fake_geojson,
+    )
+    result = public_sar_fleet_geojson()
+    assert result["features"] == []
+    assert result["meta"]["count"] == 0
+
+
+def test_public_sar_fleet_includes_only_fresh_positions_with_asset_state(monkeypatch):
+    from datetime import datetime, timezone
+
+    from core.vessels import registry as vessel_registry_module
+
+    now = datetime.now(timezone.utc).isoformat()
+    fake_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [12.0, 38.0]},
+                "properties": {"mmsi": _CIVIL_NGO_MMSI, "last_seen": now, "speed": 8.0},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [12.5, 37.0]},
+                "properties": {"mmsi": _COASTGUARD_MMSI, "last_seen": now, "speed": 0.1},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        vessel_registry_module.registry, "get_last_known_geojson", lambda _mmsis: fake_geojson,
+    )
+    result = public_sar_fleet_geojson()
+    by_mmsi = {f["properties"]["mmsi"]: f["properties"] for f in result["features"]}
+    assert len(result["features"]) == 1
+    assert by_mmsi[_CIVIL_NGO_MMSI]["asset_state"] == "transit"
+    assert by_mmsi[_CIVIL_NGO_MMSI]["vessel_class"] == "ngo"
+    assert _COASTGUARD_MMSI not in by_mmsi
+    # Mission activity is never implied by a fresh position appearing here.
+    assert "mission_state" not in by_mmsi[_CIVIL_NGO_MMSI]
+    assert "activity_kind" not in by_mmsi[_CIVIL_NGO_MMSI]

@@ -47,6 +47,64 @@ def test_normalizes_distress_dsc_with_mmsi_coordinates_and_presence():
     )
 
 
+def test_extended_decoded_fields_are_preserved_when_present():
+    from core.radio.dsc import normalize_dsc_decoder_message
+
+    obs = normalize_dsc_decoder_message(
+        {
+            "message_id": "rx-43",
+            "category": "distress",
+            "mmsi": "247123456",
+            "format": "distress",
+            "from_mmsi": "247123456",
+            "to_mmsi": "003110000",
+            "nature_code": "fire",
+            "nature_description": "Fire, explosion",
+            "telecommand_1": "distress_relay",
+            "telecommand_2": "no_information",
+            "end_of_sequence": "rq",
+            "distress_time": "1934",
+            "reported_frequency": 2187500.0,
+        },
+        **COMMON,
+    )
+    assert obs.format == "distress"
+    assert obs.from_mmsi == "247123456"
+    assert obs.to_mmsi == "003110000"
+    assert obs.nature_description == "Fire, explosion"
+    assert obs.telecommand_1 == "distress_relay"
+    assert obs.telecommand_2 == "no_information"
+    assert obs.end_of_sequence == "rq"
+    assert obs.distress_time == "1934"
+    assert obs.reported_frequency == 2187500.0
+    assert "from_mmsi" in obs.field_presence
+    assert "reported_frequency" in obs.field_presence
+
+
+def test_extended_decoded_fields_default_to_none_when_decoder_omits_them():
+    from core.radio.dsc import normalize_dsc_decoder_message
+
+    obs = normalize_dsc_decoder_message({"category": "routine"}, **COMMON)
+    assert obs.format is None
+    assert obs.from_mmsi is None
+    assert obs.to_mmsi is None
+    assert obs.nature_description is None
+    assert obs.telecommand_1 is None
+    assert obs.telecommand_2 is None
+    assert obs.end_of_sequence is None
+    assert obs.distress_time is None
+    assert obs.reported_frequency is None
+
+
+def test_invalid_from_mmsi_fails_closed():
+    from core.radio.dsc import normalize_dsc_decoder_message
+
+    with pytest.raises(ValueError, match="from_mmsi"):
+        normalize_dsc_decoder_message(
+            {"category": "distress", "from_mmsi": "not-a-mmsi"}, **COMMON,
+        )
+
+
 def test_missing_native_message_id_gets_deterministic_decoder_id():
     from core.radio.dsc import normalize_dsc_decoder_message
 

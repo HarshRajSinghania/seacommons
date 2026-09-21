@@ -16,11 +16,23 @@ def _row(kind, payload, **extra):
 
 def test_public_dsc_message_keeps_structure_and_hides_receiver_identity():
     from core.radio.public_messages import project_public_radio_message
-    row = _row("dsc_message", {"category": "distress", "mmsi": "123456789", "nature_code": "grounding"})
+    row = _row("dsc_message", {
+        "category": "distress", "mmsi": "123456789", "nature_code": "grounding",
+        "nature_description": "Grounding", "format": "distress",
+        "from_mmsi": "123456789", "to_mmsi": "987654321",
+        "telecommand_1": "J3E", "telecommand_2": None,
+        "end_of_sequence": "EOS", "distress_time": "1600",
+        "reported_frequency": "2187.5 kHz",
+    })
     public = project_public_radio_message(row)
     assert public["kind"] == "dsc"
     assert public["mmsi"] == "123456789"
     assert public["category"] == "distress"
+    assert public["nature_description"] == "Grounding"
+    assert public["format"] == "distress"
+    assert public["from_mmsi"] == "123456789"
+    assert public["to_mmsi"] == "987654321"
+    assert public["reported_frequency"] == "2187.5 kHz"
     assert "receiver_id" not in public and "lineage" not in str(public)
 
 

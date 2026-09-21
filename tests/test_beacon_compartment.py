@@ -48,7 +48,14 @@ def monitor(monkeypatch):
     monkeypatch.setattr(vim.time, "time", clock)
     m = vim.VesselIncidentMonitor()
     m._running = True
+    m._clock = clock
     return m
+
+
+def _emit_confirmed_beacon(monitor, mmsi: str, lat: float = 35.1, lon: float = 14.2) -> None:
+    monitor.on_position(mmsi, "", lat, lon, 0.0, 0)
+    monitor._clock.now += 6
+    monitor.on_position(mmsi, "", lat, lon, 0.0, 0)
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +72,7 @@ def _fresh_incident_table():
 @pytest.mark.parametrize("mmsi_prefix,label", [("970", "ais_sart"), ("972", "ais_mob"), ("974", "ais_epirb")])
 def test_beacon_event_classifies_maritime_safety_never_humanitarian(monitor, mmsi_prefix, label) -> None:
     mmsi = f"{mmsi_prefix}{uuid.uuid4().int % 1_000_000:06d}"
-    monitor.on_position(mmsi, "", 35.1, 14.2, 0.0, 0)
+    _emit_confirmed_beacon(monitor, mmsi)
 
     from core.intel.store import intel_store
 
@@ -93,7 +100,7 @@ def test_beacon_never_appears_in_the_humanitarian_live_feed(monitor) -> None:
     from core.live.feed import public_signal_collection
 
     mmsi = f"972{uuid.uuid4().int % 1_000_000:06d}"
-    monitor.on_position(mmsi, "", 35.1, 14.2, 0.0, 0)
+    _emit_confirmed_beacon(monitor, mmsi)
 
     collection = public_signal_collection(mode="humanitarian", limit=500, days=1)
     ids = {f["properties"].get("id") for f in collection["features"]}
@@ -104,7 +111,7 @@ def test_beacon_appears_in_the_safety_live_feed(monitor) -> None:
     from core.live.feed import public_signal_collection
 
     mmsi = f"974{uuid.uuid4().int % 1_000_000:06d}"
-    monitor.on_position(mmsi, "", 35.1, 14.2, 0.0, 0)
+    _emit_confirmed_beacon(monitor, mmsi)
     from core.intel.store import intel_store
 
     event = next(e for e in intel_store.events(limit=50) if e.linked_mmsi == mmsi)
@@ -139,15 +146,24 @@ def test_stale_beacon_leaves_public_live_case_surface() -> None:
             "last_observed_at": (now - timedelta(hours=3)).isoformat(),
         },
     }
-    fresh = {
+    fresh_single_ping = {
         **base,
         "properties": {
             **base["properties"],
             "last_observed_at": (now - timedelta(minutes=10)).isoformat(),
         },
     }
+    fresh_repeated = {
+        **base,
+        "properties": {
+            **base["properties"],
+            "last_observed_at": (now - timedelta(minutes=10)).isoformat(),
+            "beacon_repeat_confirmed": True,
+        },
+    }
     assert is_useful_public_case_feature(stale) is False
-    assert is_useful_public_case_feature(fresh) is True
+    assert is_useful_public_case_feature(fresh_single_ping) is False
+    assert is_useful_public_case_feature(fresh_repeated) is True
 
 
 def test_beacon_alone_never_creates_a_humanitarian_incident(monitor) -> None:
@@ -156,7 +172,7 @@ def test_beacon_alone_never_creates_a_humanitarian_incident(monitor) -> None:
     register()  # idempotent subscribe, same as bootstrap
 
     mmsi = f"970{uuid.uuid4().int % 1_000_000:06d}"
-    monitor.on_position(mmsi, "", 35.1, 14.2, 0.0, 0)
+    _emit_confirmed_beacon(monitor, mmsi)
 
     event_id = vim._event_id(mmsi, "distress_beacon")
     # Subscriber fan-out runs off-thread; give it a bounded chance to run,
@@ -191,6 +207,51 @@ def test_fresh_uncorroborated_beacon_in_port_stays_observation(monkeypatch) -> N
         },
     }
     assert is_useful_public_case_feature(feature) is False
+
+
+def test_two_distinct_beacons_render_as_two_separate_live_features(monitor) -> None:
+    """Regression fixture for the reported production case: two AIS-MOB
+    observations near Mallorca. Each is its own evidence observation with
+    its own MMSI; neither the taxonomy projection nor the Live feed may
+    merge them into one item or drop one for lacking a stable incident_type
+    bucket (docs/superpowers/plans/2026-09-21-live-taxonomy-closure-design-
+    note.md)."""
+    from core.live.feed import public_signal_collection
+
+    mmsi_a = f"972{uuid.uuid4().int % 1_000_000:06d}"
+    mmsi_b = f"972{uuid.uuid4().int % 1_000_000:06d}"
+    # First transmission starts the internal beacon episode. A public
+    # operational signal is materialized only after a sustained repeat,
+    # preserving the production repeat-confirmation gate.
+    monitor.on_position(mmsi_a, "", 39.55, 2.65, 0.0, 0)
+    monitor.on_position(mmsi_b, "", 39.60, 2.70, 0.0, 0)
+    for mmsi in (mmsi_a, mmsi_b):
+        monitor._episodes[mmsi]["first_seen"] -= 10
+    monitor.on_position(mmsi_a, "", 39.55, 2.65, 0.0, 0)
+    monitor.on_position(mmsi_b, "", 39.60, 2.70, 0.0, 0)
+
+    from core.intel.store import intel_store
+
+    for mmsi in (mmsi_a, mmsi_b):
+        event = next(e for e in intel_store.events(limit=50) if e.linked_mmsi == mmsi)
+        event.metadata["last_observed_at"] = datetime.now(timezone.utc).isoformat()
+
+    collection = public_signal_collection(mode="maritime", limit=500, days=1)
+    features_by_mmsi = {
+        mmsi: [
+            f for f in collection["features"]
+            if str(f["properties"].get("linked_mmsi") or "") == mmsi
+        ]
+        for mmsi in (mmsi_a, mmsi_b)
+    }
+    for mmsi, features in features_by_mmsi.items():
+        assert len(features) == 1, (mmsi, features)
+        props = features[0]["properties"]
+        assert props["incident_type"] == "navigation_safety"
+        assert props["main_category"] == "maritime"
+        assert props["observation_type"] == "distress_beacon"
+    # Two distinct observations, not one merged/deduplicated casualty.
+    assert features_by_mmsi[mmsi_a][0]["properties"]["id"] != features_by_mmsi[mmsi_b][0]["properties"]["id"]
 
 
 def test_independently_corroborated_beacon_can_remain_live_in_port(monkeypatch) -> None:

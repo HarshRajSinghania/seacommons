@@ -151,6 +151,51 @@ def test_public_status_excludes_legacy_unclassified_from_corroborated(monkeypatc
     assert pipeline["corroborated_episodes"] == 1
 
 
+def test_public_status_excludes_expired_hypothesis_housekeeping(monkeypatch):
+    from datetime import datetime, timezone
+
+    import core.api.routes.status as status_route
+    from core.api.main import app
+    from core.db.models import InvestigationHypothesisDB
+    from core.db.session import session_scope
+
+    client = TestClient(app)
+    status_route._status_cache = None
+    baseline = client.get("/api/v1/status?hours=24").json()["pipeline"][
+        "investigation_hypotheses"
+    ]
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    ids = ("status-active-hypothesis-24h", "status-expired-hypothesis-24h")
+    with session_scope() as db:
+        db.query(InvestigationHypothesisDB).filter(
+            InvestigationHypothesisDB.hypothesis_id.in_(ids)
+        ).delete(synchronize_session=False)
+        for hypothesis_id, state in zip(ids, ("candidate", "expired"), strict=True):
+            db.add(InvestigationHypothesisDB(
+                hypothesis_id=hypothesis_id,
+                hypothesis_type="dark_transit",
+                subject_ids=["subj:test"],
+                state=state,
+                reason_codes=["gap"],
+                counter_indicators=[],
+                evidence_links=["event:test"],
+                evidence_stage="derived",
+                created_at=now,
+                updated_at=now,
+            ))
+    try:
+        status_route._status_cache = None
+        payload = client.get("/api/v1/status?hours=24").json()
+        assert payload["pipeline"]["investigation_hypotheses"] == baseline + 1
+    finally:
+        with session_scope() as db:
+            db.query(InvestigationHypothesisDB).filter(
+                InvestigationHypothesisDB.hypothesis_id.in_(ids)
+            ).delete(synchronize_session=False)
+        status_route._status_cache = None
+
+
 def test_operator_sar_fleet_is_private(monkeypatch):
     from core.api.main import app
     from core.config import config

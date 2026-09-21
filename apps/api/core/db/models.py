@@ -972,6 +972,36 @@ class ReceiverCatalogDB(Base):
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class AISCoverageSnapshotDB(Base):
+    """Public station-health snapshot used only as AIS coverage context.
+
+    A snapshot can support the proposition that an area was being received by
+    an AIS station at a given time. It never creates a second evidence lineage
+    for a vessel event: all AIS receivers remain part of ais_sensor_lineage.
+    """
+    __tablename__ = "ais_coverage_snapshots"
+
+    snapshot_id = Column(String(128), primary_key=True)
+    network = Column(String(32), nullable=False, index=True)
+    station_id = Column(String(64), nullable=False, index=True)
+    station_label = Column(String(128), nullable=False)
+    source_url = Column(Text, nullable=False)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    station_status = Column(String(24), nullable=False)
+    station_last_received_at = Column(DateTime, nullable=True)
+    online_24h = Column(Float, nullable=False, default=0.0)
+    max_reception_km = Column(Float, nullable=True)
+    messages_1h = Column(Integer, nullable=False, default=0)
+    vessels_1h = Column(Integer, nullable=False, default=0)
+    observed_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_ais_coverage_station_observed", "station_id", "observed_at"),
+    )
+
+
 def create_all(database_url: str) -> None:
     engine = create_engine(database_url)
     Base.metadata.create_all(engine)

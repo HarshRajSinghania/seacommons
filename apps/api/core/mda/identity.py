@@ -108,7 +108,15 @@ def screen(mmsi: Any = None, imo: Any = None, name: str = "", flag: str = "") ->
     try:
         hits = _sanctions_lookup(mmsi=mmsi, imo=imo, name=name)
         if hits:
-            flags.append("sanctions_hit")
+            strong_hit = any(
+                set(hit.get("matched_on") or ()) & {"mmsi", "imo"} for hit in hits
+            )
+            if strong_hit:
+                flags.append("sanctions_hit")
+            else:
+                flags.append("sanctions_name_only_match")
+            if any(hit.get("identity_conflicts") for hit in hits):
+                flags.append("sanctions_identity_conflict")
     except Exception as exc:  # pragma: no cover
         logger.debug("sanctions lookup failed: %s", exc)
 
@@ -152,6 +160,11 @@ def _sanctions_lookup(*, mmsi: Any = None, imo: Any = None, name: str = "") -> l
                     matched_on.append("imo")
                 if name_s and row.name_upper == name_s:
                     matched_on.append("name")
+                identity_conflicts = []
+                if imo_s and row.imo and row.imo != imo_s:
+                    identity_conflicts.append("imo_mismatch")
+                if mmsi_s and row.mmsi and row.mmsi != mmsi_s:
+                    identity_conflicts.append("mmsi_mismatch")
                 program = (row.program or "").strip()
                 source_url = (
                     "https://sanctionslistservice.ofac.treas.gov/"
@@ -167,6 +180,7 @@ def _sanctions_lookup(*, mmsi: Any = None, imo: Any = None, name: str = "") -> l
                         "program": program,
                         "listed_on": row.listed_on,
                         "matched_on": matched_on,
+                        "identity_conflicts": identity_conflicts,
                         "reason": (
                             f"Listed under sanctions programme {program}."
                             if program

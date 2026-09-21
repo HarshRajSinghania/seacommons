@@ -87,7 +87,7 @@ _KIND_LABEL = {
     "aground": "Vessel ran aground",
     "not_under_command": "Vessel unable to manoeuvre",
     "restricted_manoeuvrability": "Vessel manoeuvrability restricted",
-    "distress_beacon": "Distress beacon activated",
+    "distress_beacon": "AIS safety beacon transmission observed",
 }
 # Kinds this monitor emits that are Maritime Safety observations -- never a
 # Maritime Intelligence hypothesis, never cargo Drift eligible, and
@@ -101,6 +101,8 @@ _SAFETY_KINDS = frozenset(
 _BEACON_STATUS = 14
 _BEACON_MMSI_PREFIXES = ("970", "972", "974")
 _BEACON_SOURCE = {"970": "ais_sart", "972": "ais_mob", "974": "ais_epirb"}
+_BEACON_MIN_REPORTS = 2
+_BEACON_MIN_SPAN_S = 5.0
 _NORMAL_STATUS = frozenset({0, 1, 5, 8})
 _EMIT_COOLDOWN_S = 6 * 3600
 _EPISODE_UPDATE_INTERVAL_S = 5 * 60
@@ -159,10 +161,39 @@ class VesselIncidentMonitor:
 
         beacon_source = self._beacon_source(mmsi, nav_status)
         if beacon_source is not None:
+            with self._lock:
+                episode = self._episodes.get(mmsi)
+                if episode is None or episode.get("kind") != "distress_beacon":
+                    self._episodes[mmsi] = {
+                        "kind": "distress_beacon",
+                        "status": _BEACON_STATUS,
+                        "first_seen": now,
+                        "count": 1,
+                        "lat": lat,
+                        "lon": lon,
+                        "name": name,
+                    }
+                    return
+                episode["count"] += 1
+                episode["lat"], episode["lon"] = lat, lon
+                if episode["name"] == "" and name:
+                    episode["name"] = name
+                sustained_s = now - episode["first_seen"]
+                confirmed_repeat = (
+                    episode["count"] >= _BEACON_MIN_REPORTS
+                    and sustained_s >= _BEACON_MIN_SPAN_S
+                )
+                if not confirmed_repeat:
+                    return
+                reports = int(episode["count"])
             self._emit(
                 mmsi, name, lat, lon,
                 kind="distress_beacon", source=beacon_source,
                 severity="critical", is_distress=True, auto_publish=True,
+                reports=reports,
+                sustained_s=round(sustained_s),
+                min_reports=_BEACON_MIN_REPORTS,
+                min_span_s=_BEACON_MIN_SPAN_S,
             )
             return
 
@@ -334,9 +365,19 @@ class VesselIncidentMonitor:
                 "case_type": "distress_sar" if kind == "distress_beacon" else "vessel_incident",
                 "ais_nav_status_kind": kind,
                 "vessel_name": name or None,
-                "episode_update_count": 1,
-                "first_observed_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+                "episode_update_count": max(1, int(reports or 1)),
+                "first_observed_at": datetime.fromtimestamp(
+                    now - float(sustained_s or 0), tz=timezone.utc
+                ).isoformat(),
                 "last_observed_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+                **(
+                    {
+                        "beacon_repeat_confirmed": True,
+                        "beacon_observation_state": "repeated_active_transmission",
+                    }
+                    if kind == "distress_beacon"
+                    else {}
+                ),
                 "observed_track": [{
                     "lon": round(float(lon), 6),
                     "lat": round(float(lat), 6),

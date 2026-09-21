@@ -38,7 +38,10 @@ def monitor(monkeypatch):
     return m
 
 
-def test_sart_mmsi_emits_a_distress_immediately(monitor) -> None:
+def test_sart_mmsi_requires_repeated_transmission_before_emit(monitor) -> None:
+    monitor.on_position("972123456", "", 35.1, 14.2, 0.0, 0)
+    assert monitor._added == []
+    monitor._clock.advance(6)
     monitor.on_position("972123456", "", 35.1, 14.2, 0.0, 0)
     assert len(monitor._added) == 1
     event = monitor._added[0]
@@ -46,6 +49,8 @@ def test_sart_mmsi_emits_a_distress_immediately(monitor) -> None:
     assert event.severity == "critical"
     assert event.metadata["is_distress"] is True
     assert event.metadata["publication_status"] == "published"
+    assert event.metadata["beacon_repeat_confirmed"] is True
+    assert event.metadata["episode_update_count"] == 2
     assert event.linked_mmsi == "972123456"
 
 
@@ -168,6 +173,8 @@ def test_emitted_incident_records_a_source_observation(monitor) -> None:
     from core.db.session import session_scope
     from core.intel.source_observation import observation_id
 
+    monitor.on_position("972999999", "", 35.1, 14.2, 0.0, 0)
+    monitor._clock.advance(6)
     monitor.on_position("972999999", "", 35.1, 14.2, 0.0, 0)
     assert monitor._added
 

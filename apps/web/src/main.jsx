@@ -131,7 +131,9 @@ const LIVE_HOSTS = new Set(['live.seacommons.org', 'console.seacommons.org', 'en
 const PUBLIC_LIVE_LAYER_GROUPS = new Set([
   'nautical', 'sar', 'fused', 'observed_tracks', 'drift_models', 'simulation', 'ngo_vessels', 'platforms', 'spikes',
   'radio_receivers', 'radio_dsc',
-  'intel_social', 'intel_news', 'intel_hazard', 'intel_incident', 'intel_iom', 'intel_ngo',
+  // Classified public cases render through dedicated intel-cat-* layers.
+  // Keep raw AIS excluded, but allow every stable OSINT category layer.
+  ...INTEL_MAP_CATEGORIES.map((category) => `intel_${category.key}`),
 ]);
 // Signals selector: two macro groups (the original Humanitarian/Maritime
 // Security split), each block-tickable and independently expandable to its
@@ -140,6 +142,11 @@ const PUBLIC_LIVE_LAYER_GROUPS = new Set([
 // see docs/prompt.md phase 4. Correlated alerts in this deployment are
 // overwhelmingly sanctions/grey-zone (STS rendezvous, cable proximity,
 // sanctioned-vessel matches), so that one sits under Security.
+// Category `key`s here must stay in sync with the closed sets
+// apps/api/core/domain/incident_taxonomy.py exports as
+// STABLE_HUMANITARIAN_INCIDENT_TYPES / STABLE_MARITIME_INCIDENT_TYPES --
+// that module's own property test is what keeps every `incident_type` the
+// backend can produce inside this list.
 const SIGNALS_MACRO_GROUPS = [
   {
     key: 'humanitarian',

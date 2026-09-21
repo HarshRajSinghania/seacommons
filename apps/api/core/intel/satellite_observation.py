@@ -39,8 +39,32 @@ class SatelliteObservation:
         return asdict(self)
 
 
+def _merged_provenance(existing: dict[str, Any] | None, incoming: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(existing or {})
+    incoming = dict(incoming or {})
+    for key, value in incoming.items():
+        if key != "case_targets":
+            merged[key] = value
+    targets = []
+    seen = set()
+    for row in [*(merged.get("case_targets") or []), *(incoming.get("case_targets") or [])]:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            row.get("role"), row.get("lat"), row.get("lon"), row.get("at"),
+            row.get("search_direction"), row.get("drift_id"), row.get("trajectory_index"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(dict(row))
+    if targets:
+        merged["case_targets"] = targets
+    return merged
+
+
 def persist_observations(observations: list[SatelliteObservation]) -> int:
-    """Persist metadata idempotently by deterministic observation_id."""
+    """Persist scene metadata idempotently while merging case-target lineage."""
     from core.db.models import SatelliteObservationDB
     from core.db.session import session_scope
     from core.intel.lifecycle import parse_utc
@@ -48,7 +72,9 @@ def persist_observations(observations: list[SatelliteObservation]) -> int:
     created = 0
     with session_scope() as db:
         for observation in observations:
-            if db.get(SatelliteObservationDB, observation.observation_id) is not None:
+            existing = db.get(SatelliteObservationDB, observation.observation_id)
+            if existing is not None:
+                existing.provenance = _merged_provenance(existing.provenance, observation.provenance)
                 continue
             discovered = parse_utc(observation.discovered_at)
             db.add(SatelliteObservationDB(

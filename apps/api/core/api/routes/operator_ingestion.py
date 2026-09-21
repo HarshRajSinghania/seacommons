@@ -703,9 +703,21 @@ def operator_pipeline_funnel(
             .scalar()
             or 0
         )
+        expired_hypotheses_excluded = int(
+            db.query(func.count(InvestigationHypothesisDB.hypothesis_id))
+            .filter(
+                InvestigationHypothesisDB.updated_at >= cutoff,
+                InvestigationHypothesisDB.state.in_(("expired", "rejected")),
+            )
+            .scalar()
+            or 0
+        )
         hypotheses = (
             db.query(InvestigationHypothesisDB)
-            .filter(InvestigationHypothesisDB.updated_at >= cutoff)
+            .filter(
+                InvestigationHypothesisDB.updated_at >= cutoff,
+                InvestigationHypothesisDB.state.notin_(("expired", "rejected")),
+            )
             .all()
         )
         hypothesis_total = len(hypotheses)
@@ -792,7 +804,7 @@ def operator_pipeline_funnel(
         {"id": "normalized", "label": "Normalized events", "count": normalized_total},
         {"id": "derived", "label": "Derived cues", "count": derived_total},
         {"id": "episodes", "label": "Episodes", "count": episodes_total},
-        {"id": "hypotheses", "label": "Hypotheses", "count": hypothesis_total},
+        {"id": "hypotheses", "label": "Active hypotheses", "count": hypothesis_total},
         {"id": "corroborated", "label": "Corroborated", "count": corroborated_total},
         {"id": "review_ready", "label": "Review ready", "count": review_ready_total},
         {"id": "live", "label": "Public Live", "count": int(live.get("total") or 0)},
@@ -815,10 +827,12 @@ def operator_pipeline_funnel(
             "hypothesis_evidence_stages": dict(evidence_stages.most_common()),
             "hypothesis_reason_codes": dict(reason_codes.most_common(30)),
             "hypothesis_counter_indicators": dict(counter_indicators.most_common(30)),
+            "expired_or_rejected_hypotheses_excluded": expired_hypotheses_excluded,
         },
         "interpretation": (
             "Stage counts are records present at each analytical layer in the selected window, "
-            "not a claim that every raw observation converts one-to-one into the next stage."
+            "not a claim that every raw observation converts one-to-one into the next stage. "
+            "The 24h hypothesis stage excludes expired/rejected housekeeping transitions."
         ),
         "live_count_cached": live_count_cached,
     }

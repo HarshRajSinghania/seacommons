@@ -239,9 +239,9 @@ def test_explicit_private_status_overrides_approved_source_policy() -> None:
     assert _public_intel_feature(private_rss) is None
 
 
-def test_public_context_signal_surfaces_in_a_public_compartment() -> None:
-    # Provenance alone does not verify an article's claims. A corroborated news
-    # item can appear; the otherwise identical unverified item cannot.
+def test_generic_news_is_supporting_evidence_not_a_standalone_live_case() -> None:
+    # Independent corroboration makes an article useful evidence for a case;
+    # it does not turn the article itself into a map incident.
     news = IntelEvent(
         id="ctx-news-01",
         type="news",
@@ -255,19 +255,13 @@ def test_public_context_signal_surfaces_in_a_public_compartment() -> None:
             "verification_status": "multi_source_corroborated",
         },
     )
-    feature = _public_intel_feature(news)
-    assert feature is not None
-    assert feature["properties"]["kind"] == "context"
-    assert feature["properties"]["type"] == "news"
-
-    news.metadata.pop("verification_status")
     assert _public_intel_feature(news) is None
 
 
-def test_context_publication_does_not_depend_on_severity() -> None:
+def test_generic_news_never_becomes_live_from_severity_or_review_state() -> None:
     # Product policy §4: severity must not decide publication. A high-severity
     # uncorroborated, unpublished news item is still chatter and stays off the
-    # public map; a low-"severity" corroborated one still surfaces.
+    # public map; neither corroboration nor review makes the article a case.
     base = {
         "type": "news", "lat": 35.4, "lon": 13.9, "title": "Report off Zawiya",
         "source": "Official NGO RSS",
@@ -279,7 +273,26 @@ def test_context_publication_does_not_depend_on_severity() -> None:
         metadata={"source_policy": "official_rss", "verification_status": "multi_source_corroborated"},
         **base,
     )
-    assert _public_intel_feature(quiet) is not None
+    assert _public_intel_feature(quiet) is None
+
+
+def test_generic_social_post_is_not_a_standalone_maritime_case() -> None:
+    post = IntelEvent(
+        id="social-context-01",
+        type="mastodon",
+        severity="medium",
+        lat=35.4,
+        lon=13.9,
+        title="Unverified report of unusual vessel movement",
+        source="public account",
+        metadata={
+            "source_policy": "operator_published",
+            "publication_status": "published",
+            "verification_status": "multi_source_corroborated",
+            "maritime_domain": "safety",
+        },
+    )
+    assert _public_intel_feature(post) is None
 
 
 def test_correlated_alert_is_public_only_in_a_public_compartment() -> None:
@@ -387,18 +400,20 @@ def test_nuc_event_projects_a_case_specific_assessment_block() -> None:
 
 def test_event_with_no_assessor_omits_the_assessment_block_entirely() -> None:
     """No generic fallback: an event kind assessment.py has no assessor for
-    (e.g. plain news) must not carry an `assessment` key at all."""
+    (e.g. an operational hazard feed) must not carry an `assessment` key."""
     event = IntelEvent(
         id="no-assessor-01",
-        type="news",
+        type="gdacs",
         severity="medium",
         lat=35.2,
         lon=14.0,
-        title="Coastguard reports vessel movement",
-        source="Official NGO RSS",
+        title="Tropical cyclone maritime context",
+        source="GDACS",
         metadata={
-            "source_policy": "official_rss",
+            "source_policy": "official_api",
             "verification_status": "multi_source_corroborated",
+            "maritime_domain": "safety",
+            "gdacs_event_type": "TC",
         },
     )
 
@@ -1297,7 +1312,9 @@ def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> No
     """Humanitarian eligibility is domain + policy based, not source based --
     a distress report from a non-Alarm-Phone source (MSF Sea here) with an
     approved source_policy must survive mode="humanitarian" on equal footing
-    with Alarm Phone. Alarm Phone is a privileged source, not a gate."""
+    with Alarm Phone. Alarm Phone is a privileged source, not a gate. A
+    generic social update without an operational case link remains evidence,
+    not a third standalone Live item."""
     now = datetime.now(timezone.utc).isoformat()
     humanitarian = IntelEvent(
         id="mode-humanitarian-01",
@@ -1376,16 +1393,15 @@ def test_public_feed_modes_return_separate_signals_and_counts(monkeypatch) -> No
     assert {feature["properties"]["id"] for feature in humanitarian_feed["features"]} == {
         "intel:mode-humanitarian-01",
         "intel:mode-other-ngo-01",
-        "intel:mode-humanitarian-context-01",
     }
     assert security_feed["features"] == []
-    expected_counts = {"humanitarian": 3, "maritime": 0}
+    expected_counts = {"humanitarian": 2, "maritime": 0}
     assert humanitarian_feed["meta"]["mode_counts"] == expected_counts
     assert security_feed["meta"]["mode_counts"] == expected_counts
     assert small_feed["meta"]["mode_counts"] == expected_counts
     assert incremental_feed["meta"]["mode_counts"] == expected_counts
     assert humanitarian_feed["meta"]["role_counts"] == {
-        "humanitarian_case": 3,
+        "humanitarian_case": 2,
         "humanitarian_observation": 0,
         "maritime_episode": 0,
         "maritime_evidence": 0,
@@ -2442,11 +2458,9 @@ def test_assessed_single_lineage_aground_is_not_independently_corroborated() -> 
     assert is_useful_public_case_feature(feature) is False
 
 
-def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
-    from core.live.projection import (
-        _public_intel_feature,
-        is_useful_public_case_feature,
-    )
+def test_corroborated_news_remains_supporting_evidence_not_live_projection() -> None:
+    from core.live.projection import _public_intel_feature
+
     event = IntelEvent(
         id="news-support-only", type="news", severity="low",
         lat=35.4, lon=13.9, title="Context report", source="Official NGO RSS",
@@ -2455,6 +2469,6 @@ def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
             "verification_status": "multi_source_corroborated",
         },
     )
-    feature = _public_intel_feature(event)
-    assert feature is not None
-    assert is_useful_public_case_feature(feature) is False
+    # Corroboration does not turn a generic report into a standalone Live
+    # incident. It stays durable supporting evidence for a case/episode.
+    assert _public_intel_feature(event) is None

@@ -62,3 +62,31 @@ def test_screen_sanctions_hit(monkeypatch):
     assert r["sanctions"][0]["matched_on"] == ["mmsi"]
     assert "RUSSIA-EO14024" in r["sanctions"][0]["reason"]
     assert r["sanctions"][0]["source_url"].startswith("https://")
+
+
+def test_name_only_sanctions_match_with_conflicting_imo_is_not_sanctions_hit():
+    from core.db.models import SanctionedVesselDB
+    from core.db.session import engine, session_scope
+
+    SanctionedVesselDB.__table__.create(bind=engine(), checkfirst=True)
+    with session_scope() as db:
+        db.add(SanctionedVesselDB(
+            source_list="OFAC_SDN",
+            name="AMBIGUOUS TITAN",
+            name_upper="AMBIGUOUS TITAN",
+            imo="9293741",
+            mmsi=None,
+            program="TEST",
+        ))
+    result = screen(
+        mmsi="304496000",
+        imo="9126998",
+        name="AMBIGUOUS TITAN",
+        flag="AG",
+    )
+    assert "sanctions_hit" not in result["risk_flags"]
+    assert "sanctions_name_only_match" in result["risk_flags"]
+    assert "sanctions_identity_conflict" in result["risk_flags"]
+    hit = result["sanctions"][0]
+    assert hit["matched_on"] == ["name"]
+    assert hit["identity_conflicts"] == ["imo_mismatch"]

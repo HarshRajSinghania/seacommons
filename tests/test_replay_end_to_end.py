@@ -27,7 +27,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from core.api.main import app
-from core.intel.hypothesis import transition
 from core.intel.hypothesis_store import get_hypothesis
 from core.intel.store import IntelEvent, intel_store
 from core.live.projection import _public_intel_feature
@@ -100,7 +99,7 @@ def test_e2e_independent_gap_corroboration_creates_idempotent_v1_hypothesis():
     """Independent evidence creates one linked v1 hypothesis; replay never duplicates it."""
     from core.db.models import InvestigationHypothesisDB, MaritimeEpisodeDB
     from core.db.session import session_scope
-    from core.intel.hypothesis_store import list_hypotheses, save_hypothesis
+    from core.intel.hypothesis_store import list_hypotheses
 
     target = "211879803"
     intel_store.add(IntelEvent(
@@ -121,16 +120,20 @@ def test_e2e_independent_gap_corroboration_creates_idempotent_v1_hypothesis():
     hyp = hyps[0]
     assert hyp.hypothesis_id.startswith("hyp:v1:dark_transit:")
     assert hyp.episode_id is not None
-    assert hyp.state == "review_ready"
+    # Independent two-lineage corroboration (AIS + an independent news
+    # report) clears the same evidence bar can_publish() re-verifies, so
+    # the automatic engine (2026-09-21 product decision, docs/current_work.md)
+    # carries the hypothesis to "published" itself in this same
+    # scan_hypotheses() call -- no separate human analyst transition() step
+    # exists any more (this superseded docs/fixes.md M14.6's original
+    # "analyst review/publish -- the only path past candidate/collecting").
+    assert hyp.state == "published"
     assert hyp.evidence_stage == "corroborated"
     assert w.scan_hypotheses() == 1
     with session_scope() as db:
         assert db.query(MaritimeEpisodeDB).count() == 1
         assert db.query(InvestigationHypothesisDB).count() == 1
 
-    published = transition(hyp, "assessed", actor="analyst:test")
-    published = transition(published, "published", actor="analyst:test")
-    save_hypothesis(published)
     features = client.get("/api/v1/live/hypotheses").json()["features"]
     match = next(f for f in features if f["id"] == hyp.hypothesis_id)
     for field in ("linked_mmsi", "mmsi", "imo", "vessel_name"):

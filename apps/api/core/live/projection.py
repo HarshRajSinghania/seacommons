@@ -396,6 +396,29 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     if event_type == "ais_anomaly" and not props.get("hypothesis_type"):
         if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
             return False
+        if anomaly_type in {"gap", "long_gap"}:
+            try:
+                ship_type = int(props.get("ship_type") or props.get("vessel_type_context") or 0)
+            except (TypeError, ValueError):
+                ship_type = 0
+            low_specificity_class = (
+                ship_type == 30
+                or 40 <= ship_type < 50
+                or 60 <= ship_type < 70
+            )
+            reasons = {str(value) for value in (props.get("offshore_reason_codes") or ()) if value}
+            stronger_context = bool(reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
+            if (
+                low_specificity_class
+                and not stronger_context
+                and not _is_independently_corroborated_properties(props)
+            ):
+                # Fishing, HSC and passenger traffic commonly produce benign
+                # coverage gaps and route/timetable artefacts. Keep the raw gap
+                # internally, but do not create a public Live item from a lone
+                # prolonged AIS silence with no baseline deviation or second
+                # evidence lineage.
+                return False
         if anomaly_type == "impossible_speed":
             verification = str(props.get("verification_status") or "")
             evidence_count = int(props.get("evidence_count") or 0)

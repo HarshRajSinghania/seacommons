@@ -22,6 +22,7 @@ from core.domain.live_contracts import (
     validate_live_signal,
 )
 from core.domain.visual_category import visual_category_fields
+from core.domain.incident_taxonomy import is_independently_corroborated
 from core.intel import lifecycle
 from core.intel.assessment import build_assessment
 from core.intel.public_geometry import public_geometry_and_precision
@@ -63,6 +64,7 @@ _SEACOMMONS_DERIVED_TYPES = frozenset(
 # GDACS event types worth showing on a maritime SAR map (TC cyclone, EQ
 # earthquake / tsunami, FL flood, VO volcano) — excludes WF wildfire, DR drought.
 _MARITIME_GDACS_TYPES = frozenset({"TC", "EQ", "FL", "VO"})
+_GENERIC_REPORT_TYPES = frozenset({"news", "twitter", "mastodon", "bluesky"})
 
 _SAFETY_OPERATIONAL_LABELS = {
     "aground": "Aground",
@@ -297,22 +299,6 @@ def dedupe_public_case_items(items: list[dict[str, Any]], *, window_seconds: int
     return [item for item in items if fields(item)[4] not in duplicate_ids]
 
 
-def _is_independently_corroborated_properties(props: dict[str, Any]) -> bool:
-    verification = str(props.get("verification_status") or "")
-    groups = {
-        str(value) for value in (
-            props.get("contributing_independence_groups")
-            or props.get("independence_groups")
-            or ()
-        ) if value
-    }
-    return (
-        verification == "multi_source_corroborated"
-        or len(groups) >= 2
-        or int(props.get("independent_source_count") or 0) >= 2
-    )
-
-
 def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     """Case-surface quality gate applied after privacy/publication projection.
 
@@ -372,7 +358,7 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
             # while it is still being observed. A lone historical ping remains
             # available in Play but must not sit in Live indefinitely.
             return False
-        independently_corroborated = _is_independently_corroborated_properties(props)
+        independently_corroborated = is_independently_corroborated(props)
         if (
             not independently_corroborated
             and not bool(props.get("beacon_repeat_confirmed"))
@@ -420,7 +406,7 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
             if (
                 low_specificity_class
                 and not stronger_context
-                and not _is_independently_corroborated_properties(props)
+                and not is_independently_corroborated(props)
             ):
                 # Fishing, HSC and passenger traffic commonly produce benign
                 # coverage gaps and route/timetable artefacts. Keep the raw gap
@@ -441,7 +427,7 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     verification = str(props.get("verification_status") or "")
     if source == "ais" and category == "navigation_casualty":
         nav_kind = str(props.get("ais_nav_status_kind") or "")
-        independently_corroborated = _is_independently_corroborated_properties(props)
+        independently_corroborated = is_independently_corroborated(props)
         if nav_kind == "aground" and not independently_corroborated:
             # AIS nav-status 6 is a vessel self-report, not independent
             # evidence of a casualty. Persistence only proves that the same
@@ -506,6 +492,28 @@ def _public_intel_feature(
     domains = allowed_domains if allowed_domains is not None else public_maritime_domains()
     resolved_domain = str(event.maritime_domain() or "sar").strip().lower()
     domain_public = resolved_domain in domains
+    if event.type in _GENERIC_REPORT_TYPES:
+        humanitarian_case_type = str(event.metadata.get("humanitarian_case_type") or "")
+        operational_humanitarian = (
+            resolved_domain in {"sar", "humanitarian"}
+            and bool(
+                event.metadata.get("is_distress")
+                or event.metadata.get("humanitarian_case_id")
+                or humanitarian_case_type in {
+                    "distress", "missing", "shipwreck", "pushback",
+                    "rescue", "rescue_update", "rescue_completed", "resolution",
+                }
+            )
+            and (
+                source_policy in APPROVED_SOURCE_POLICIES
+                or publication == PublicationStatus.PUBLISHED.value
+            )
+        )
+        if not operational_humanitarian:
+            # Generic reports remain durable supporting evidence. They do not
+            # become standalone map incidents merely through publication or
+            # review/corroboration metadata.
+            return None
     # Canonical cutover: raw Security detector output is evidence, not a
     # public case. Grey-zone/sanctions AIS anomalies, fused alerts, identity
     # flags and satellite dark candidates can reach public Live only after

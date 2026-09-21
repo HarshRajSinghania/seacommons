@@ -28,14 +28,25 @@ def test_maritime_transfer_keeps_sanctions_as_facet():
     assert out["corroborated"] is True
 
 
-def test_raw_position_jump_stays_observation_not_spoofing_hypothesis():
-    out = taxonomy_fields(
-        event_type="ais_anomaly",
-        maritime_domain="grey_zone",
-        metadata={"anomaly_type": "impossible_speed"},
+def test_raw_observations_do_not_claim_hypothesis_semantics():
+    cases = (
+        ("gap", "ais_gap"),
+        ("long_gap", "ais_gap"),
+        ("position_jump", "position_anomaly"),
+        ("impossible_speed", "position_anomaly"),
+        ("rendezvous", "rendezvous"),
+        ("infra_proximity", "infrastructure_proximity"),
     )
-    assert out["main_category"] == "maritime"
-    assert out["incident_type"] == "position_anomaly"
+    for anomaly_type, expected in cases:
+        out = taxonomy_fields(
+            event_type="ais_anomaly",
+            maritime_domain="grey_zone",
+            metadata={"anomaly_type": anomaly_type},
+        )
+        assert out["main_category"] == "maritime"
+        assert out["incident_type"] == expected
+        assert out["observation_type"] == expected
+        assert out["hypothesis_type"] is None
 
 
 def test_hypothesis_maps_into_maritime_incident_type():
@@ -47,50 +58,49 @@ def test_hypothesis_maps_into_maritime_incident_type():
     )
     assert out["main_category"] == "maritime"
     assert out["incident_type"] == "dark_activity"
+    assert out["observation_type"] == "maritime_context"
+    assert out["hypothesis_type"] == "dark_transit"
 
 
-def test_raw_gap_and_rendezvous_do_not_inherit_hypothesis_labels():
-    gap = taxonomy_fields(
-        event_type="ais_anomaly", maritime_domain="grey_zone",
-        metadata={"anomaly_type": "gap"},
-    )
-    rendezvous = taxonomy_fields(
-        event_type="ais_rendezvous", maritime_domain="grey_zone",
-        metadata={"anomaly_type": "ais_rendezvous"},
-    )
-    assert gap["incident_type"] == "ais_gap"
-    assert rendezvous["incident_type"] == "rendezvous"
-
-
-def test_assessed_single_lineage_is_not_corroborated():
+def test_review_state_and_many_same_lineage_detectors_are_not_corroboration():
     out = taxonomy_fields(
-        event_type="ais_anomaly", maritime_domain="grey_zone",
+        event_type="ais_anomaly",
+        maritime_domain="grey_zone",
         metadata={
             "anomaly_type": "gap",
             "evidence_stage": "assessed",
-            "verification_status": "single_source_observed",
+            "verification_status": "reviewed",
+            "evidence_count": 4,
             "independent_source_count": 1,
             "contributing_independence_groups": ["ais_sensor_lineage"],
         },
     )
     assert out["corroborated"] is False
+    assert out["evidence_state"] == "assessed"
+    assert out["verification_status"] == "reviewed"
 
 
-def test_two_independent_lineages_are_corroborated():
+def test_two_validated_independent_lineages_are_corroboration():
     out = taxonomy_fields(
-        event_type="ais_anomaly", maritime_domain="grey_zone",
+        event_type="ais_anomaly",
+        maritime_domain="grey_zone",
         metadata={
             "anomaly_type": "gap",
-            "verification_status": "single_source_observed",
-            "contributing_independence_groups": ["ais_sensor_lineage", "radio_lineage"],
+            "contributing_independence_groups": [
+                "ais_sensor_lineage",
+                "official_report",
+            ],
         },
     )
     assert out["corroborated"] is True
 
 
-def test_distress_beacon_has_explicit_incident_type():
+def test_dedicated_ais_distress_beacon_has_neutral_maritime_type():
     out = taxonomy_fields(
-        event_type="distress", maritime_domain="safety",
+        event_type="distress",
+        maritime_domain="safety",
         metadata={"ais_nav_status_kind": "distress_beacon"},
     )
+    assert out["main_category"] == "maritime"
     assert out["incident_type"] == "distress_beacon"
+    assert out["observation_type"] == "distress_beacon"

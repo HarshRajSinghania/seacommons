@@ -2458,11 +2458,9 @@ def test_assessed_single_lineage_aground_is_not_independently_corroborated() -> 
     assert is_useful_public_case_feature(feature) is False
 
 
-def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
-    from core.live.projection import (
-        _public_intel_feature,
-        is_useful_public_case_feature,
-    )
+def test_corroborated_news_remains_supporting_evidence_not_live_projection() -> None:
+    from core.live.projection import _public_intel_feature
+
     event = IntelEvent(
         id="news-support-only", type="news", severity="low",
         lat=35.4, lon=13.9, title="Context report", source="Official NGO RSS",
@@ -2471,6 +2469,6 @@ def test_corroborated_news_projects_as_context_but_not_as_live_case() -> None:
             "verification_status": "multi_source_corroborated",
         },
     )
-    feature = _public_intel_feature(event)
-    assert feature is not None
-    assert is_useful_public_case_feature(feature) is False
+    # Corroboration does not turn a generic report into a standalone Live
+    # incident. It stays durable supporting evidence for a case/episode.
+    assert _public_intel_feature(event) is None

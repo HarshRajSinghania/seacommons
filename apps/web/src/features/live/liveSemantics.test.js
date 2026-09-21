@@ -28,6 +28,7 @@ test('public Live is case-first and does not expose raw AIS vessel layers', () =
   assert.doesNotMatch(allowList, /'ais_moving'/);
   assert.doesNotMatch(allowList, /'ais_stationary'/);
   assert.doesNotMatch(allowList, /'ais_trails'/);
+  assert.match(allowList, /INTEL_MAP_CATEGORIES\.map\(\(category\) => `intel_\$\{category\.key\}`\)/);
   assert.match(main, /id: 'vessels-stationary-layer'/); // operator console still owns raw AIS
   assert.match(main, /id: 'selected-vessel-track'/);
   assert.match(main, /openVesselReport/);

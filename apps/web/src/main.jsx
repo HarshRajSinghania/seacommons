@@ -131,7 +131,9 @@ const LIVE_HOSTS = new Set(['live.seacommons.org', 'console.seacommons.org', 'en
 const PUBLIC_LIVE_LAYER_GROUPS = new Set([
   'nautical', 'sar', 'fused', 'observed_tracks', 'drift_models', 'simulation', 'ngo_vessels', 'platforms', 'spikes',
   'radio_receivers', 'radio_dsc',
-  'intel_social', 'intel_news', 'intel_hazard', 'intel_incident', 'intel_iom', 'intel_ngo',
+  // Classified public cases render through dedicated intel-cat-* layers.
+  // Keep raw AIS excluded, but allow every stable OSINT category layer.
+  ...INTEL_MAP_CATEGORIES.map((category) => `intel_${category.key}`),
 ]);
 // Signals selector: two macro groups (the original Humanitarian/Maritime
 // Security split), each block-tickable and independently expandable to its

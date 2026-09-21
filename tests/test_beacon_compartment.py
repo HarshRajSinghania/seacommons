@@ -220,6 +220,13 @@ def test_two_distinct_beacons_render_as_two_separate_live_features(monitor) -> N
 
     mmsi_a = f"972{uuid.uuid4().int % 1_000_000:06d}"
     mmsi_b = f"972{uuid.uuid4().int % 1_000_000:06d}"
+    # First transmission starts the internal beacon episode. A public
+    # operational signal is materialized only after a sustained repeat,
+    # preserving the production repeat-confirmation gate.
+    monitor.on_position(mmsi_a, "", 39.55, 2.65, 0.0, 0)
+    monitor.on_position(mmsi_b, "", 39.60, 2.70, 0.0, 0)
+    for mmsi in (mmsi_a, mmsi_b):
+        monitor._episodes[mmsi]["first_seen"] -= 10
     monitor.on_position(mmsi_a, "", 39.55, 2.65, 0.0, 0)
     monitor.on_position(mmsi_b, "", 39.60, 2.70, 0.0, 0)
 

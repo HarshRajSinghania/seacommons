@@ -168,6 +168,10 @@ _PUBLIC_METADATA = frozenset(
         "offshore_anomaly_qualified",
         "offshore_reason_codes",
         "offshore_rationale",
+        "reception_expectation",
+        "gap_still_open",
+        "current_silent_seconds",
+        "gap_reappearance_confirmed",
         # core.live.retention: the durable Live visibility contract, when
         # this event has earned one. None of these three imply the
         # event is still operationally active -- only that it must stay
@@ -338,6 +342,17 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         or props.get("gap_still_open") is False
     ):
         return False
+    if (
+        event_type == "ais_anomaly"
+        and anomaly_type in {"gap", "long_gap", "ais_gap"}
+        and not is_independently_corroborated(props)
+    ):
+        reception = props.get("reception_expectation") or {}
+        if not (
+            isinstance(reception, dict)
+            and reception.get("support_level") == "strong"
+        ):
+            return False
     if event_type in {"correlated_alert", "dark_candidate"}:
         return False
     if event_type == "news":

@@ -716,3 +716,21 @@ def test_rendezvous_ignores_anchored_pair_offshore():
     w._pairs[key] = {"first_seen": time.time() - 60 * 60, "last_seen": time.time(), "count": 8}
     assert w.scan_rendezvous() == 0
     assert not _alerts("ais_rendezvous")
+
+
+def test_last_course_is_anchored_before_gap_not_wall_clock_now():
+    from core.mda.watch import _last_course
+
+    anchor = datetime(2026, 9, 22, 2, 30, tzinfo=timezone.utc)
+    calls = []
+
+    class Store:
+        def track(self, mmsi, *, since, until, limit):
+            calls.append((mmsi, since, until, limit))
+            return [
+                {"lat": 35.8, "lon": 14.2, "cog": 117.5},
+            ]
+
+    assert _last_course(Store(), "211000001", at=anchor) == 117.5
+    assert calls[0][2] == anchor
+    assert calls[0][1] == anchor - timedelta(hours=3)

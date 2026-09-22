@@ -45,6 +45,51 @@ class CoverageBaseline:
     preceding_track_density: int
 
 
+@dataclass(frozen=True)
+class TrackCoverageContinuity:
+    """Observed AIS traffic along a missing vessel's projected corridor.
+
+    This is coverage evidence only. It never corroborates vessel behaviour and
+    never creates a second evidence lineage. It answers a narrower question:
+    while this vessel was silent, did SeaCommons continue receiving OTHER AIS
+    traffic close to where the vessel could plausibly have travelled?
+    """
+
+    method_version: str
+    checkpoint_count: int
+    covered_checkpoints: int
+    covered_fraction: float
+    min_nearby_vessels: int
+    median_nearby_vessels: float
+    radius_nm: float
+    time_window_min: float
+    observed_sources: tuple[str, ...]
+
+    @property
+    def continuous(self) -> bool:
+        return (
+            self.checkpoint_count >= 2
+            and self.covered_checkpoints >= 2
+            and self.covered_fraction >= 0.6
+            and self.median_nearby_vessels >= 3
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "method_version": self.method_version,
+            "checkpoint_count": self.checkpoint_count,
+            "covered_checkpoints": self.covered_checkpoints,
+            "covered_fraction": self.covered_fraction,
+            "min_nearby_vessels": self.min_nearby_vessels,
+            "median_nearby_vessels": self.median_nearby_vessels,
+            "radius_nm": self.radius_nm,
+            "time_window_min": self.time_window_min,
+            "observed_sources": list(self.observed_sources),
+            "continuous": self.continuous,
+            "coverage_role": "same_lineage_track_corridor_witness",
+        }
+
+
 def _bbox_for_radius(lat: float, lon: float, radius_nm: float) -> tuple[float, float, float, float]:
     """(min_lon, min_lat, max_lon, max_lat) -- a simple equirectangular box,
     not a precise circle. Good enough for a comparison-window query; the
@@ -53,6 +98,151 @@ def _bbox_for_radius(lat: float, lon: float, radius_nm: float) -> tuple[float, f
     lon_scale = max(0.2, math.cos(math.radians(lat)))
     d_lon = radius_nm / (_NM_PER_DEGREE_LAT * lon_scale)
     return (lon - d_lon, lat - d_lat, lon + d_lon, lat + d_lat)
+
+
+def _distance_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
+    return 3440.065 * 2 * math.asin(math.sqrt(max(0.0, min(1.0, a))))
+
+
+def compute_track_corridor_coverage(
+    track_store,
+    *,
+    mmsi: str,
+    last_lat: float,
+    last_lon: float,
+    gap_start: datetime,
+    now: datetime,
+    course_deg: Optional[float],
+    speed_kn: Optional[float],
+    radius_nm: float = 30.0,
+    time_window_min: float = 50.0,
+    min_nearby_vessels: int = 3,
+    max_gap_hours: float = 12.0,
+) -> TrackCoverageContinuity:
+    """Measure same-lineage coverage along a projected missing-vessel corridor.
+
+    The target is projected at several times through the gap using its last
+    reliable course/speed. Other-vessel AIS around those time/space checkpoints
+    is evidence that our receiver/provider mesh remained alive where the target
+    plausibly travelled. This is intentionally a coverage test, not behaviour
+    corroboration.
+    """
+    empty = TrackCoverageContinuity(
+        method_version="track-corridor-coverage/v1",
+        checkpoint_count=0,
+        covered_checkpoints=0,
+        covered_fraction=0.0,
+        min_nearby_vessels=0,
+        median_nearby_vessels=0.0,
+        radius_nm=radius_nm,
+        time_window_min=time_window_min,
+        observed_sources=(),
+    )
+    if course_deg is None or speed_kn is None or float(speed_kn) < 2.0:
+        return empty
+    if gap_start.tzinfo is None:
+        gap_start = gap_start.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    elapsed_h = min(max_gap_hours, max(0.0, (now - gap_start).total_seconds() / 3600.0))
+    if elapsed_h < 1.0:
+        return empty
+
+    # 2-5 checkpoints. A 4h gap gets 2, a 7h gap 4, a 10-12h gap 5.
+    checkpoint_count = max(2, min(5, int(math.ceil(elapsed_h / 2.0))))
+    offsets_h = [
+        elapsed_h * (index + 1) / checkpoint_count
+        for index in range(checkpoint_count)
+    ]
+    from core.mda.sar_association import propagate_ais_state
+
+    checkpoints: list[tuple[datetime, float, float]] = []
+    for offset_h in offsets_h:
+        at = gap_start + timedelta(hours=offset_h)
+        projected = propagate_ais_state(
+            last_lat=last_lat,
+            last_lon=last_lon,
+            last_observed_at=gap_start,
+            target_time=at,
+            course_deg=float(course_deg),
+            speed_kn=float(speed_kn),
+        )
+        checkpoints.append((at, projected.lat, projected.lon))
+
+    # One bounded DB read for the whole corridor, then evaluate checkpoints in
+    # memory. This avoids N database queries per gap while preserving temporal
+    # matching at every projected point.
+    lats = [last_lat, *(point[1] for point in checkpoints)]
+    lons = [last_lon, *(point[2] for point in checkpoints)]
+    pad_lat = radius_nm / _NM_PER_DEGREE_LAT
+    lon_scale = max(0.2, min(math.cos(math.radians(lat)) for lat in lats))
+    pad_lon = radius_nm / (_NM_PER_DEGREE_LAT * lon_scale)
+    bbox = (
+        min(lons) - pad_lon,
+        min(lats) - pad_lat,
+        max(lons) + pad_lon,
+        max(lats) + pad_lat,
+    )
+    rows = track_store.positions_between(
+        gap_start,
+        min(now, gap_start + timedelta(hours=max_gap_hours)),
+        bbox=bbox,
+        limit=100_000,
+    )
+
+    parsed_rows: list[tuple[str, datetime, float, float, str]] = []
+    for row in rows:
+        row_mmsi = str(row.get("mmsi") or "")
+        if not row_mmsi or row_mmsi == mmsi:
+            continue
+        raw_ts = row.get("ts")
+        try:
+            ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        try:
+            lat, lon = float(row["lat"]), float(row["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        parsed_rows.append((row_mmsi, ts, lat, lon, str(row.get("source") or "")))
+
+    counts: list[int] = []
+    sources: set[str] = set()
+    time_window_s = time_window_min * 60.0
+    for checkpoint_at, checkpoint_lat, checkpoint_lon in checkpoints:
+        nearby: set[str] = set()
+        for row_mmsi, row_at, row_lat, row_lon, source in parsed_rows:
+            if abs((row_at - checkpoint_at).total_seconds()) > time_window_s:
+                continue
+            if _distance_nm(checkpoint_lat, checkpoint_lon, row_lat, row_lon) > radius_nm:
+                continue
+            nearby.add(row_mmsi)
+            if source:
+                sources.add(source)
+        counts.append(len(nearby))
+
+    covered = sum(count >= min_nearby_vessels for count in counts)
+    return TrackCoverageContinuity(
+        method_version="track-corridor-coverage/v1",
+        checkpoint_count=len(counts),
+        covered_checkpoints=covered,
+        covered_fraction=round(covered / len(counts), 3) if counts else 0.0,
+        min_nearby_vessels=min(counts) if counts else 0,
+        median_nearby_vessels=round(float(statistics.median(counts)), 1) if counts else 0.0,
+        radius_nm=radius_nm,
+        time_window_min=time_window_min,
+        observed_sources=tuple(sorted(sources)),
+    )
 
 
 def compute_coverage_baseline(

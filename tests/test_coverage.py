@@ -88,6 +88,81 @@ def test_never_raises_when_every_dependency_is_broken(monkeypatch):
     assert result.local_receiver_density == 0
 
 
+def test_track_corridor_coverage_requires_temporal_spatial_witnesses():
+    from datetime import timedelta
+
+    from core.mda.coverage import compute_track_corridor_coverage
+    from core.mda.sar_association import propagate_ais_state
+
+    start = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
+    end = start + timedelta(hours=4)
+    rows = []
+    for hour in (2, 4):
+        at = start + timedelta(hours=hour)
+        projected = propagate_ais_state(
+            last_lat=35.8,
+            last_lon=14.2,
+            last_observed_at=start,
+            target_time=at,
+            course_deg=90.0,
+            speed_kn=10.0,
+        )
+        for index in range(3):
+            rows.append({
+                "mmsi": f"20000000{hour}{index}",
+                "ts": at.isoformat(),
+                "lat": projected.lat + index * 0.001,
+                "lon": projected.lon + index * 0.001,
+                "source": "aisstream",
+            })
+
+    class Store:
+        def positions_between(self, *args, **kwargs):
+            return rows
+
+    result = compute_track_corridor_coverage(
+        Store(),
+        mmsi="111000777",
+        last_lat=35.8,
+        last_lon=14.2,
+        gap_start=start,
+        now=end,
+        course_deg=90.0,
+        speed_kn=10.0,
+    )
+
+    assert result.continuous is True
+    assert result.covered_checkpoints == result.checkpoint_count == 2
+    assert result.median_nearby_vessels == 3.0
+    assert result.observed_sources == ("aisstream",)
+
+
+def test_track_corridor_coverage_stays_false_without_route_observations():
+    from datetime import timedelta
+
+    from core.mda.coverage import compute_track_corridor_coverage
+
+    class Store:
+        def positions_between(self, *args, **kwargs):
+            return []
+
+    start = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
+    result = compute_track_corridor_coverage(
+        Store(),
+        mmsi="111000778",
+        last_lat=35.8,
+        last_lon=14.2,
+        gap_start=start,
+        now=start + timedelta(hours=7),
+        course_deg=180.0,
+        speed_kn=12.0,
+    )
+
+    assert result.continuous is False
+    assert result.covered_checkpoints == 0
+    assert result.median_nearby_vessels == 0.0
+
+
 def test_at_defaults_to_now_and_is_echoed_back():
     before = datetime.now(timezone.utc)
     result = compute_coverage_baseline("111000555", 35.5, 14.1)

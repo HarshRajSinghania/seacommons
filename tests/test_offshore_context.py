@@ -80,6 +80,50 @@ def test_same_gap_near_coast_stays_raw_anomaly(monkeypatch):
     assert result["qualified"] is False
 
 
+def test_narrow_open_sea_gap_needs_track_corridor_continuity(monkeypatch):
+    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 95.0))
+    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 24.0)
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
+    context = build_offshore_context(36.0, 15.0)
+    assert context["open_sea"] is True
+    assert context["deep_offshore"] is False
+
+    metadata = {
+        "silent_seconds": 7 * 3600,
+        "pre_gap_speed_kn": 12.0,
+        "jamming_score": 0.0,
+        "gap_reason": {
+            "hypothesis": "vessel_gap",
+            "nearby_vessels_reporting_before": 18,
+            "nearby_vessels_reporting_after": 22,
+            "confidence": 0.8,
+        },
+        "behaviour_context": {"reason_codes": []},
+    }
+    without_corridor = qualify_offshore_anomaly("long_gap", metadata, context)
+    assert without_corridor["qualified"] is False
+
+    with_corridor = qualify_offshore_anomaly(
+        "long_gap",
+        {
+            **metadata,
+            "track_coverage_continuity": {
+                "continuous": True,
+                "checkpoint_count": 4,
+                "covered_checkpoints": 4,
+                "covered_fraction": 1.0,
+                "median_nearby_vessels": 8,
+            },
+        },
+        context,
+    )
+    assert with_corridor["qualified"] is True
+    assert "OPEN_SEA_CONTEXT" in with_corridor["reason_codes"]
+    assert "TRACK_CORRIDOR_COVERAGE_PRESENT" in with_corridor["reason_codes"]
+
+
 def test_sustained_offshore_tanker_rendezvous_is_evidence_candidate(monkeypatch):
     monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 180.0))
     monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 110.0)

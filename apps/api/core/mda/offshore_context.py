@@ -4,6 +4,13 @@ from typing import Any
 
 OFFSHORE_COAST_KM = 40.0
 OFFSHORE_PORT_KM = 40.0
+# "Deep offshore" is useful for low-specificity behaviours, but a hard 40 km
+# coast threshold erases narrow international shipping corridors such as the
+# Sicily Channel. Gap analysis therefore has a second open-sea context: still
+# well outside port/anchorage operations, but allowed closer to land when
+# track-derived coverage continuity supplies the stronger evidence gate.
+OPEN_SEA_COAST_KM = 10.0
+OPEN_SEA_PORT_KM = 20.0
 
 _PASSENGER_HSC_TYPES = frozenset((*range(40, 50), *range(60, 70)))
 _LOW_SPECIFICITY_FAMILIES = frozenset({
@@ -52,9 +59,12 @@ def _healthy_prolonged_gap(
     jam = float(metadata.get("jamming_score") or 0.0)
     neighbour_coverage = nearby_before >= 5 and nearby_after >= 5
     community_coverage = bool(context.get("ais_coverage_witnesses"))
+    corridor_coverage = bool(
+        (metadata.get("track_coverage_continuity") or {}).get("continuous")
+    )
     return (
         silent_s >= 4 * 3600
-        and (neighbour_coverage or community_coverage)
+        and (neighbour_coverage or community_coverage or corridor_coverage)
         and str(gap.get("hypothesis") or "vessel_gap") != "coverage_gap"
         and confidence >= 0.70
         and jam < 0.3
@@ -157,10 +167,16 @@ def build_offshore_context(
     anchorage = reference.in_port_or_anchorage(lat, lon)
     sts_zone = reference.in_sts_zone(lat, lon)
     chokepoint = reference.chokepoint_of(lat, lon)
-    offshore = (
+    deep_offshore = (
         coast_km is not None
         and coast_km >= OFFSHORE_COAST_KM
         and port_km >= OFFSHORE_PORT_KM
+        and not anchorage
+    )
+    open_sea = (
+        coast_km is not None
+        and coast_km >= OPEN_SEA_COAST_KM
+        and port_km >= OPEN_SEA_PORT_KM
         and not anchorage
     )
     coverage = []
@@ -178,7 +194,10 @@ def build_offshore_context(
         "in_port_or_anchorage": anchorage,
         "sts_zone": sts_zone,
         "chokepoint": (chokepoint or {}).get("name") if isinstance(chokepoint, dict) else None,
-        "offshore": offshore,
+        "offshore": deep_offshore,
+        "deep_offshore": deep_offshore,
+        "open_sea": open_sea,
+        "sea_context": "deep_offshore" if deep_offshore else "open_sea" if open_sea else "coastal",
         "ais_coverage_witnesses": coverage,
         "coastline_source": "Natural Earth lowres (context only)",
     }
@@ -201,20 +220,28 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
                 "scheduled traffic context; it remains durable internal evidence."
             ),
         }
-    if not context.get("offshore"):
+    anomaly = str(anomaly_type or "").lower()
+    is_gap = anomaly in {"gap", "long_gap"}
+    deep_offshore = bool(context.get("deep_offshore", context.get("offshore")))
+    open_sea = bool(context.get("open_sea", deep_offshore))
+    # Low-specificity anomaly families still require deep-offshore context.
+    # AIS gaps are different: in narrow sea corridors a 40 km coast threshold
+    # is a geographic blind spot, so they may enter the stronger open-sea path.
+    if not (open_sea if is_gap else deep_offshore):
         return {
             "qualified": False,
             "reason_codes": ["NOT_OFFSHORE"],
             "stage": "anomaly",
             "rationale": (
-                "Observation is not offshore under the current coast/port context gate; "
-                "it remains internal context and is not promoted to Live."
+                "Observation is not offshore/open-sea under the coastal/port "
+                "context gate; it remains internal evidence and is not promoted to Live."
             ),
         }
 
-    reasons: list[str] = ["OFFSHORE_CONTEXT"]
+    reasons: list[str] = [
+        "OFFSHORE_CONTEXT" if deep_offshore else "OPEN_SEA_CONTEXT"
+    ]
     qualified = False
-    anomaly = str(anomaly_type or "").lower()
     behaviour = metadata.get("behaviour_context") or {}
     behaviour_reasons = set(behaviour.get("reason_codes") or ()) if isinstance(behaviour, dict) else set()
     coverage_witnesses = context.get("ais_coverage_witnesses") or []
@@ -233,8 +260,12 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         jam = float(metadata.get("jamming_score") or 0.0)
         neighbour_coverage = nearby_before >= 5 and nearby_after >= 5
         community_coverage = bool(coverage_witnesses)
+        corridor = metadata.get("track_coverage_continuity") or {}
+        corridor_coverage = bool(
+            isinstance(corridor, dict) and corridor.get("continuous")
+        )
         healthy_local_coverage = (
-            (neighbour_coverage or community_coverage)
+            (neighbour_coverage or community_coverage or corridor_coverage)
             and gap_hypothesis != "coverage_gap"
             and gap_confidence >= 0.70
             and jam < 0.3
@@ -255,26 +286,47 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
             independently_corroborated = False
 
         # An open silence is not dark activity merely because other vessels
-        # continued reporting around the LAST known point. After several hours
-        # the target may be far outside that local receiver footprint. Public
-        # Live therefore needs specific behavioural context, a temporal
-        # community-station witness, a closed/reappeared gap, or an independent
-        # evidence lineage. Neighbor traffic alone remains operator evidence.
+        # continued reporting around the LAST known point. The stronger
+        # corridor witness follows the target's projected course through time
+        # and checks whether OTHER vessels kept reporting nearby. This permits
+        # narrow open-sea corridors without pretending origin-only coverage is
+        # route-continuous coverage.
         qualified = (
             silent_s >= 3600
             and healthy_local_coverage
             and (
                 baseline_unusual
-                or (prolonged and community_coverage)
+                or (prolonged and (community_coverage or corridor_coverage))
                 or reappearance_confirmed
                 or independently_corroborated
             )
         )
+        pre_gap_speed = float(metadata.get("pre_gap_speed_kn") or 0.0)
+        if open_sea and not deep_offshore:
+            # Closer-to-coast open-sea cases require the stronger path.
+            qualified = bool(
+                qualified
+                and silent_s >= 4 * 3600
+                and pre_gap_speed >= 2.0
+                and (
+                    corridor_coverage
+                    or reappearance_confirmed
+                    or independently_corroborated
+                )
+            )
         if healthy_local_coverage:
             reasons.append("LOCAL_AIS_COVERAGE_HEALTHY")
+        if corridor_coverage:
+            reasons.append("TRACK_CORRIDOR_COVERAGE_PRESENT")
         if prolonged:
             reasons.append("PROLONGED_OFFSHORE_GAP")
-        if prolonged and not community_coverage and not baseline_unusual and not reappearance_confirmed:
+        if (
+            prolonged
+            and not community_coverage
+            and not corridor_coverage
+            and not baseline_unusual
+            and not reappearance_confirmed
+        ):
             reasons.append("OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS")
         if reappearance_confirmed:
             reasons.append("GAP_REAPPEARANCE_CONFIRMED")

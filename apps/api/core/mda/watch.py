@@ -862,7 +862,7 @@ class MdaWatch:
                     nearby_vessels_reporting_after=nearby_after,
                     coverage=coverage,
                     pre_gap_speed=last.sog,
-                    pre_gap_course=_last_course(track_store, mmsi),
+                    pre_gap_course=_last_course(track_store, mmsi, at=gap_start),
                 )
                 if gap_reason.hypothesis == "coverage_gap":
                     continue
@@ -877,7 +877,7 @@ class MdaWatch:
                     continue
             jam = jamming.in_jamming_zone(last.lat, last.lon)
             port_or_anchorage = reference.in_port_or_anchorage(last.lat, last.lon)
-            pre_gap_course = _last_course(track_store, mmsi)
+            pre_gap_course = _last_course(track_store, mmsi, at=gap_start)
             cue = None
             # Cross-sensor collection follows the local investigation gate.
             # Do not spend network/SAR queries on every one-hour AIS silence.
@@ -891,7 +891,23 @@ class MdaWatch:
                 and jam < 0.3
                 and not port_or_anchorage
             )
+            track_coverage_continuity = None
             if gap_cross_cue_ready:
+                try:
+                    from core.mda.coverage import compute_track_corridor_coverage
+
+                    track_coverage_continuity = compute_track_corridor_coverage(
+                        track_store,
+                        mmsi=mmsi,
+                        last_lat=last.lat,
+                        last_lon=last.lon,
+                        gap_start=gap_start,
+                        now=now_dt,
+                        course_deg=pre_gap_course,
+                        speed_kn=last.sog,
+                    ).as_metadata()
+                except Exception as exc:  # pragma: no cover
+                    logger.debug("track corridor coverage failed: %s", exc)
                 try:
                     from core.mda.darkship_cue import build as _cue
                     course = pre_gap_course
@@ -935,6 +951,9 @@ class MdaWatch:
                 ),
                 "behaviour_context": behaviour_context,
                 "vessel_type_context": ship_type,
+                "pre_gap_speed_kn": last.sog,
+                "pre_gap_course_deg": pre_gap_course,
+                "track_coverage_continuity": track_coverage_continuity,
             }
             offshore_context = build_offshore_context(
                 last.lat,
@@ -972,6 +991,7 @@ class MdaWatch:
                     "port_or_anchorage": port_or_anchorage,
                     "pre_gap_speed_kn": last.sog,
                     "pre_gap_course_deg": pre_gap_course,
+                    "track_coverage_continuity": track_coverage_continuity,
                     "confidence_v2": confidence_v2.as_metadata(),
                     # docs/fixes.md M14.1: vessel class is context only here,
                     # never a detection gate.
@@ -1590,12 +1610,36 @@ class MdaWatch:
         return False
 
 
-def _last_course(track_store: Any, mmsi: str) -> Optional[float]:
-    from datetime import datetime as _dt
-    pts = track_store.track(mmsi, since=_dt.now(timezone.utc) - timedelta(hours=3), limit=20)
+def _last_course(
+    track_store: Any,
+    mmsi: str,
+    *,
+    at: Optional[datetime] = None,
+    lookback_hours: float = 3.0,
+) -> Optional[float]:
+    """Return the latest reliable course immediately before the anchor time.
+
+    Gap analysis anchors course lookup to the start of the silence, not to
+    wall-clock now. Otherwise every gap older than the lookback window loses
+    its pre-gap course exactly when it becomes interesting enough to analyse.
+    """
+    anchor = at or datetime.now(timezone.utc)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    pts = track_store.track(
+        mmsi,
+        since=anchor - timedelta(hours=lookback_hours),
+        until=anchor,
+        limit=120,
+    )
     for p in reversed(pts):
         if p.get("cog") is not None:
-            return float(p["cog"])
+            try:
+                course = float(p["cog"])
+            except (TypeError, ValueError):
+                continue
+            if 0.0 <= course <= 360.0:
+                return course
     if len(pts) >= 2:
         a, b = pts[-2], pts[-1]
         from core.geo import bearing_deg

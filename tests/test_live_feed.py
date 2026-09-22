@@ -2500,3 +2500,58 @@ def test_single_lineage_position_integrity_evidence_does_not_bypass_hypothesis_g
     assert _public_intel_feature(
         event, allowed_domains=frozenset({"grey_zone"})
     ) is None
+
+
+def test_public_live_projects_open_maritime_episode_dossier() -> None:
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import engine, session_scope
+    from core.live.feed import _published_open_episode_features
+
+    MaritimeEpisodeDB.__table__.create(bind=engine(), checkfirst=True)
+    episode_id = "episode:test:live-open-safety"
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with session_scope() as db:
+        db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).delete()
+        db.add(MaritimeEpisodeDB(
+            episode_id=episode_id,
+            episode_family="safety_episode",
+            subject_ids=["subj:mmsi:970123456"],
+            start_at=now - timedelta(minutes=15),
+            end_at=now,
+            geometry={"type": "Point", "coordinates": [14.1, 35.5]},
+            observation_ids=[],
+            feature_ids=[],
+            independence_groups=["ais_sensor_lineage"],
+            verification_status="single_source_observed",
+            behaviour_context={
+                "analysis": {
+                    "analysis_state": "evidence_candidate",
+                    "publication_state": "published",
+                    "resolution_state": "open",
+                    "lineage_ids": ["ais_sensor_lineage"],
+                },
+                "case_opening": {
+                    "reason_codes": ["AIS_DISTRESS_BEACON_ACTIVE"],
+                    "scope": "investigation_dossier_not_finding",
+                },
+            },
+            alternative_explanations=[],
+            evidence_fingerprint="test-live-open-safety",
+            method_version="test",
+            status="active",
+        ))
+
+    try:
+        features = _published_open_episode_features(500)
+        feature = next(item for item in features if item["id"] == episode_id)
+        props = feature["properties"]
+        assert props["episode_id"] == episode_id
+        assert props["episode_family"] == "safety_episode"
+        assert props["main_category"] == "maritime"
+        assert props["verification_status"] == "single_source_observed"
+        assert props["corroborated"] is False
+        assert props["public_summary"].startswith("AIS reported an operational safety state")
+        assert props["text"] == ""
+    finally:
+        with session_scope() as db:
+            db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).delete()

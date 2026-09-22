@@ -182,6 +182,199 @@ def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
     return features
 
 
+
+def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
+    """Project recent public MaritimeEpisode dossiers into Live.
+
+    A dossier may be public while still single-lineage/evidence_candidate.
+    That is deliberately weaker than a published InvestigationHypothesis:
+    it says "this behaviour is specific enough to investigate", not that the
+    interpretation is independently corroborated.
+    """
+    try:
+        from core.db.models import IntelEventDB, MaritimeEpisodeDB
+        from core.db.session import session_scope
+        from core.domain.incident_taxonomy import taxonomy_fields
+
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(hours=24)
+        with session_scope() as db:
+            orm_rows = (
+                db.query(MaritimeEpisodeDB)
+                .order_by(MaritimeEpisodeDB.updated_at.desc())
+                .limit(min(max(limit * 4, 200), 2000))
+                .all()
+            )
+            rows: list[dict[str, Any]] = []
+            for row in orm_rows:
+                end_at = (
+                    row.end_at.replace(tzinfo=UTC)
+                    if row.end_at.tzinfo is None
+                    else row.end_at.astimezone(UTC)
+                )
+                analysis = ((row.behaviour_context or {}).get("analysis") or {})
+                if (
+                    row.status == "superseded"
+                    or end_at < cutoff
+                    or analysis.get("publication_state") != "published"
+                    or analysis.get("analysis_state") not in {"evidence_candidate", "evidence"}
+                ):
+                    continue
+                rows.append({
+                    "episode_id": str(row.episode_id),
+                    "episode_family": str(row.episode_family or ""),
+                    "geometry": row.geometry,
+                    "observation_ids": list(row.observation_ids or ()),
+                    "independence_groups": list(row.independence_groups or ()),
+                    "verification_status": str(row.verification_status or "single_source_observed"),
+                    "behaviour_context": dict(row.behaviour_context or {}),
+                    "end_at": end_at,
+                })
+                if len(rows) >= limit:
+                    break
+
+            lookup_ids: set[str] = set()
+            for row in rows:
+                for value in list(row["observation_ids"])[:3]:
+                    raw = str(value or "").strip()
+                    if raw:
+                        lookup_ids.add(raw)
+                        if raw.startswith("ais:"):
+                            lookup_ids.add(raw.removeprefix("ais:"))
+            event_by_id: dict[str, dict[str, Any]] = {}
+            ids = sorted(lookup_ids)
+            for start in range(0, len(ids), 500):
+                for event in db.query(IntelEventDB).filter(
+                    IntelEventDB.id.in_(ids[start:start + 500])
+                ).all():
+                    event_by_id[event.id] = {
+                        "id": event.id,
+                        "title": event.title or "",
+                        "meta": dict(event.meta or {}),
+                    }
+    except Exception:
+        logger.exception("Failed to project open MaritimeEpisode dossiers")
+        return []
+
+    family_to_anomaly = {
+        "gap_episode": "long_gap",
+        "rendezvous_episode": "ais_rendezvous",
+        "spoofing_episode": "position_jump",
+        "infrastructure_proximity_episode": "infrastructure_pattern",
+        "port_call_episode": "sanctioned_port_call",
+        "safety_episode": "safety_event",
+        "identity_integrity_episode": "identity_anomaly",
+    }
+    family_to_title = {
+        "gap_episode": "AIS dark-activity dossier",
+        "rendezvous_episode": "Sustained vessel rendezvous dossier",
+        "spoofing_episode": "AIS position-integrity dossier",
+        "infrastructure_proximity_episode": "Infrastructure-proximity dossier",
+        "port_call_episode": "Sanctioned vessel port-call dossier",
+        "safety_episode": "AIS-reported maritime safety dossier",
+        "identity_integrity_episode": "Vessel identity-integrity dossier",
+    }
+    family_to_summary = {
+        "gap_episode": "AIS silence met the case-opening threshold. This is an investigation dossier, not proof of intentional dark activity.",
+        "rendezvous_episode": "A sustained vessel rendezvous met the case-opening threshold. Proximity alone does not establish a transfer or illicit activity.",
+        "spoofing_episode": "A sustained AIS position-integrity pattern met the case-opening threshold. A single AIS lineage does not by itself prove spoofing.",
+        "infrastructure_proximity_episode": "A sustained infrastructure-proximity pattern met the case-opening threshold. Proximity does not establish interference.",
+        "port_call_episode": "Observed vessel movement and identity data met the case-opening threshold. This does not establish sanctions evasion.",
+        "safety_episode": "AIS reported an operational safety state. This dossier records the signal and updates; it is not independent confirmation of a casualty.",
+        "identity_integrity_episode": "An identity-integrity pattern met the case-opening threshold. This is not an allegation of deceptive intent.",
+    }
+
+    features: list[dict[str, Any]] = []
+    for row in rows:
+        family = str(row["episode_family"] or "")
+        anomaly = family_to_anomaly.get(family)
+        if anomaly is None or not row["geometry"]:
+            continue
+        source_event = None
+        for value in list(row["observation_ids"])[:3]:
+            raw = str(value or "").strip()
+            source_event = event_by_id.get(raw)
+            if source_event is None and raw.startswith("ais:"):
+                source_event = event_by_id.get(raw.removeprefix("ais:"))
+            if source_event is not None:
+                break
+        meta = dict(source_event.get("meta") or {}) if source_event is not None else {}
+        opening = (row["behaviour_context"] or {}).get("case_opening") or {}
+        reason_codes = list(opening.get("reason_codes") or ())
+        safety = family == "safety_episode"
+        sanctions = (
+            family == "port_call_episode"
+            or "SANCTIONS_IDENTITY_MATCH" in reason_codes
+        )
+        domain = "safety" if safety else "sanctions" if sanctions else "grey_zone"
+        event_type = (
+            "vessel_incident" if safety
+            else "ais_rendezvous" if family == "rendezvous_episode"
+            else "vessel_identity" if family == "port_call_episode"
+            else "ais_anomaly"
+        )
+        category = visual_category_fields(
+            source="SeaCommons episode engine",
+            event_type=event_type,
+            maritime_domain=domain,
+            metadata={**meta, "anomaly_type": anomaly},
+        )
+        taxonomy = taxonomy_fields(
+            event_type=event_type,
+            maritime_domain=domain,
+            metadata={**meta, "anomaly_type": anomaly, "episode_family": family},
+        )
+        observed_at = row["end_at"].isoformat()
+        verification = str(row["verification_status"] or "single_source_observed")
+        corroborated = verification == VerificationStatus.MULTI_SOURCE_CORROBORATED.value
+        title = (
+            str(source_event.get("title") or "")[:255]
+            if source_event is not None and source_event.get("title")
+            else family_to_title[family]
+        )
+        public = {
+            "type": "Feature",
+            "id": str(row["episode_id"]),
+            "geometry": row["geometry"],
+            "properties": {
+                "schema": LIVE_SIGNAL_SCHEMA,
+                "id": str(row["episode_id"]),
+                "episode_id": str(row["episode_id"]),
+                "episode_family": family,
+                "live_role": "maritime_episode",
+                "type": event_type,
+                **category,
+                **taxonomy,
+                "kind": LiveSignalKind.CONTEXT.value,
+                "severity": "medium",
+                "tier": IntelTier.SIGNAL.value,
+                "verification_status": verification,
+                "publication_status": PublicationStatus.PUBLISHED.value,
+                "source_policy": SourcePolicy.OPERATOR_PUBLISHED.value,
+                "title": title,
+                "text": "",
+                "url": "",
+                "source": "SeaCommons episode engine",
+                "timestamp_utc": observed_at,
+                "location_precision": LocationPrecision.REPORTED_OR_DERIVED.value,
+                "maritime_domain": domain,
+                "analysis_state": ((row["behaviour_context"] or {}).get("analysis") or {}).get("analysis_state"),
+                "publication_state": "published",
+                "resolution_state": ((row["behaviour_context"] or {}).get("analysis") or {}).get("resolution_state") or "open",
+                "reason_codes": reason_codes,
+                "evidence_stage": "corroborated" if corroborated else "derived",
+                "corroborated": corroborated,
+                "independent_source_count": len(row["independence_groups"]),
+                "public_summary": family_to_summary[family],
+            },
+        }
+        try:
+            features.append(validate_live_signal(public))
+        except ValueError:
+            logger.warning("Dropping open episode that violates Live contract id=%s", row["episode_id"])
+    return features
+
+
 def _published_ingested_features(limit: int) -> list[dict[str, Any]]:
     """
     Project user/partner signals only after an explicit publication decision.
@@ -694,15 +887,42 @@ def public_signal_collection(
         mode_name: finalize(mode_name)
         for mode_name in ("humanitarian", "security", "safety")
     }
-    # Canonical Security cutover: detector output stays internal evidence;
-    # only hypotheses that passed the publication gate enter public Live.
-    features_by_mode["security"].extend(
-        _published_security_hypothesis_features(_LIVE_WINDOW_LIMIT)
-    )
-    features_by_mode["security"].sort(
-        key=lambda f: str((f.get("properties") or {}).get("timestamp_utc") or ""),
-        reverse=True,
-    )
+    # Canonical case surfaces have two levels:
+    # 1) a public MaritimeEpisode dossier may be open while still
+    #    evidence_candidate/single-lineage;
+    # 2) a published InvestigationHypothesis is the stronger assessed layer.
+    # Both use the same episode_id. A hypothesis replaces, rather than
+    # duplicates, its open dossier when it becomes publishable.
+    for feature in _published_open_episode_features(_LIVE_WINDOW_LIMIT):
+        props = feature.get("properties") or {}
+        target_mode = "safety" if props.get("maritime_domain") == "safety" else "security"
+        existing_ids = {
+            str((item.get("properties") or {}).get("episode_id") or item.get("id") or "")
+            for item in features_by_mode[target_mode]
+        }
+        feature_id = str(props.get("episode_id") or feature.get("id") or "")
+        if feature_id not in existing_ids:
+            features_by_mode[target_mode].append(feature)
+
+    published_hypotheses = _published_security_hypothesis_features(_LIVE_WINDOW_LIMIT)
+    security_index = {
+        str((item.get("properties") or {}).get("episode_id") or item.get("id") or ""): index
+        for index, item in enumerate(features_by_mode["security"])
+    }
+    for feature in published_hypotheses:
+        props = feature.get("properties") or {}
+        feature_id = str(props.get("episode_id") or feature.get("id") or "")
+        if feature_id in security_index:
+            features_by_mode["security"][security_index[feature_id]] = feature
+        else:
+            security_index[feature_id] = len(features_by_mode["security"])
+            features_by_mode["security"].append(feature)
+
+    for mode_name in ("security", "safety"):
+        features_by_mode[mode_name].sort(
+            key=lambda f: str((f.get("properties") or {}).get("timestamp_utc") or ""),
+            reverse=True,
+        )
     add_nearby_humanitarian_context(
         features_by_mode["security"], features_by_mode["humanitarian"]
     )

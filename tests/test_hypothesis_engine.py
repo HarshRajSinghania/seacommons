@@ -92,6 +92,108 @@ def test_exit_gate_a_single_low_specificity_observation_stays_episode_only():
     assert hyp is None
 
 
+def test_single_sustained_position_relocation_opens_dossier_without_corroboration():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    _add_event(
+        "open-spoof-1",
+        anomaly_type="position_jump",
+        ais_integrity_classification={"label": "position_anomaly", "confidence": 0.9},
+        teleport_pattern="sustained_relocation",
+        coincident_teleport_peers=[],
+        teleport_near_port=False,
+    )
+    episode_id = "episode:test:open-spoof"
+    episode = _episode(
+        "spoofing_episode", signal_ids=["open-spoof-1"], episode_id=episode_id
+    )
+
+    hyp = evaluate_episode(episode)
+
+    assert hyp is not None
+    assert hyp.state == "collecting"
+    assert hyp.evidence_stage == "derived"
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        opening = (row.behaviour_context or {}).get("case_opening") or {}
+        assert analysis["publication_state"] == "published"
+        assert analysis["analysis_state"] == "evidence_candidate"
+        assert "SUSTAINED_POSITION_RELOCATION" in opening["reason_codes"]
+
+
+def test_single_safety_signal_opens_dossier_but_not_intelligence_hypothesis():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    intel_store.add(
+        IntelEvent(
+            id="safety-beacon-1",
+            type="distress",
+            severity="high",
+            lat=35.5,
+            lon=14.1,
+            title="AIS distress beacon",
+            source="ais",
+            linked_mmsi="970123456",
+            metadata={
+                "ais_nav_status_kind": "distress_beacon",
+                "publication_status": "published",
+                "analysis_state": "signal",
+                "verification_status": "ais_transponder",
+            },
+        ),
+        dedup_key="safety-beacon-1",
+    )
+    episode_id = "episode:test:safety"
+    episode = _episode(
+        "safety_episode",
+        subject="subj:mmsi:970123456",
+        signal_ids=["safety-beacon-1"],
+        episode_id=episode_id,
+    )
+    episode["properties"]["analysis_state"] = "signal"
+
+    hyp = evaluate_episode(episode)
+
+    assert hyp is None
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        assert row is not None
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        assert analysis["publication_state"] == "published"
+        assert analysis["analysis_state"] == "evidence_candidate"
+
+
+def test_single_sanctions_sts_dwell_opens_infrastructure_dossier_only():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    _add_event(
+        "infra-sanctions-1",
+        anomaly_type="sanctions_bunkering_loiter",
+        sanctions_matched=True,
+        loiter_minutes=135.0,
+    )
+    episode_id = "episode:test:infra-sanctions"
+    episode = _episode(
+        "infrastructure_proximity_episode",
+        signal_ids=["infra-sanctions-1"],
+        episode_id=episode_id,
+    )
+
+    hyp = evaluate_episode(episode)
+
+    assert hyp is None
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        opening = (row.behaviour_context or {}).get("case_opening") or {}
+        assert analysis["publication_state"] == "published"
+        assert "SUSTAINED_STS_ZONE_DWELL" in opening["reason_codes"]
+
+
 def test_exit_gate_sanctions_match_alone_never_creates_a_hypothesis():
     """docs/fixes.md M14.3: an identity_integrity_episode (sdn_match,
     mmsi_duplicate, ...) has no wired gate at all -- a bare official-list

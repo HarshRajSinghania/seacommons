@@ -210,8 +210,15 @@ class MdaWatch:
         families = (
             ("ais_anomaly", ("gap", "long_gap")),
             ("ais_anomaly", ("position_jump", "circle_spoof", "static_spoof")),
+            ("ais_anomaly", ("loiter", "cable_proximity", "sanctions_bunkering_loiter")),
             ("ais_rendezvous", ("ais_rendezvous", "rendezvous", "sts")),
-            ("vessel_identity", ("mmsi_duplicate", "identity_anomaly", "sdn_match", "sanctioned_vessel")),
+            (
+                "vessel_identity",
+                (
+                    "mmsi_duplicate", "identity_anomaly", "sdn_match",
+                    "sanctioned_vessel", "sanctioned_port_call",
+                ),
+            ),
             ("dark_candidate", ("dark_candidate",)),
         )
         by_id = {}
@@ -301,6 +308,30 @@ class MdaWatch:
                         source=row.source or "", linked_mmsi=row.linked_mmsi or "",
                         metadata=metadata,
                     )
+
+            # Safety uses ais_nav_status_kind rather than anomaly_type. Keep a
+            # separate bounded quota so operational distress/grounding signals
+            # cannot be starved by high-volume Security detector families.
+            nav_kind = IntelEventDB.meta["ais_nav_status_kind"].as_string()
+            safety_rows = (
+                db.query(IntelEventDB)
+                .filter(
+                    IntelEventDB.timestamp_utc >= cutoff,
+                    IntelEventDB.type == "distress",
+                    nav_kind.in_(("distress_beacon", "aground")),
+                )
+                .order_by(IntelEventDB.timestamp_utc.desc())
+                .limit(limit_per_family)
+                .all()
+            )
+            for row in safety_rows:
+                by_id[row.id] = IntelEvent(
+                    id=row.id, timestamp_utc=row.timestamp_utc, type=row.type or "",
+                    severity=row.severity or "", lat=row.lat, lon=row.lon,
+                    title=row.title or "", text=row.text or "", url=row.url or "",
+                    source=row.source or "", linked_mmsi=row.linked_mmsi or "",
+                    metadata=dict(row.meta or {}),
+                )
         return list(by_id.values())
 
     @staticmethod

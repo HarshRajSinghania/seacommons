@@ -78,6 +78,10 @@ _FAMILY_BY_ANOMALY_TYPE: dict[str, str] = {
     "sanctions_bunkering_loiter": "infrastructure_proximity_episode",  # core.mda.watch.scan_infra_loiter
     "sanctioned_port_call": "port_call_episode",
     "not_under_command": "safety_episode",
+    "restricted_manoeuvrability": "safety_episode",
+    "restricted_maneuverability": "safety_episode",
+    "aground": "safety_episode",
+    "distress_beacon": "safety_episode",
     "sudden_stop": "safety_episode",
 }
 _KNOWN_FAMILIES = frozenset(

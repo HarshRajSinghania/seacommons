@@ -61,6 +61,9 @@ def test_family_for_maps_the_real_live_emitter_vocabulary():
     assert family_for("impossible_speed") == "spoofing_episode"  # core.anomaly.ais
     assert family_for("dark_zone_entry") == "spoofing_episode"  # core.anomaly.ais
     assert family_for("dark_candidate") == "gap_episode"  # core.intel.viirs_monitor
+    assert family_for("distress_beacon") == "safety_episode"
+    assert family_for("aground") == "safety_episode"
+    assert family_for("restricted_manoeuvrability") == "safety_episode"
 
 
 def test_exit_gate_repeated_updates_of_one_continuing_event_remain_one_episode():

@@ -209,6 +209,154 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
 
 
 
+
+def _case_opening_decision(
+    props: dict[str, Any], events: list[IntelEvent],
+) -> tuple[bool, tuple[str, ...]]:
+    """Decide whether an episode deserves a public dossier, not a finding.
+
+    Opening a dossier means the behaviour is specific enough to investigate
+    and update over time. It does not change verification_status and does not
+    imply independent corroboration, intent, illegality, or casualty.
+    """
+    family = str(props.get("episode_family") or "")
+    analysis_state = str(props.get("analysis_state") or "")
+    publication_state = str(props.get("publication_state") or "")
+    if (
+        publication_state == "published"
+        and analysis_state in {"evidence_candidate", "evidence"}
+    ):
+        return True, ("PRODUCER_PUBLICATION_DECISION",)
+
+    if family == "rendezvous_episode":
+        from core.mda.offshore_context import build_offshore_context
+
+        for event in events:
+            meta = event.metadata or {}
+            if str(meta.get("anomaly_type") or "") not in {
+                "ais_rendezvous", "rendezvous", "sts",
+            }:
+                continue
+            duration = float(meta.get("duration_min") or 0.0)
+            dark = bool(meta.get("dark"))
+            tanker = bool(meta.get("tanker"))
+            if duration < 90.0 or not (dark or tanker):
+                continue
+            if event.lat is None or event.lon is None:
+                continue
+            context = build_offshore_context(
+                float(event.lat), float(event.lon), include_ais_coverage=False
+            )
+            if not context.get("open_sea") or context.get("in_port_or_anchorage"):
+                continue
+            # A known STS/bunkering zone is routine context by itself. Require
+            # a dark-party irregularity there before opening a public dossier.
+            if context.get("sts_zone") and not dark:
+                continue
+            reasons = ["SUSTAINED_OPEN_SEA_RENDEZVOUS"]
+            if tanker:
+                reasons.append("TANKER_PARTICIPANT")
+            if dark:
+                reasons.append("AIS_GAP_CONTEXT_ON_PARTY")
+            return True, tuple(reasons)
+
+    if family == "spoofing_episode":
+        for event in events:
+            meta = event.metadata or {}
+            if str(meta.get("anomaly_type") or "") != "position_jump":
+                continue
+            classification = meta.get("ais_integrity_classification")
+            if not isinstance(classification, dict):
+                continue
+            if (
+                classification.get("label") == "position_anomaly"
+                and meta.get("teleport_pattern") == "sustained_relocation"
+                and not meta.get("coincident_teleport_peers")
+                and not meta.get("teleport_near_port")
+            ):
+                return True, (
+                    "SUSTAINED_POSITION_RELOCATION",
+                    "NO_COINCIDENT_MULTI_VESSEL_GLITCH",
+                    "OUTSIDE_PORT_CONTEXT",
+                )
+
+    if family == "infrastructure_proximity_episode":
+        from core.mda.offshore_context import build_offshore_context
+
+        for event in events:
+            meta = event.metadata or {}
+            anomaly = str(meta.get("anomaly_type") or "")
+            loiter_min = float(meta.get("loiter_minutes") or 0.0)
+            if (
+                anomaly == "sanctions_bunkering_loiter"
+                and meta.get("sanctions_matched")
+                and loiter_min >= 90.0
+            ):
+                return True, (
+                    "SANCTIONS_IDENTITY_MATCH",
+                    "SUSTAINED_STS_ZONE_DWELL",
+                )
+            infra = meta.get("infrastructure")
+            if (
+                anomaly not in {"cable_proximity", "loiter"}
+                or not isinstance(infra, dict)
+                or str(infra.get("kind") or "") not in {"cable", "pipeline"}
+                or float(infra.get("distance_km") or 999.0) > 2.0
+                or loiter_min < 120.0
+                or event.lat is None
+                or event.lon is None
+            ):
+                continue
+            behaviour = meta.get("behaviour_context") or {}
+            if isinstance(behaviour, dict) and behaviour.get("status") == "expected":
+                continue
+            context = build_offshore_context(
+                float(event.lat), float(event.lon), include_ais_coverage=False
+            )
+            if context.get("open_sea") and not context.get("in_port_or_anchorage"):
+                return True, (
+                    "SUSTAINED_INFRASTRUCTURE_PROXIMITY",
+                    "OPEN_SEA_CONTEXT",
+                )
+
+    if family == "safety_episode":
+        for event in events:
+            meta = event.metadata or {}
+            nav_kind = str(
+                meta.get("ais_nav_status_kind")
+                or meta.get("anomaly_type")
+                or ""
+            )
+            if nav_kind == "distress_beacon" and event.type == "distress":
+                return True, ("AIS_DISTRESS_BEACON_ACTIVE",)
+            if nav_kind == "aground" and event.type == "distress":
+                return True, ("AIS_REPORTED_AGROUND_STATE",)
+
+    return False, ()
+
+
+def _apply_case_opening(
+    episode: dict[str, Any], events: list[IntelEvent],
+) -> dict[str, Any]:
+    props = episode.setdefault("properties", {})
+    opened, reason_codes = _case_opening_decision(props, events)
+    if not opened:
+        return episode
+    props["publication_state"] = "published"
+    if str(props.get("analysis_state") or "") not in {
+        "evidence_candidate", "evidence",
+    }:
+        props["analysis_state"] = "evidence_candidate"
+    props.setdefault("resolution_state", "open")
+    behaviour = dict(props.get("behaviour_context") or {})
+    behaviour["case_opening"] = {
+        "reason_codes": list(reason_codes),
+        "scope": "investigation_dossier_not_finding",
+    }
+    props["behaviour_context"] = behaviour
+    return episode
+
+
 def _should_persist_episode(props: dict[str, Any]) -> bool:
     """Persist aggregation, not one-detector wrappers. Raw signals stay durable."""
     family = str(props.get("episode_family") or "unclassified_episode")
@@ -253,6 +401,7 @@ def evaluate_episode(episode: dict[str, Any]) -> Optional[InvestigationHypothesi
     events = [e for e in (intel_store.get_durable(sid) for sid in signal_ids) if e is not None]
     if events:
         episode = _attach_cross_modal_evidence(episode, events)
+        episode = _apply_case_opening(episode, events)
         props = episode.get("properties") or {}
 
     # SourceObservation/IntelEvent are the durable anomaly archive. An episode

@@ -36,7 +36,13 @@ while ((line = Console.In.ReadLine()) is not null)
                 if (!states.TryGetValue(streamKey, out var state))
                     states[streamKey] = state = new DecoderState(rate);
                 state.Process(pcm);
-                foreach (var msg in state.Drain()) if (msg.Status == "OK") messages.Add(ToWire(msg));
+                var emitted = new HashSet<string>();
+                foreach (var msg in state.Drain())
+                {
+                    if (msg.Status != "OK") continue;
+                    var key = string.Join(",", msg.Symbols ?? new List<int>());
+                    if (emitted.Add(key)) messages.Add(ToWire(msg));
+                }
             }
         }
     }

@@ -50,9 +50,9 @@ def test_rendezvous_emits_after_sustained(monkeypatch):
     _feed("111000002", 37.0025, 18.0005, sog=0.4)
     # first scan: pair seen, not yet sustained
     assert w.scan_rendezvous() == 0
-    # backdate the pair's first_seen past the 30-min threshold
+    # backdate the pair's first_seen past the 120-min threshold
     key = tuple(sorted(("111000001", "111000002")))
-    w._pairs[key]["first_seen"] = time.time() - 40 * 60
+    w._pairs[key]["first_seen"] = time.time() - 130 * 60
     _feed("111000001", 37.00, 18.00, sog=0.3)
     _feed("111000002", 37.0025, 18.0005, sog=0.4)
     assert w.scan_rendezvous() == 1
@@ -272,6 +272,68 @@ def test_gap_scan_suppresses_common_port_wide_outage():
     assert w.scan_gaps() == 0
     assert not _alerts("ais_anomaly")
 
+
+
+def test_reappeared_gap_is_persisted_resolved_and_re_evaluated(monkeypatch):
+    from core.db.models import IntelEventDB, VesselTrackDB
+    from core.db.session import session_scope
+
+    mmsi = "111009901"
+    event_id = f"aisgap:{mmsi}"
+    now = datetime.now(timezone.utc)
+    emitted_at = now - timedelta(hours=1)
+    with session_scope() as db:
+        db.query(IntelEventDB).filter(IntelEventDB.id == event_id).delete()
+        db.query(VesselTrackDB).filter(VesselTrackDB.mmsi == mmsi).delete()
+        db.add(IntelEventDB(
+            id=event_id,
+            timestamp_utc=emitted_at.isoformat(),
+            type="ais_anomaly",
+            severity="high",
+            lat=35.0,
+            lon=15.0,
+            title="AIS gap — TEST",
+            source="mda",
+            linked_mmsi=mmsi,
+            meta={
+                "anomaly_type": "long_gap",
+                "silent_seconds": 4 * 3600,
+                "gap_still_open": True,
+                "publication_status": "published",
+                "analysis_state": "evidence_candidate",
+                "resolution_state": "open",
+            },
+        ))
+        db.add(VesselTrackDB(
+            mmsi=mmsi,
+            ts=now.replace(tzinfo=None),
+            received_at=now.replace(tzinfo=None),
+            lat=35.2,
+            lon=15.2,
+            sog=10.0,
+            cog=90.0,
+            heading=90.0,
+            nav_status=0,
+            source="aisstream",
+        ))
+
+    evaluated = []
+    w = MdaWatch()
+    monkeypatch.setattr(
+        w,
+        "scan_hypotheses",
+        lambda *, extra_events=None: evaluated.extend(extra_events or []) or 0,
+    )
+    assert w._resolve_reappeared_gaps() == 1
+    assert evaluated and evaluated[0].id == event_id
+
+    with session_scope() as db:
+        row = db.get(IntelEventDB, event_id)
+        assert row.meta["gap_still_open"] is False
+        assert row.meta["gap_reappearance_confirmed"] is True
+        assert row.meta["resolution_state"] == "resolved"
+        db.delete(row)
+        db.query(VesselTrackDB).filter(VesselTrackDB.mmsi == mmsi).delete()
 
 
 def test_gap_scan_does_not_cross_cue_young_gap(monkeypatch):

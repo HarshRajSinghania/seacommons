@@ -438,17 +438,35 @@ def _job_mda_daily() -> None:
 # ── Job: bounded darkship cue enrichment ────────────────────────────────────
 
 def _job_darkship_cue_refresh() -> None:
-    """Attach bounded SAR/darkship context outside the MDA detector hot path."""
+    """Drain one bounded enrichment queue, prioritising current Live gaps."""
     try:
         from core.mda.watch import mda_watch
 
-        report = mda_watch.refresh_darkship_cues(limit=6)
-        if report["refreshed"] or report["with_unmatched_sar"]:
+        live = mda_watch.refresh_darkship_cues(
+            limit=4,
+            min_age_hours=0.25,
+            max_age_days=1,
+            recheck_hours=1.0,
+            include_s1=True,
+        )
+        retrospective = mda_watch.refresh_darkship_cues(
+            limit=2,
+            min_age_hours=72.0,
+            max_age_days=10,
+            recheck_hours=24.0,
+            include_s1=False,
+        )
+        if (
+            live["refreshed"] or live["with_unmatched_sar"]
+            or retrospective["refreshed"] or retrospective["with_unmatched_sar"]
+        ):
             logger.info(
-                "Scheduler darkship cue refresh: scanned=%d refreshed=%d "
-                "with_unmatched_sar=%d hypotheses=%d",
-                report["scanned"], report["refreshed"],
-                report["with_unmatched_sar"], report["hypotheses_evaluated"],
+                "Scheduler darkship queue: live scanned=%d refreshed=%d sar=%d; "
+                "retro scanned=%d refreshed=%d sar=%d; hypotheses=%d",
+                live["scanned"], live["refreshed"], live["with_unmatched_sar"],
+                retrospective["scanned"], retrospective["refreshed"],
+                retrospective["with_unmatched_sar"],
+                live["hypotheses_evaluated"] + retrospective["hypotheses_evaluated"],
             )
     except Exception as exc:
         logger.warning("Scheduler darkship cue refresh failed: %s", exc)
@@ -619,7 +637,7 @@ def start() -> None:
                           id="expire_stale_hypotheses", replace_existing=True,
                           max_instances=1, misfire_grace_time=600)
 
-        scheduler.add_job(_job_darkship_cue_refresh, IntervalTrigger(minutes=30),
+        scheduler.add_job(_job_darkship_cue_refresh, IntervalTrigger(minutes=10),
                           id="darkship_cue_refresh", replace_existing=True,
                           max_instances=1, misfire_grace_time=600, next_run_time=_soon())
 

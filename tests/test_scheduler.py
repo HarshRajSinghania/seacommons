@@ -45,19 +45,34 @@ def test_darkship_cue_refresh_job_is_bounded(monkeypatch):
     from core.mda.watch import mda_watch
 
     calls = []
-    monkeypatch.setattr(
-        mda_watch,
-        "refresh_darkship_cues",
-        lambda *, limit: calls.append(limit) or {
+    def fake_refresh(**kwargs):
+        calls.append(kwargs)
+        return {
             "scanned": 0,
             "refreshed": 0,
             "with_unmatched_sar": 0,
             "hypotheses_evaluated": 0,
-        },
-    )
+        }
+
+    monkeypatch.setattr(mda_watch, "refresh_darkship_cues", fake_refresh)
 
     scheduler._job_darkship_cue_refresh()
-    assert calls == [6]
+    assert calls == [
+        {
+            "limit": 4,
+            "min_age_hours": 0.25,
+            "max_age_days": 1,
+            "recheck_hours": 1.0,
+            "include_s1": True,
+        },
+        {
+            "limit": 2,
+            "min_age_hours": 72.0,
+            "max_age_days": 10,
+            "recheck_hours": 24.0,
+            "include_s1": False,
+        },
+    ]
 
 
 def test_scheduler_registers_incident_watch_job():

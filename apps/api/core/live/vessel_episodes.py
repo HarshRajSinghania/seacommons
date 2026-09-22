@@ -264,6 +264,7 @@ def _build_episode_feature(
     )
     resolution_states = {str(p.get("resolution_state") or "open") for p in item_props}
     episode_resolution_state = "open" if "open" in resolution_states else (
+        "resolved" if "resolved" in resolution_states else
         "explained" if "explained" in resolution_states else "superseded"
     )
     publication_states = {str(p.get("publication_state") or "internal") for p in item_props}

@@ -272,6 +272,17 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         )
         baseline_unusual = bool(behaviour_reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
         prolonged = silent_s >= 4 * 3600 and healthy_local_coverage
+        reception = metadata.get("reception_expectation") or {}
+        strong_reception = bool(
+            isinstance(reception, dict)
+            and reception.get("support_level") == "strong"
+        )
+        if strong_reception:
+            reasons.append("STRONG_RECEPTION_EXPECTATION")
+            reasons.extend(
+                str(code) for code in (reception.get("reason_codes") or ())
+                if code
+            )
         reappearance_confirmed = bool(
             metadata.get("gap_reappearance_confirmed")
             or gap.get("reappearance_confirmed")
@@ -291,28 +302,27 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         # and checks whether OTHER vessels kept reporting nearby. This permits
         # narrow open-sea corridors without pretending origin-only coverage is
         # route-continuous coverage.
-        qualified = (
-            silent_s >= 3600
-            and healthy_local_coverage
-            and (
-                baseline_unusual
-                or (prolonged and (community_coverage or corridor_coverage))
-                or reappearance_confirmed
-                or independently_corroborated
+        # Single-lineage AIS can open a public *candidate* only when
+        # reception was strongly expected throughout the silence. A physically
+        # independent corroborator may justify investigation earlier, but
+        # neither path establishes intentional transmitter disabling.
+        qualified = bool(
+            (
+                silent_s >= 4 * 3600
+                and healthy_local_coverage
+                and strong_reception
+            )
+            or (
+                silent_s >= 3600
+                and independently_corroborated
             )
         )
         pre_gap_speed = float(metadata.get("pre_gap_speed_kn") or 0.0)
-        if open_sea and not deep_offshore:
-            # Closer-to-coast open-sea cases require the stronger path.
+        if open_sea and not deep_offshore and not independently_corroborated:
             qualified = bool(
                 qualified
-                and silent_s >= 4 * 3600
                 and pre_gap_speed >= 2.0
-                and (
-                    corridor_coverage
-                    or reappearance_confirmed
-                    or independently_corroborated
-                )
+                and corridor_coverage
             )
         if healthy_local_coverage:
             reasons.append("LOCAL_AIS_COVERAGE_HEALTHY")

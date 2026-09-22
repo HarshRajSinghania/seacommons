@@ -37,7 +37,7 @@ def test_offshore_gap_needs_healthy_coverage_and_strong_context(monkeypatch):
     assert "OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS" in result["reason_codes"]
 
 
-def test_reappeared_offshore_gap_with_healthy_coverage_qualifies(monkeypatch):
+def test_reappeared_offshore_gap_without_strong_reception_stays_unqualified(monkeypatch):
     monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
     monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
     monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
@@ -56,7 +56,7 @@ def test_reappeared_offshore_gap_with_healthy_coverage_qualifies(monkeypatch):
         },
         "behaviour_context": {"reason_codes": []},
     }, context)
-    assert result["qualified"] is True
+    assert result["qualified"] is False
     assert "GAP_REAPPEARANCE_CONFIRMED" in result["reason_codes"]
 
 
@@ -115,6 +115,16 @@ def test_narrow_open_sea_gap_needs_track_corridor_continuity(monkeypatch):
                 "covered_checkpoints": 4,
                 "covered_fraction": 1.0,
                 "median_nearby_vessels": 8,
+            },
+            "reception_expectation": {
+                "support_level": "strong",
+                "reason_codes": [
+                    "DENSE_PRE_GAP_REPORTING_HISTORY",
+                    "NEIGHBOUR_TRAFFIC_CONTINUED",
+                    "TRACK_CORRIDOR_COVERAGE_PRESENT",
+                    "NO_MATERIAL_JAMMING_CONTEXT",
+                    "MANY_EXPECTED_REPORTS_MISSING",
+                ],
             },
         },
         context,
@@ -346,7 +356,7 @@ def test_prolonged_open_gap_with_only_origin_neighbor_coverage_stays_candidate()
     assert "OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS" in result["reason_codes"]
 
 
-def test_prolonged_gap_with_temporal_community_coverage_can_qualify() -> None:
+def test_prolonged_gap_with_only_community_coverage_stays_unqualified() -> None:
     result = qualify_offshore_anomaly(
         "long_gap",
         {
@@ -365,7 +375,7 @@ def test_prolonged_gap_with_temporal_community_coverage_can_qualify() -> None:
             "ais_coverage_witnesses": [{"station_id": "3372", "coverage_role": "same_lineage_coverage_witness"}],
         },
     )
-    assert result["qualified"] is True
+    assert result["qualified"] is False
     assert "COMMUNITY_AIS_COVERAGE_PRESENT" in result["reason_codes"]
 
 

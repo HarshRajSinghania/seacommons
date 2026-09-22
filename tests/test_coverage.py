@@ -2,7 +2,7 @@
 """docs/fixes.md M4.2: AIS reception-quality CoverageBaseline."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core.mda.coverage import compute_coverage_baseline
 
@@ -161,6 +161,85 @@ def test_track_corridor_coverage_stays_false_without_route_observations():
     assert result.continuous is False
     assert result.covered_checkpoints == 0
     assert result.median_nearby_vessels == 0.0
+
+
+def test_expected_reporting_interval_uses_observed_vessel_cadence(monkeypatch):
+    import core.vessels.track_store as track_store_module
+
+    base = datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc)
+    own_rows = [
+        {"mmsi": "111000880", "ts": (base + timedelta(seconds=60 * i)).isoformat()}
+        for i in range(15)
+    ]
+    neighbours = [
+        {"mmsi": f"20000000{k}", "ts": base.isoformat()}
+        for k in range(6)
+    ]
+    monkeypatch.setattr(track_store_module.track_store, "track", lambda *a, **k: own_rows)
+    monkeypatch.setattr(
+        track_store_module.track_store,
+        "positions_between",
+        lambda *a, **k: own_rows + neighbours,
+    )
+    monkeypatch.setattr("core.mda.jamming.jamming.in_jamming_zone", lambda *a, **k: 0.0)
+    monkeypatch.setattr("core.intel.landmask.distance_to_coast_km", lambda *a, **k: 120.0)
+
+    result = compute_coverage_baseline("111000880", 35.5, 14.1, at=base + timedelta(minutes=20))
+    assert result.expected_reporting_interval_s == 60.0
+    assert result.preceding_track_density == 15
+
+
+def test_reception_expectation_requires_dense_history_neighbours_corridor_and_no_jamming():
+    from core.mda.coverage import (
+        CoverageBaseline,
+        TrackCoverageContinuity,
+        build_reception_expectation,
+    )
+
+    baseline = CoverageBaseline(
+        mmsi="111000881",
+        at=datetime.now(timezone.utc),
+        source_health="healthy",
+        expected_reporting_interval_s=60.0,
+        local_receiver_density=8,
+        neighbour_message_ratio=1.0,
+        coast_distance_km=100.0,
+        congestion="medium",
+        jamming_context=0.0,
+        preceding_track_density=18,
+    )
+    corridor = TrackCoverageContinuity(
+        method_version="track-corridor-coverage/v1",
+        checkpoint_count=3,
+        covered_checkpoints=3,
+        covered_fraction=1.0,
+        min_nearby_vessels=5,
+        median_nearby_vessels=7.0,
+        radius_nm=30.0,
+        time_window_min=50.0,
+        observed_sources=("aisstream",),
+    )
+    strong = build_reception_expectation(
+        gap_duration_s=4 * 3600,
+        coverage=baseline,
+        nearby_vessels_reporting_before=8,
+        nearby_vessels_reporting_after=9,
+        corridor=corridor,
+        jamming_score=0.0,
+    )
+    assert strong.strong is True
+    assert strong.expected_messages_during_gap == 240
+    assert "DENSE_PRE_GAP_REPORTING_HISTORY" in strong.reason_codes
+
+    weak = build_reception_expectation(
+        gap_duration_s=4 * 3600,
+        coverage=baseline,
+        nearby_vessels_reporting_before=8,
+        nearby_vessels_reporting_after=1,
+        corridor=corridor,
+        jamming_score=0.0,
+    )
+    assert weak.strong is False
 
 
 def test_at_defaults_to_now_and_is_echoed_back():

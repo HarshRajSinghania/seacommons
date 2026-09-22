@@ -332,6 +332,12 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     props = feature.get("properties") or {}
     event_type = str(props.get("type") or "")
     anomaly_type = str(props.get("anomaly_type") or "")
+    if (
+        str(props.get("incident_lifecycle") or "") == "resolved"
+        or str(props.get("resolution_state") or "") == "resolved"
+        or props.get("gap_still_open") is False
+    ):
+        return False
     if event_type in {"correlated_alert", "dark_candidate"}:
         return False
     if event_type == "news":

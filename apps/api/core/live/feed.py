@@ -219,6 +219,7 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
                     or end_at < cutoff
                     or analysis.get("publication_state") != "published"
                     or analysis.get("analysis_state") not in {"evidence_candidate", "evidence"}
+                    or analysis.get("resolution_state") == "resolved"
                 ):
                     continue
                 rows.append({
@@ -267,7 +268,7 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
         "identity_integrity_episode": "identity_anomaly",
     }
     family_to_title = {
-        "gap_episode": "AIS dark-activity dossier",
+        "gap_episode": "AIS reporting-gap candidate",
         "rendezvous_episode": "Sustained vessel rendezvous dossier",
         "spoofing_episode": "AIS position-integrity dossier",
         "infrastructure_proximity_episode": "Infrastructure-proximity dossier",
@@ -276,7 +277,7 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
         "identity_integrity_episode": "Vessel identity-integrity dossier",
     }
     family_to_summary = {
-        "gap_episode": "AIS silence met the case-opening threshold. This is an investigation dossier, not proof of intentional dark activity.",
+        "gap_episode": "AIS silence met the reception-expectation gate. This is an investigation candidate, not proof that the transmitter was intentionally disabled.",
         "rendezvous_episode": "A sustained vessel rendezvous met the case-opening threshold. Proximity alone does not establish a transfer or illicit activity.",
         "spoofing_episode": "A sustained AIS position-integrity pattern met the case-opening threshold. A single AIS lineage does not by itself prove spoofing.",
         "infrastructure_proximity_episode": "A sustained infrastructure-proximity pattern met the case-opening threshold. Proximity does not establish interference.",

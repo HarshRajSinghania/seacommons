@@ -46,6 +46,48 @@ class CoverageBaseline:
 
 
 @dataclass(frozen=True)
+class ReceptionExpectation:
+    """Explainable evidence that SeaCommons reasonably expected AIS reception.
+
+    This is same-lineage reception evidence, not independent corroboration of
+    vessel behaviour. It answers only whether a silence is unusual relative to
+    the vessel's own recent reporting cadence and nearby/corridor traffic.
+    """
+
+    method_version: str
+    expected_interval_s: Optional[float]
+    pre_gap_positions: int
+    expected_messages_during_gap: Optional[int]
+    neighbour_before: int
+    neighbour_after: int
+    corridor_continuous: bool
+    corridor_covered_fraction: float
+    jamming_score: Optional[float]
+    support_level: str  # "weak" | "moderate" | "strong"
+    reason_codes: tuple[str, ...]
+
+    @property
+    def strong(self) -> bool:
+        return self.support_level == "strong"
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "method_version": self.method_version,
+            "expected_interval_s": self.expected_interval_s,
+            "pre_gap_positions": self.pre_gap_positions,
+            "expected_messages_during_gap": self.expected_messages_during_gap,
+            "neighbour_before": self.neighbour_before,
+            "neighbour_after": self.neighbour_after,
+            "corridor_continuous": self.corridor_continuous,
+            "corridor_covered_fraction": self.corridor_covered_fraction,
+            "jamming_score": self.jamming_score,
+            "support_level": self.support_level,
+            "reason_codes": list(self.reason_codes),
+            "evidence_role": "same_lineage_reception_expectation",
+        }
+
+
+@dataclass(frozen=True)
 class TrackCoverageContinuity:
     """Observed AIS traffic along a missing vessel's projected corridor.
 
@@ -245,6 +287,85 @@ def compute_track_corridor_coverage(
     )
 
 
+def build_reception_expectation(
+    *,
+    gap_duration_s: float,
+    coverage: CoverageBaseline,
+    nearby_vessels_reporting_before: int,
+    nearby_vessels_reporting_after: int,
+    corridor: TrackCoverageContinuity | None,
+    jamming_score: Optional[float],
+) -> ReceptionExpectation:
+    """Return a conservative, auditable AIS-reception expectation.
+
+    The strong gate intentionally borrows the spirit of public dark-vessel
+    methodologies without pretending our terrestrial/satellite mix is the
+    same dataset: require a dense pre-gap history (>=14 sampled positions),
+    healthy neighbouring traffic on both sides of the silence, continuous
+    traffic along the projected corridor, and no material jamming context.
+    """
+
+    expected_interval = coverage.expected_reporting_interval_s
+    expected_messages = (
+        int(gap_duration_s // expected_interval)
+        if expected_interval and expected_interval > 0
+        else None
+    )
+    reasons: list[str] = []
+    pre_gap_dense = coverage.preceding_track_density >= 14
+    neighbours_healthy = (
+        nearby_vessels_reporting_before >= 5
+        and nearby_vessels_reporting_after >= 5
+    )
+    corridor_continuous = bool(corridor and corridor.continuous)
+    no_material_jamming = jamming_score is not None and float(jamming_score) < 0.3
+    enough_expected_messages = (
+        expected_messages is not None and expected_messages >= 24
+    )
+
+    if pre_gap_dense:
+        reasons.append("DENSE_PRE_GAP_REPORTING_HISTORY")
+    if neighbours_healthy:
+        reasons.append("NEIGHBOUR_TRAFFIC_CONTINUED")
+    if corridor_continuous:
+        reasons.append("TRACK_CORRIDOR_COVERAGE_PRESENT")
+    if no_material_jamming:
+        reasons.append("NO_MATERIAL_JAMMING_CONTEXT")
+    if enough_expected_messages:
+        reasons.append("MANY_EXPECTED_REPORTS_MISSING")
+
+    strong = all((
+        pre_gap_dense,
+        neighbours_healthy,
+        corridor_continuous,
+        no_material_jamming,
+        enough_expected_messages,
+    ))
+    support_count = sum((
+        pre_gap_dense,
+        neighbours_healthy,
+        corridor_continuous,
+        no_material_jamming,
+        enough_expected_messages,
+    ))
+    support_level = "strong" if strong else "moderate" if support_count >= 3 else "weak"
+    return ReceptionExpectation(
+        method_version="reception-expectation/v1",
+        expected_interval_s=expected_interval,
+        pre_gap_positions=coverage.preceding_track_density,
+        expected_messages_during_gap=expected_messages,
+        neighbour_before=nearby_vessels_reporting_before,
+        neighbour_after=nearby_vessels_reporting_after,
+        corridor_continuous=corridor_continuous,
+        corridor_covered_fraction=(
+            float(corridor.covered_fraction) if corridor is not None else 0.0
+        ),
+        jamming_score=jamming_score,
+        support_level=support_level,
+        reason_codes=tuple(reasons),
+    )
+
+
 def compute_coverage_baseline(
     mmsi: str,
     lat: float,
@@ -264,6 +385,7 @@ def compute_coverage_baseline(
     preceding_track_density = 0
     local_receiver_density = 0
     neighbour_message_ratio: Optional[float] = None
+    own_rows: list[dict[str, object]] = []
     try:
         from core.vessels.track_store import track_store
 
@@ -313,11 +435,28 @@ def compute_coverage_baseline(
 
     expected_reporting_interval_s: Optional[float] = None
     try:
-        from core.config import config
-
-        expected_reporting_interval_s = float(getattr(config, "VESSEL_TRACK_MIN_INTERVAL_S", 60))
+        observed_times: list[datetime] = []
+        for row in own_rows:
+            raw_ts = row.get("ts") if isinstance(row, dict) else None
+            if raw_ts is None:
+                continue
+            if isinstance(raw_ts, datetime):
+                parsed_ts = raw_ts
+            else:
+                parsed_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+            if parsed_ts.tzinfo is None:
+                parsed_ts = parsed_ts.replace(tzinfo=timezone.utc)
+            observed_times.append(parsed_ts.astimezone(timezone.utc))
+        observed_times.sort()
+        deltas = [
+            (b - a).total_seconds()
+            for a, b in zip(observed_times, observed_times[1:])
+            if 5.0 <= (b - a).total_seconds() <= 30 * 60.0
+        ]
+        if len(deltas) >= 2:
+            expected_reporting_interval_s = round(float(statistics.median(deltas)), 1)
     except Exception:
-        pass
+        expected_reporting_interval_s = None
 
     # v0: "healthy" when there is any corroborating nearby traffic at all in
     # the window, "unknown" otherwise. "degraded" (a feed-wide, AOI-level

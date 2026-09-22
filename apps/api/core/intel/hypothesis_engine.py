@@ -220,6 +220,17 @@ def _case_opening_decision(
     imply independent corroboration, intent, illegality, or casualty.
     """
     family = str(props.get("episode_family") or "")
+    if family == "gap_episode" and (
+        props.get("gap_still_open") is False
+        or str(props.get("resolution_state") or "") == "resolved"
+        or any(
+            (event.metadata or {}).get("gap_still_open") is False
+            or (event.metadata or {}).get("resolution_state") == "resolved"
+            for event in events
+        )
+    ):
+        return False, ("AIS_GAP_REAPPEARED_RESOLVED",)
+
     analysis_state = str(props.get("analysis_state") or "")
     publication_state = str(props.get("publication_state") or "")
     if (
@@ -240,7 +251,7 @@ def _case_opening_decision(
             duration = float(meta.get("duration_min") or 0.0)
             dark = bool(meta.get("dark"))
             tanker = bool(meta.get("tanker"))
-            if duration < 90.0 or not (dark or tanker):
+            if duration < 120.0 or not (dark or tanker):
                 continue
             if event.lat is None or event.lon is None:
                 continue

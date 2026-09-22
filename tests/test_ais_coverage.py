@@ -144,7 +144,7 @@ def test_community_station_is_coverage_context_not_corroboration() -> None:
     assert "LOCAL_AIS_COVERAGE_HEALTHY" not in result["reason_codes"]
 
 
-def test_community_station_can_replace_neighbour_count_for_valid_vessel_gap() -> None:
+def test_community_station_alone_does_not_promote_dark_candidate() -> None:
     result = qualify_offshore_anomaly(
         "long_gap",
         {
@@ -170,7 +170,8 @@ def test_community_station_can_replace_neighbour_count_for_valid_vessel_gap() ->
             ],
         },
     )
-    assert result["qualified"] is True
+    assert result["qualified"] is False
     assert "COMMUNITY_AIS_COVERAGE_PRESENT" in result["reason_codes"]
-    assert "LOCAL_AIS_COVERAGE_HEALTHY" in result["reason_codes"]
-    assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]
+    # A community receiver is useful same-lineage coverage context, but it
+    # does not replace dense vessel history + neighbour/corridor evidence.
+    assert "STRONG_RECEPTION_EXPECTATION" not in result["reason_codes"]

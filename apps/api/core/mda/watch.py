@@ -398,6 +398,12 @@ class MdaWatch:
                     continue
 
                 gap_reason = metadata.get("gap_reason") or {}
+                reception = metadata.get("reception_expectation") or {}
+                if (
+                    not isinstance(reception, dict)
+                    or reception.get("support_level") != "strong"
+                ):
+                    continue
                 silent_seconds = float(metadata.get("silent_seconds") or 0.0)
                 stored_offshore = metadata.get("offshore_context") or {}
                 community_coverage = bool(
@@ -469,9 +475,13 @@ class MdaWatch:
                     "search_hours": silent_seconds / 3600.0,
                     "last_checked": last_checked,
                     "offshore_context": context,
+                    "enrichment_priority": str(
+                        metadata.get("enrichment_priority") or "normal"
+                    ),
                 })
 
         candidates.sort(key=lambda item: (
+            item.get("enrichment_priority") != "high",
             item["last_checked"] is not None,
             item["last_checked"] or item["gap_start"],
         ))
@@ -525,9 +535,14 @@ class MdaWatch:
         min_age_hours: float = 72.0,
         max_age_days: int = 10,
         recheck_hours: float = 24.0,
+        include_s1: bool = False,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Revisit delayed GFW SAR evidence for existing offshore AIS gaps."""
+        """Run the bounded darkship-enrichment queue for strong AIS gaps.
+
+        Recent Live candidates may include Sentinel-1 scene context immediately;
+        delayed GFW SAR detections use the same pipeline retrospectively.
+        """
         from core.mda.darkship_cue import build as build_darkship_cue
 
         candidates = self._retrospective_darkship_candidates(
@@ -552,7 +567,7 @@ class MdaWatch:
                 speed_kn=candidate["speed_kn"],
                 gap_start=candidate["gap_start"],
                 max_search_hours=candidate["search_hours"],
-                include_s1=False,
+                include_s1=include_s1,
             )
             unmatched_count = len(cue.get("gfw_unmatched_in_area") or ())
             report["details"].append({
@@ -695,7 +710,13 @@ class MdaWatch:
             info.append({"mmsi": mmsi, "name": v.get("ship_name") or mmsi,
                          "ship_type": st, "flag": v.get("flag")})
         zone = reference.in_sts_zone(lat, lon)
-        dark = self._either_had_gap(key)
+        encounter_end = datetime.now(timezone.utc)
+        encounter_start = encounter_end - timedelta(minutes=max(0.0, dur_min))
+        dark = self._either_had_gap(
+            key,
+            encounter_start=encounter_start,
+            encounter_end=encounter_end,
+        )
         from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
         offshore_context = build_offshore_context(lat, lon)
         rendezvous_meta = {
@@ -757,10 +778,39 @@ class MdaWatch:
         logger.warning("MDA: STS rendezvous %s <-> %s (%dmin, tanker=%s dark=%s zone=%s)",
                        key[0], key[1], int(dur_min), tanker, dark, zone)
 
-    def _either_had_gap(self, key: tuple[str, str]) -> bool:
-        for ev in intel_store.events(limit=400):
-            if (ev.type == "ais_anomaly" and ev.linked_mmsi in key
-                    and (ev.metadata.get("anomaly_type") in {"gap", "long_gap"})):
+    def _either_had_gap(
+        self,
+        key: tuple[str, str],
+        *,
+        encounter_start: datetime,
+        encounter_end: datetime,
+        grace_minutes: float = 30.0,
+    ) -> bool:
+        """True only when a vessel's AIS gap overlaps the encounter window."""
+
+        grace = timedelta(minutes=max(0.0, grace_minutes))
+        for ev in intel_store.events(limit=600):
+            meta = ev.metadata or {}
+            if (
+                ev.type != "ais_anomaly"
+                or ev.linked_mmsi not in key
+                or meta.get("anomaly_type") not in {"gap", "long_gap"}
+            ):
+                continue
+            silent_s = float(meta.get("silent_seconds") or 0.0)
+            if silent_s <= 0:
+                continue
+            try:
+                gap_end = _parse(ev.timestamp_utc)
+            except Exception:
+                continue
+            if meta.get("gap_still_open") is True:
+                gap_end = max(gap_end, encounter_end)
+            gap_start = gap_end - timedelta(seconds=silent_s)
+            if (
+                gap_start <= encounter_end + grace
+                and gap_end >= encounter_start - grace
+            ):
                 return True
         return False
 
@@ -879,15 +929,112 @@ class MdaWatch:
 
     # ── deliberate AIS gap (jamming-aware) ───────────────────────────────────
 
+    def _resolve_reappeared_gaps(self, *, max_age_hours: float = 48.0) -> int:
+        """Persist the end of an AIS gap as soon as a later fix is observed.
+
+        The gap row remains durable for Play/audit. Only its operational
+        lifecycle changes; a reappearance is not evidence that the original
+        silence was intentional.
+        """
+        from core.db.models import IntelEventDB, VesselTrackDB
+        from core.db.session import session_scope
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        resolved: list[IntelEvent] = []
+        with session_scope() as db:
+            anomaly = IntelEventDB.meta["anomaly_type"].as_string()
+            rows = (
+                db.query(IntelEventDB)
+                .filter(
+                    IntelEventDB.type == "ais_anomaly",
+                    anomaly.in_(("gap", "long_gap")),
+                    IntelEventDB.timestamp_utc >= cutoff,
+                )
+                .order_by(IntelEventDB.timestamp_utc.desc())
+                .limit(2000)
+                .all()
+            )
+            for row in rows:
+                metadata = dict(row.meta or {})
+                if (
+                    metadata.get("resolution_state") == "resolved"
+                    or metadata.get("incident_lifecycle") == "resolved"
+                    or not row.linked_mmsi
+                ):
+                    continue
+                stored_silent = float(metadata.get("silent_seconds") or 0.0)
+                if stored_silent <= 0:
+                    continue
+                try:
+                    emitted_at = _parse(row.timestamp_utc)
+                except Exception:
+                    continue
+                latest = (
+                    db.query(VesselTrackDB.ts)
+                    .filter(VesselTrackDB.mmsi == str(row.linked_mmsi))
+                    .order_by(VesselTrackDB.ts.desc())
+                    .limit(1)
+                    .scalar()
+                )
+                if latest is None:
+                    continue
+                latest_utc = (
+                    latest.astimezone(timezone.utc)
+                    if latest.tzinfo is not None
+                    else latest.replace(tzinfo=timezone.utc)
+                )
+                original_last = emitted_at - timedelta(seconds=stored_silent)
+                if latest_utc <= original_last + timedelta(minutes=5):
+                    continue
+
+                metadata.update({
+                    "gap_still_open": False,
+                    "current_silent_seconds": 0.0,
+                    "gap_reappearance_confirmed": True,
+                    "gap_reappeared_at": latest_utc.isoformat(),
+                    "incident_lifecycle": "resolved",
+                    "resolution_state": "resolved",
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                })
+                row.meta = metadata
+                resolved.append(IntelEvent(
+                    id=row.id,
+                    timestamp_utc=row.timestamp_utc,
+                    type=row.type or "",
+                    severity=row.severity or "",
+                    lat=row.lat,
+                    lon=row.lon,
+                    title=row.title or "",
+                    text=row.text or "",
+                    url=row.url or "",
+                    source=row.source or "",
+                    linked_mmsi=row.linked_mmsi or "",
+                    metadata=metadata,
+                ))
+            db.flush()
+
+        for event in resolved:
+            intel_store.update_metadata(event.id, metadata=dict(event.metadata))
+        if resolved:
+            self.scan_hypotheses(extra_events=resolved)
+        return len(resolved)
+
     def scan_gaps(self) -> int:
         from core.intel import confidence as confidence_mod
-        from core.mda.coverage import compute_coverage_baseline
+        from core.mda.coverage import (
+            build_reception_expectation,
+            compute_coverage_baseline,
+        )
         from core.mda.gap_reason import build_gap_reason
         from core.mda.jamming import jamming
         from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
         from core.mda.reference import reference
         from core.vessels.registry import registry
         from core.vessels.track_store import track_store
+
+        resolved_gaps = self._resolve_reappeared_gaps()
+        if resolved_gaps:
+            logger.info("MDA: resolved %d reappeared AIS gap(s)", resolved_gaps)
 
         min_gap = float(getattr(config, "MDA_GAP_MIN_S", 3600))
         candidates = track_store.silent_since(min_silent_s=min_gap, min_speed_kn=2.0)
@@ -933,6 +1080,7 @@ class MdaWatch:
             nearby_before, nearby_after = _nearby_gap_witness_counts(
                 track_store, mmsi, last.lat, last.lon, gap_start, now_dt)
             gap_reason = None
+            coverage = None
             if nearby_before >= _MIN_COVERAGE_WITNESSES:
                 coverage = compute_coverage_baseline(mmsi, last.lat, last.lon, at=gap_start)
                 gap_reason = build_gap_reason(
@@ -970,12 +1118,13 @@ class MdaWatch:
                 and jam < 0.3
                 and not port_or_anchorage
             )
+            track_coverage_result = None
             track_coverage_continuity = None
             if gap_cross_cue_ready:
                 try:
                     from core.mda.coverage import compute_track_corridor_coverage
 
-                    track_coverage_continuity = compute_track_corridor_coverage(
+                    track_coverage_result = compute_track_corridor_coverage(
                         track_store,
                         mmsi=mmsi,
                         last_lat=last.lat,
@@ -984,14 +1133,24 @@ class MdaWatch:
                         now=now_dt,
                         course_deg=pre_gap_course,
                         speed_kn=last.sog,
-                    ).as_metadata()
+                    )
+                    track_coverage_continuity = track_coverage_result.as_metadata()
                 except Exception as exc:  # pragma: no cover
                     logger.debug("track corridor coverage failed: %s", exc)
-                # Satellite/SAR enrichment is deliberately off the detector
-                # hot path. A remote STAC outage must never delay or prevent
-                # creation of a qualified AIS-gap episode. The scheduler's
-                # bounded darkship-cue refresh attaches this context later to
-                # the same durable event/case.
+                # Remote enrichment stays off the detector hot path. The
+                # reception expectation below is local/synchronous; a bounded
+                # scheduler job handles satellite/radio context shortly after
+                # a strong candidate is persisted.
+            reception_expectation = None
+            if coverage is not None and gap_reason is not None:
+                reception_expectation = build_reception_expectation(
+                    gap_duration_s=silent_s,
+                    coverage=coverage,
+                    nearby_vessels_reporting_before=nearby_before,
+                    nearby_vessels_reporting_after=nearby_after,
+                    corridor=track_coverage_result,
+                    jamming_score=jam,
+                )
             confidence = round(max(0.2, min(0.9, 0.4 + (time.time() - last.ts) / 14400) - 0.5 * jam), 3)
             severity = "high" if confidence >= 0.7 else "medium"
             # Shadow-mode confidence model (docs/prompt.md phase 9/11): a
@@ -1029,6 +1188,10 @@ class MdaWatch:
                 "pre_gap_speed_kn": last.sog,
                 "pre_gap_course_deg": pre_gap_course,
                 "track_coverage_continuity": track_coverage_continuity,
+                "reception_expectation": (
+                    reception_expectation.as_metadata()
+                    if reception_expectation is not None else None
+                ),
             }
             offshore_context = build_offshore_context(
                 last.lat,
@@ -1058,6 +1221,8 @@ class MdaWatch:
                     "source_policy": "official_api", "verification_status": "ais_transponder",
                     "coordinate_source": "ais_position",
                     "silent_seconds": int(time.time() - last.ts),
+                    "gap_still_open": True,
+                    "current_silent_seconds": int(time.time() - last.ts),
                     "jamming_score": jam, "anomaly_confidence": confidence,
                     "offshore_context": offshore_context,
                     "offshore_anomaly_qualified": offshore_qualification["qualified"],
@@ -1067,6 +1232,15 @@ class MdaWatch:
                     "pre_gap_speed_kn": last.sog,
                     "pre_gap_course_deg": pre_gap_course,
                     "track_coverage_continuity": track_coverage_continuity,
+                    "reception_expectation": (
+                        reception_expectation.as_metadata()
+                        if reception_expectation is not None else None
+                    ),
+                    "enrichment_priority": (
+                        "high"
+                        if reception_expectation is not None and reception_expectation.strong
+                        else "normal"
+                    ),
                     "confidence_v2": confidence_v2.as_metadata(),
                     # docs/fixes.md M14.1: vessel class is context only here,
                     # never a detection gate.

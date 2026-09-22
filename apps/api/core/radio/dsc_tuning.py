@@ -18,12 +18,11 @@ DSC_BAUD = 100
 
 
 def receiver_carrier_hz(assigned_frequency_hz: int, mode: str) -> int:
-    """Carrier setting that yields 1615/1785 Hz audio in USB.
+    """Return the actual RF tuning frequency for MF/HF DSC.
 
-    Frame metadata keeps the assigned DSC frequency; this offset is transport
-    tuning only and must never rewrite evidence frequency identity.
+    The DSC channel value is the assigned receive frequency. For J2B the
+    demodulated SSB audio itself is centred at 1700 Hz (1615/1785 Hz tones);
+    the receiver must therefore stay on the assigned RF frequency rather than
+    subtracting the audio centre frequency.
     """
-    assigned = int(assigned_frequency_hz)
-    if str(mode or "").strip().lower() == "usb" and assigned in HF_DSC_ASSIGNED_FREQUENCIES_HZ:
-        return assigned - DSC_AUDIO_CENTER_HZ
-    return assigned
+    return int(assigned_frequency_hz)

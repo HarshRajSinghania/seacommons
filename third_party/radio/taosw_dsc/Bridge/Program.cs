@@ -95,8 +95,8 @@ sealed class DecoderState
 
     public DecoderState(int sampleRate)
     {
-        // Generic USB receivers are tuned 1700 Hz below the assigned
-        // MF/HF DSC channel, yielding the standard 1615/1785 Hz audio pair.
+        // MF/HF DSC receivers stay on the assigned RF channel. J2B
+        // demodulation yields the standard 1615/1785 Hz audio pair directly.
         // Fixed tones are safer than opportunistic retuning to HF noise peaks.
         tuner = new FskAutoTuner(1900, 1500, sampleRate, 170);
         tuner.IsAutoTuningEnabled = false;

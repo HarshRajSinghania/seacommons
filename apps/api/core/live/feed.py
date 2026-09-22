@@ -201,6 +201,7 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
         with session_scope() as db:
             orm_rows = (
                 db.query(MaritimeEpisodeDB)
+                .filter(MaritimeEpisodeDB.end_at >= cutoff.replace(tzinfo=None))
                 .order_by(MaritimeEpisodeDB.updated_at.desc())
                 .limit(min(max(limit * 4, 200), 2000))
                 .all()
@@ -302,9 +303,18 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
         opening = (row["behaviour_context"] or {}).get("case_opening") or {}
         reason_codes = list(opening.get("reason_codes") or ())
         safety = family == "safety_episode"
+        if (
+            safety
+            and "REPEATED_AIS_DISTRESS_BEACON" in reason_codes
+            and now - row["end_at"] > timedelta(hours=2)
+        ):
+            # Dedicated AIS beacon dossiers are operational Live signals only
+            # while the repeated transmission is still fresh. The durable
+            # dossier remains available in Play after this cutoff.
+            continue
         sanctions = (
             family == "port_call_episode"
-            or "SANCTIONS_IDENTITY_MATCH" in reason_codes
+            or "STRONG_SANCTIONS_IDENTITY_MATCH" in reason_codes
         )
         domain = "safety" if safety else "sanctions" if sanctions else "grey_zone"
         event_type = (

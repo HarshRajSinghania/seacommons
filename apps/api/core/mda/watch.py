@@ -317,8 +317,11 @@ class MdaWatch:
                 db.query(IntelEventDB)
                 .filter(
                     IntelEventDB.timestamp_utc >= cutoff,
-                    IntelEventDB.type == "distress",
-                    nav_kind.in_(("distress_beacon", "aground")),
+                    IntelEventDB.type.in_(("distress", "vessel_incident")),
+                    nav_kind.in_((
+                        "distress_beacon",
+                        "not_under_command",
+                    )),
                 )
                 .order_by(IntelEventDB.timestamp_utc.desc())
                 .limit(limit_per_family)
@@ -814,11 +817,24 @@ class MdaWatch:
             # with. cable/pipeline proximity stays unconditional -- that is
             # infrastructure-safety context regardless of who the vessel is.
             sanctioned = False
+            sanctions_hits: list[dict[str, Any]] = []
             if hit.kind == "sts_zone":
                 from core.mda.identity import screen
-                result = screen(mmsi=mmsi, imo=v.get("imo"),
-                                name=v.get("ship_name") or "", flag=v.get("flag") or "")
-                sanctioned = bool(result.get("sanctions"))
+                result = screen(
+                    mmsi=mmsi,
+                    imo=v.get("imo"),
+                    name=v.get("ship_name") or "",
+                    flag=v.get("flag") or "",
+                )
+                # A name-only/fuzzy sanctions hit is not strong enough to turn
+                # routine STS-zone dwell into a sanctions-labelled case. Match
+                # the stricter sanctioned-port-call policy: require an exact
+                # professional identifier (IMO or MMSI).
+                sanctions_hits = [
+                    match for match in (result.get("sanctions") or [])
+                    if set(match.get("matched_on") or ()) & {"imo", "mmsi"}
+                ]
+                sanctioned = bool(sanctions_hits)
                 if not sanctioned:
                     continue
             if self._recently_emitted(f"infra:{mmsi}:{hit.name}", 24 * 3600):
@@ -847,6 +863,7 @@ class MdaWatch:
                     "infrastructure": {"kind": hit.kind, "name": hit.name, "distance_km": hit.distance_km},
                     "loiter_minutes": round(span_min, 1),
                     "sanctions_matched": sanctioned,
+                    "sanctions": sanctions_hits,
                     "behaviour_context": _behaviour_context_for(mmsi),
                     "detection_reason": (
                         f"AIS dwell: {len(slow)} slow fixes over {int(span_min)} minutes, "

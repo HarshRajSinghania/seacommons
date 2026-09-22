@@ -142,6 +142,8 @@ def test_single_safety_signal_opens_dossier_but_not_intelligence_hypothesis():
                 "publication_status": "published",
                 "analysis_state": "signal",
                 "verification_status": "ais_transponder",
+                "beacon_repeat_confirmed": True,
+                "episode_update_count": 2,
             },
         ),
         dedup_key="safety-beacon-1",
@@ -174,6 +176,10 @@ def test_single_sanctions_sts_dwell_opens_infrastructure_dossier_only():
         "infra-sanctions-1",
         anomaly_type="sanctions_bunkering_loiter",
         sanctions_matched=True,
+        sanctions=[{
+            "list": "test-list",
+            "matched_on": ["mmsi"],
+        }],
         loiter_minutes=135.0,
     )
     episode_id = "episode:test:infra-sanctions"
@@ -192,6 +198,106 @@ def test_single_sanctions_sts_dwell_opens_infrastructure_dossier_only():
         opening = (row.behaviour_context or {}).get("case_opening") or {}
         assert analysis["publication_state"] == "published"
         assert "SUSTAINED_STS_ZONE_DWELL" in opening["reason_codes"]
+
+
+
+def test_name_only_sanctions_loiter_does_not_open_public_dossier():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    _add_event(
+        "infra-name-only",
+        anomaly_type="sanctions_bunkering_loiter",
+        sanctions_matched=True,
+        sanctions=[{"list": "test-list", "matched_on": ["name"]}],
+        loiter_minutes=180.0,
+    )
+    episode_id = "episode:test:infra-name-only"
+
+    assert evaluate_episode(_episode(
+        "infrastructure_proximity_episode",
+        signal_ids=["infra-name-only"],
+        episode_id=episode_id,
+    )) is None
+
+    with session_scope() as db:
+        assert db.get(MaritimeEpisodeDB, episode_id) is None
+
+
+def test_spoofing_candidate_in_coastal_context_stays_internal(monkeypatch):
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+    from core.mda import offshore_context
+
+    monkeypatch.setattr(
+        offshore_context,
+        "build_offshore_context",
+        lambda *args, **kwargs: {
+            "open_sea": False,
+            "in_port_or_anchorage": False,
+        },
+    )
+    _add_event(
+        "spoof-coastal",
+        anomaly_type="position_jump",
+        ais_integrity_classification={
+            "label": "position_anomaly",
+            "confidence": 0.95,
+        },
+        teleport_pattern="sustained_relocation",
+        coincident_teleport_peers=[],
+    )
+    episode_id = "episode:test:spoof-coastal"
+
+    assert evaluate_episode(_episode(
+        "spoofing_episode",
+        signal_ids=["spoof-coastal"],
+        episode_id=episode_id,
+    )) is None
+
+    with session_scope() as db:
+        assert db.get(MaritimeEpisodeDB, episode_id) is None
+
+
+def test_persistent_open_sea_nuc_opens_safety_dossier_without_claiming_casualty():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    event = IntelEvent(
+        id="safety-nuc-open-sea",
+        type="vessel_incident",
+        severity="medium",
+        lat=35.5,
+        lon=14.1,
+        title="AIS not-under-command state",
+        source="ais",
+        linked_mmsi="211879999",
+        metadata={
+            "ais_nav_status_kind": "not_under_command",
+            "publication_status": "internal",
+            "analysis_state": "observation",
+            "verification_status": "ais_transponder",
+            "episode_update_count": 4,
+        },
+    )
+    intel_store.add(event, dedup_key=event.id)
+    episode_id = "episode:test:safety-nuc"
+
+    assert evaluate_episode(_episode(
+        "safety_episode",
+        subject="subj:mmsi:211879999",
+        signal_ids=[event.id],
+        episode_id=episode_id,
+    )) is None
+
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        assert row is not None
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        opening = (row.behaviour_context or {}).get("case_opening") or {}
+        assert analysis["publication_state"] == "published"
+        assert analysis["analysis_state"] == "evidence_candidate"
+        assert "PERSISTENT_AIS_REPORTED_SAFETY_STATE" in opening["reason_codes"]
 
 
 def test_exit_gate_sanctions_match_alone_never_creates_a_hypothesis():

@@ -261,6 +261,8 @@ def _case_opening_decision(
             return True, tuple(reasons)
 
     if family == "spoofing_episode":
+        from core.mda.offshore_context import build_offshore_context
+
         for event in events:
             meta = event.metadata or {}
             if str(meta.get("anomaly_type") or "") != "position_jump":
@@ -269,16 +271,25 @@ def _case_opening_decision(
             if not isinstance(classification, dict):
                 continue
             if (
-                classification.get("label") == "position_anomaly"
-                and meta.get("teleport_pattern") == "sustained_relocation"
-                and not meta.get("coincident_teleport_peers")
-                and not meta.get("teleport_near_port")
+                classification.get("label") != "position_anomaly"
+                or float(classification.get("confidence") or 0.0) < 0.8
+                or meta.get("teleport_pattern") != "sustained_relocation"
+                or bool(meta.get("coincident_teleport_peers"))
+                or event.lat is None
+                or event.lon is None
             ):
-                return True, (
-                    "SUSTAINED_POSITION_RELOCATION",
-                    "NO_COINCIDENT_MULTI_VESSEL_GLITCH",
-                    "OUTSIDE_PORT_CONTEXT",
-                )
+                continue
+            context = build_offshore_context(
+                float(event.lat), float(event.lon), include_ais_coverage=False
+            )
+            if not context.get("open_sea") or context.get("in_port_or_anchorage"):
+                continue
+            return True, (
+                "SUSTAINED_POSITION_RELOCATION",
+                "HIGH_CONFIDENCE_POSITION_INTEGRITY_ANOMALY",
+                "NO_COINCIDENT_MULTI_VESSEL_GLITCH",
+                "OPEN_SEA_CONTEXT",
+            )
 
     if family == "infrastructure_proximity_episode":
         from core.mda.offshore_context import build_offshore_context
@@ -287,15 +298,17 @@ def _case_opening_decision(
             meta = event.metadata or {}
             anomaly = str(meta.get("anomaly_type") or "")
             loiter_min = float(meta.get("loiter_minutes") or 0.0)
-            if (
-                anomaly == "sanctions_bunkering_loiter"
-                and meta.get("sanctions_matched")
-                and loiter_min >= 90.0
-            ):
-                return True, (
-                    "SANCTIONS_IDENTITY_MATCH",
-                    "SUSTAINED_STS_ZONE_DWELL",
-                )
+            if anomaly == "sanctions_bunkering_loiter" and loiter_min >= 90.0:
+                strong_hits = [
+                    hit for hit in (meta.get("sanctions") or ())
+                    if isinstance(hit, dict)
+                    and set(hit.get("matched_on") or ()) & {"imo", "mmsi"}
+                ]
+                if strong_hits:
+                    return True, (
+                        "STRONG_SANCTIONS_IDENTITY_MATCH",
+                        "SUSTAINED_STS_ZONE_DWELL",
+                    )
             infra = meta.get("infrastructure")
             if (
                 anomaly not in {"cable_proximity", "loiter"}
@@ -320,6 +333,9 @@ def _case_opening_decision(
                 )
 
     if family == "safety_episode":
+        from core.mda.offshore_context import build_offshore_context
+        from core.mda.reference import reference
+
         for event in events:
             meta = event.metadata or {}
             nav_kind = str(
@@ -327,10 +343,34 @@ def _case_opening_decision(
                 or meta.get("anomaly_type")
                 or ""
             )
-            if nav_kind == "distress_beacon" and event.type == "distress":
-                return True, ("AIS_DISTRESS_BEACON_ACTIVE",)
-            if nav_kind == "aground" and event.type == "distress":
-                return True, ("AIS_REPORTED_AGROUND_STATE",)
+            if event.lat is None or event.lon is None:
+                continue
+            lat, lon = float(event.lat), float(event.lon)
+            if reference.in_port_or_anchorage(lat, lon) or reference.is_land(lat, lon):
+                continue
+            updates = int(meta.get("episode_update_count") or 0)
+            if (
+                nav_kind == "distress_beacon"
+                and event.type == "distress"
+                and (bool(meta.get("beacon_repeat_confirmed")) or updates >= 2)
+            ):
+                return True, (
+                    "REPEATED_AIS_DISTRESS_BEACON",
+                    "OUTSIDE_PORT_AND_LAND_CONTEXT",
+                )
+            if (
+                nav_kind == "not_under_command"
+                and event.type == "vessel_incident"
+                and updates >= 3
+            ):
+                context = build_offshore_context(
+                    lat, lon, include_ais_coverage=False
+                )
+                if context.get("open_sea"):
+                    return True, (
+                        "PERSISTENT_AIS_REPORTED_SAFETY_STATE",
+                        "OPEN_SEA_CONTEXT",
+                    )
 
     return False, ()
 

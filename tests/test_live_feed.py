@@ -355,7 +355,7 @@ def test_nuc_fusion_alert_is_safety_never_drift_eligible() -> None:
     assert properties["maritime_domain"] == "safety"
     assert properties["ais_nav_status_kind"] == "not_under_command"
     assert properties["visual_category"] == "navigation_casualty"
-    assert properties["visual_color"] == "#ff4d5e"
+    assert properties["visual_color"] == "#38bdf8"
     assert properties["drift_eligible"] is False
     assert properties.get("drift_vessel_type") != "cargo"
 

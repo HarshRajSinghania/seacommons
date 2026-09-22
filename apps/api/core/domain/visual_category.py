@@ -35,7 +35,7 @@ CATEGORY_COLORS: dict[str, str] = {
     "humanitarian_alarm_phone": "#ff3b3b",
     "civil_sar": "#4ade80",
     "state_sar": "#38bdf8",
-    "navigation_casualty": "#ff4d5e",
+    "navigation_casualty": "#38bdf8",
     "spoofing": "#c084fc",
     "ais_gap": "#fb923c",
     "loitering": "#facc15",
@@ -43,7 +43,7 @@ CATEGORY_COLORS: dict[str, str] = {
     "sanctions": "#f472b6",
     "infrastructure": "#22d3ee",
     "identity": "#60a5fa",
-    "piracy": "#ef4444",
+    "piracy": "#a78bfa",
     "environmental": "#34d399",
     "news": "#94a3b8",
     "social": "#818cf8",
@@ -155,7 +155,14 @@ def classify_visual_category(
     if domain == "environmental" or re.search(r"pollution|oil_spill|environmental", tokens):
         return "environmental"
 
-    # 3. Humanitarian / SAR semantics.
+    # 3. Safety and Humanitarian semantics. Red is reserved for
+    # Humanitarian distress. AIS safety self-reports remain Maritime Safety.
+    if domain == "safety" and (
+        event_type == "distress"
+        or str(meta.get("ais_nav_status_kind") or "") == "distress_beacon"
+    ):
+        return "navigation_casualty"
+
     hct = str(humanitarian_case_type or "").lower()
     if event_type == "iom_incident":
         return "iom"

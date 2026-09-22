@@ -84,7 +84,7 @@ def test_non_alarm_phone_categories_are_distinct_colours() -> None:
     assert len({CATEGORY_COLORS[k] for k in keys}) == len(keys)
 
 
-def test_ais_distress_beacon_is_distress_even_in_safety_domain() -> None:
+def test_ais_distress_beacon_stays_maritime_safety_not_humanitarian_red() -> None:
     fields = visual_category_fields(
         source="ais_sart",
         event_type="distress",
@@ -94,5 +94,5 @@ def test_ais_distress_beacon_is_distress_even_in_safety_domain() -> None:
             "ais_nav_status_kind": "distress_beacon",
         },
     )
-    assert fields["visual_category"] == "distress"
-    assert fields["visual_color"] == "#ff3b3b"
+    assert fields["visual_category"] == "navigation_casualty"
+    assert fields["visual_color"] == "#38bdf8"

@@ -11,7 +11,7 @@ test('classifies unable-to-manoeuvre reports as red navigation casualties', () =
     latest_nav_status: 2,
   };
   assert.equal(classifyEventVisual(event).key, 'navigation_casualty');
-  assert.equal(classifyEventVisual(event).color, '#ff4d5e');
+  assert.equal(classifyEventVisual(event).color, '#38bdf8');
   assert.equal(eventAnomalyLabel(event), 'unable to manoeuvre');
 });
 

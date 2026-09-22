@@ -42,7 +42,7 @@ export const EVENT_VISUAL_CATEGORIES = [
   { key: 'civil_sar', label: 'Civil SAR / NGO', color: '#4ade80' },
   { key: 'state_sar', label: 'State SAR / Coast Guard', color: '#38bdf8' },
   { key: 'distress', label: 'Maritime distress', color: '#ff3b3b' },
-  { key: 'navigation_casualty', label: 'Unable to manoeuvre / aground', color: '#ff4d5e' },
+  { key: 'navigation_casualty', label: 'Unable to manoeuvre / aground', color: '#38bdf8' },
   { key: 'spoofing', label: 'Position integrity', color: '#c084fc' },
   { key: 'ais_gap', label: 'AIS reporting gap / dark candidate', color: '#fb923c' },
   { key: 'loitering', label: 'Loitering / abnormal dwell', color: '#facc15' },
@@ -50,7 +50,7 @@ export const EVENT_VISUAL_CATEGORIES = [
   { key: 'sanctions', label: 'Sanctions match', color: '#f472b6' },
   { key: 'infrastructure', label: 'Infrastructure proximity', color: '#22d3ee' },
   { key: 'identity', label: 'Identity / flag anomaly', color: '#60a5fa' },
-  { key: 'piracy', label: 'Piracy / security incident', color: '#ef4444' },
+  { key: 'piracy', label: 'Piracy / security incident', color: '#a78bfa' },
   { key: 'environmental', label: 'Environmental hazard', color: '#34d399' },
   { key: 'needs_review', label: 'Needs operator review', color: '#f59e0b' },
   { key: 'resolved', label: 'Resolved', color: '#22c55e' },
@@ -116,6 +116,13 @@ export function classifyEventVisual(properties = {}) {
   }
   if (properties.maritime_domain === 'piracy' || /piracy|hijack|armed_robbery/.test(tokens)) return _VISUAL_BY_KEY.piracy;
   if (properties.maritime_domain === 'environmental' || /pollution|oil_spill|environmental/.test(tokens)) return _VISUAL_BY_KEY.environmental;
+
+  // Red is reserved for Humanitarian distress. AIS safety self-reports
+  // remain Maritime Safety even when their raw transport type is "distress".
+  if (properties.maritime_domain === 'safety'
+      && (properties.type === 'distress' || properties.ais_nav_status_kind === 'distress_beacon')) {
+    return _VISUAL_BY_KEY.navigation_casualty;
+  }
 
   // Humanitarian / SAR distress — red, by category, not severity.
   const humanitarianCaseType = String(properties.humanitarian_case_type || '').toLowerCase();

@@ -47,6 +47,14 @@
       "destination": "/api/proxy?root=docs"
     },
     {
+      "source": "/docs",
+      "destination": "/docs.html"
+    },
+    {
+      "source": "/docs/",
+      "destination": "/docs.html"
+    },
+    {
       "source": "/redoc",
       "has": [{ "type": "host", "value": "api.seacommons.org" }],
       "destination": "/api/proxy?root=redoc"

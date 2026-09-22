@@ -23,11 +23,10 @@ import { mdaAnomalyColorExpression, mdaCategoryKey, MDA_ANOMALY_CATEGORIES } fro
 import { AuthGate } from './auth.jsx';
 import CasesWorkspace from './components/CasesWorkspace.jsx';
 import CivilSarFleetPanel from './components/CivilSarFleetPanel.jsx';
-import JobMonitor from './components/JobMonitor.jsx';
 import PlayCesium from './components/PlayCesium.jsx';
 import UnrealPixelStream from './components/UnrealPixelStream.jsx';
 import ArchiveTimeline from './components/ArchiveTimeline.jsx';
-import ConnectorWorkspace from './components/ConnectorWorkspace.jsx';
+import { SettingsWorkspace, SystemWorkspace } from './components/SettingsWorkspace.jsx';
 import { buildEnvironmentSnapshot, createScenario } from './simulation/contracts.js';
 import { loadStoredSimulations, storeScenario } from './simulation/scenarioStore.js';
 import { computeDriftInWorker } from './simulation/workerClient.js';
@@ -3982,9 +3981,9 @@ function App() {
       <nav className="workspace-nav" aria-label="Operational views">
         <span className={`runtime-badge runtime-badge--${APP_PROFILE}`}>{APP_PROFILE}</span>
         <button className={!sidebarOpen ? 'is-active' : ''} onClick={() => setSidebarOpen(false)}>Map</button>
-        {['cases','live','osint','mda','settings'].map((view) => (
+        {['cases','live','osint','mda','settings','system'].map((view) => (
           <button key={view} className={sidebarOpen && activePanel === view ? 'is-active' : ''} onClick={() => { setActivePanel(view); setSidebarOpen(true); }}>
-            {view === 'settings' ? 'Config' : view === 'mda' ? 'MDA' : view}
+            {view === 'settings' ? 'Settings' : view === 'system' ? 'System' : view === 'mda' ? 'MDA' : view}
           </button>
         ))}
       </nav>
@@ -3994,7 +3993,7 @@ function App() {
         <header className="workspace-header">
           <p className="workspace-kicker">SeaCommons / SAR pilot</p>
           <h2>Operational dashboard</h2>
-          <div className="sidebar-tabs sidebar-tabs--4">
+          <div className="sidebar-tabs sidebar-tabs--6">
             <button className={activePanel === 'cases' ? 'is-active' : ''} onClick={() => setActivePanel('cases')}>Cases</button>
             <button className={activePanel === 'live'     ? 'is-active' : ''} onClick={() => setActivePanel('live')}>Live</button>
             <button className={activePanel === 'osint'    ? 'is-active' : ''} onClick={() => setActivePanel('osint')}>
@@ -4003,7 +4002,8 @@ function App() {
             <button className={activePanel === 'mda'      ? 'is-active' : ''} onClick={() => setActivePanel('mda')}>
               MDA{mdaAnomalies.length > 0 && <span className="tab-badge">{mdaAnomalies.length}</span>}
             </button>
-            <button className={activePanel === 'settings' ? 'is-active' : ''} onClick={() => setActivePanel('settings')}>Config</button>
+            <button className={activePanel === 'settings' ? 'is-active' : ''} onClick={() => setActivePanel('settings')}>Settings</button>
+            <button className={activePanel === 'system' ? 'is-active' : ''} onClick={() => setActivePanel('system')}>System</button>
           </div>
         </header>
 
@@ -4198,71 +4198,20 @@ function App() {
           ) : null}
 
 
-          {/* ── CONFIG TAB ── */}
+          {/* ── SETTINGS / SYSTEM ── */}
           {activePanel === 'settings' ? (
-            <div className="panel-stack">
-              <ConnectorWorkspace apiBase={apiBase} fetchJson={fetchJson} />
-              <JobMonitor apiBase={apiBase} fetchJson={fetchJson} />
-              <section className="panel-block">
-                <p className="section-kicker">Connectivity</p>
-                <h3>API endpoint</h3>
-                <label className="field-block">
-                  API base
-                  <input value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://127.0.0.1:8000" />
-                </label>
-                <div className="action-row" style={{ marginTop: 8 }}>
-                  <a
-                    href={`${apiBase}/docs`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="action-row button"
-                    style={{ padding: '6px 11px', borderRadius: 3, background: 'linear-gradient(135deg,#83f4df,#70a2ff)', color: '#061015', fontWeight: 700, fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-                  >
-                    API docs (Swagger)
-                  </a>
-                  <a
-                    href={`${apiBase}/redoc`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ padding: '6px 11px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#dfeae7', fontWeight: 600, fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-                  >
-                    ReDoc
-                  </a>
-                </div>
-              </section>
+            <SettingsWorkspace />
+          ) : null}
 
-              <section className="panel-block">
-                <p className="section-kicker">TimeZero bridge</p>
-                <h3>Chart plotter</h3>
-                <label className="field-block">
-                  Host
-                  <input value={localSettings.timezeroHost} onChange={(e) => updateSetting('timezeroHost', e.target.value)} />
-                </label>
-                <label className="field-block" style={{ marginTop: 7 }}>
-                  Port
-                  <input value={localSettings.timezeroPort} onChange={(e) => updateSetting('timezeroPort', e.target.value)} />
-                </label>
-              </section>
-
-              <section className="panel-block">
-                <p className="section-kicker">Service matrix</p>
-                <h3>Runtime</h3>
-                <ul className="service-list">
-                  {serviceRows.map((service) => (
-                    <li key={service.name}>
-                      <div>
-                        <strong>{service.name}</strong>
-                        <span>{service.detail}</span>
-                      </div>
-                      <Pill
-                        label={service.state}
-                        tone={['reachable', 'live', 'ready', 'ok'].includes(service.state) ? 'ok' : service.state === 'degraded' ? 'warn' : 'default'}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            </div>
+          {activePanel === 'system' ? (
+            <SystemWorkspace
+              apiBase={apiBase}
+              setApiBase={setApiBase}
+              fetchJson={fetchJson}
+              localSettings={localSettings}
+              updateSetting={updateSetting}
+              serviceRows={serviceRows}
+            />
           ) : null}
 
         </div>

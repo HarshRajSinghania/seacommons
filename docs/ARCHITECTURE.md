@@ -1,6 +1,6 @@
 # SeaCommons architecture
 
-Status: canonical architecture description. Last reviewed: 2026-08-26.
+Status: canonical architecture description. Last reviewed: 2026-09-22.
 
 SeaCommons is a modular monorepo with four deployable surfaces. It is not a
 microservice system: the operational backend is one FastAPI application, with
@@ -10,7 +10,7 @@ optional worker processes that share its database and domain code.
 
 | Surface | Code | Responsibility |
 |---|---|---|
-| Institutional site | `apps/web/src/site` | Public information site (`seacommons.org`); React, built with the console in one Vite multi-page build; no operational data |
+| Institutional site | `apps/web/src/site` + `apps/web/src/docs` | Public information site and canonical public docs (`seacommons.org`, `/docs`); React, built with the console in one Vite multi-page build; may read privacy-safe public aggregate/Live contracts but never operator-only data |
 | Operational console | `apps/web` | React/Vite UI for Live, Intel, drift, vessels, cases and connectors |
 | API and workers | `apps/api` | Authentication, ingestion, domain policy, persistence, jobs and integrations |
 | Public Live edge | `apps/edge` | Privacy-filtered public snapshot and WebSocket distribution |
@@ -74,6 +74,7 @@ OIDC, object storage or queued job execution are not configured.
 - S3-compatible object storage owns attachments and large artifacts.
 - The in-process intel store is a cache/read model backed by the database; it is
   not an independent source of truth.
+- The institutional site may read canonical public aggregate status and privacy-filtered Live projections; it must not implement a parallel evidence or analytics pipeline.
 - Cloudflare Durable Object storage owns the ephemeral public Live snapshot.
   Optional R2 storage mirrors the latest public snapshot only.
 - Browser storage is a degraded/offline cache and never authoritative.

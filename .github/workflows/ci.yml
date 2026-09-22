@@ -78,7 +78,7 @@ jobs:
         run: npm run lint:js:full
         continue-on-error: true
       - run: npm test
-      - run: npm run build
+      - run: npm run build:unified
       - name: audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 

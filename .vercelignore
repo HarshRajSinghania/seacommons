@@ -7,7 +7,7 @@ apps/edge/
 apps/unreal/
 data/
 deploy/
-docs/
+/docs/
 infrastructure/
 /scripts/
 tests/

@@ -4,6 +4,12 @@ This index distinguishes canonical design documents from operational runbooks,
 historical evidence and forward-looking plans. Start here instead of choosing
 the newest dated filename.
 
+## Public documentation
+
+- [Public documentation contract](PUBLIC_DOCUMENTATION.md) — ownership of `seacommons.org/docs`, public information architecture, routing and metric semantics.
+- Public reader entrypoint: **https://seacommons.org/docs**.
+- Generated API reference: **https://api.seacommons.org/docs**.
+
 ## Canonical design
 
 - [Architecture](ARCHITECTURE.md) — deployable surfaces, process topologies,

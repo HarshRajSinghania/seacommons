@@ -32,16 +32,16 @@ export default function Hero() {
       </div>
 
       <div className="hero__copy">
-        <p className="kicker"><ShinyText static>Observe · qualify · simulate · preserve</ShinyText></p>
+        <p className="kicker"><ShinyText static>Observe · normalize · correlate · preserve</ShinyText></p>
         <h1 id="hero-title" className="hero__title">
-          <SplitText text="Uncertainty-aware fusion of fragmented" as="span" />
+          <SplitText text="From fragmented maritime signals to" as="span" />
           <br />
-          <em><SplitText text="maritime distress signals." as="span" delay={520} /></em>
+          <em><SplitText text="traceable public cases." as="span" delay={520} /></em>
         </h1>
         <Reveal className="hero__intro" delay={200}>
           <p>
-            SeaCommons is an open research programme for transforming fragmented maritime
-            observations into traceable, contestable and uncertainty-aware analysis.
+            SeaCommons receives heterogeneous observations, preserves provenance, derives bounded
+            analytical cues and groups related evidence without converting uncertainty into certainty.
           </p>
           <div className="hero__actions">
             <Magnetic>
@@ -49,8 +49,8 @@ export default function Hero() {
                 Open Live <span aria-hidden="true">↗</span>
               </a>
             </Magnetic>
-            <a className="btn btn--ghost" href="#research">
-              Read the research <span aria-hidden="true">↓</span>
+            <a className="btn btn--ghost" href="/docs">
+              Read the docs <span aria-hidden="true">→</span>
             </a>
           </div>
         </Reveal>

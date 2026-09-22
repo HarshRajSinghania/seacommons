@@ -602,6 +602,10 @@ a:focus-visible {
   grid-template-columns: repeat(5, 1fr);
 }
 
+.sidebar-tabs--6 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .sidebar-tabs button {
   border: 1px solid rgba(255, 255, 255, 0.07);
   cursor: pointer;
@@ -771,6 +775,7 @@ h2, h3, .sidebar-header h2, .panel-block h3 {
 
 .link-button {
   display: inline-flex;
+  text-decoration: none;
   align-items: center;
   justify-content: center;
 }

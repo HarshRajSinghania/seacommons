@@ -25,6 +25,7 @@ const NAV = [
   ['Method', '#method'],
   ['MDA', '#mda'],
   ['Governance', '#governance'],
+  ['Docs', '/docs'],
 ];
 
 export function BrandMark({ small = false }) {
@@ -103,6 +104,7 @@ export function Footer() {
           <a href="#research">Research</a>
           <a href="#method">Methods</a>
           <a href="#governance">Governance</a>
+          <a href="/docs">Documentation</a>
         </div>
         <div>
           <span>Surfaces</span>
@@ -112,9 +114,10 @@ export function Footer() {
         </div>
         <div>
           <span>Framework</span>
+          <a href="/docs">Docs</a>
+          <a href="https://api.seacommons.org/docs">API reference ↗</a>
           <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0 ↗</a>
-          <a href="/SECURITY.md">Security</a>
-          <a href="/status">API status</a>
+          <a href="/status">System status</a>
           <a href="mailto:research@seacommons.org">Contact</a>
         </div>
       </div>

@@ -97,14 +97,19 @@ for the primary CTA only. Every other section already used `Reveal` /
 New motion is justified by content change (e.g. the live signal strip
 updating with real data), never added as decoration on its own.
 
-## Live signal strip
+## Live header and current system view
 
-`apps/web/src/site/LiveSignalStrip.jsx` sits directly under the header (above
-Hero, `SiteApp.jsx`) and shows the latest public distress signals from
-`GET /api/v1/live/signals`, click-through to `live.seacommons.org`. It
-degrades to a neutral message on empty/error state, never a visible error or
-infinite spinner, and exposes no more than the existing privacy-filtered
-public payload.
+`apps/web/src/site/HeaderLive.jsx` provides the compact public Live ticker in
+the institutional header. It reads the privacy-filtered
+`GET /api/v1/live/signals` contract and links to `live.seacommons.org`.
+Empty and error states remain neutral rather than presenting an application
+failure.
+
+`apps/web/src/site/sections/OverallCounter.jsx` sits immediately below the
+Hero and reads `GET /api/v1/status?hours=24` plus `GET /api/v1/play/counts`.
+It presents canonical pipeline stages (observations, normalized events,
+derived cues, episodes, Live cases and archive) separately from sensor
+activity. The site must not maintain parallel metric semantics.
 
 ## Hero, header and Surfaces — second pass
 
@@ -125,11 +130,9 @@ public payload.
   paragraphs for one-line taglines, matching the terser register already used
   by the Closing section's cards. ENGINE is explicitly labelled "Coming soon"
   in both the Environments card and its own section label.
-- **Header + live signal strip** are visually one glass panel: the header is
-  always translucent/blurred (previously only after scrolling), and the live
-  strip sits `position: sticky` directly under it with the same
-  `backdrop-filter: blur(14px) saturate(1.4)` treatment and no seam border
-  between them.
+- **Header Live ticker** is part of the translucent header and uses the same
+  public Live projection as the Live surface. It replaces the earlier
+  standalone signal-strip concept.
 
 ## Logo
 

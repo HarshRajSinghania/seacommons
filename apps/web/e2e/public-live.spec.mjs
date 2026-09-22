@@ -16,9 +16,9 @@ test('public Live shell renders on the real public-host code path', async ({ pag
 
 test('Live semantics keep Humanitarian and Maritime as the public macro split', async ({ page }) => {
   await page.goto(PUBLIC_LIVE_URL);
-  await page.getByRole('button', { name: 'Expand signal categories' }).click();
+  await page.getByRole('button', { name: 'Expand investigation categories' }).click();
 
-  const categories = page.getByRole('group', { name: 'Signal categories' });
+  const categories = page.getByRole('group', { name: 'Investigation categories' });
   await expect(categories).toBeVisible();
   await expect(categories.getByRole('link', { name: /^Humanitarian/ })).toBeVisible();
   await expect(categories.getByRole('link', { name: /^Maritime/ })).toBeVisible();
@@ -78,8 +78,8 @@ test('public Live does not expose raw AIS vessel layer controls', async ({ page 
 
 test('Alarm Phone transport type stays Humanitarian Distress in counts and feed filtering', async ({ page }) => {
   await page.goto(PUBLIC_LIVE_URL);
-  await page.getByRole('button', { name: 'Expand signal categories' }).click();
-  const categories = page.getByRole('group', { name: 'Signal categories' });
+  await page.getByRole('button', { name: 'Expand investigation categories' }).click();
+  const categories = page.getByRole('group', { name: 'Investigation categories' });
 
   await page.locator('button[aria-label$="Humanitarian"]').click();
   await expect(categories.locator('a[href="#distress"]')).toContainText(/Distress\s*1/);

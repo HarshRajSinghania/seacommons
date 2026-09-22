@@ -1004,7 +1004,7 @@ button:focus-visible {
 }
 .overall-counter__grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .overall-counter__metric {
   min-width: 0;
@@ -1027,6 +1027,36 @@ button:focus-visible {
   color: var(--sc-paper-faint);
   font-size: 0.52rem;
   line-height: 1.35;
+}
+
+.overall-counter__freshness {
+  display: block;
+  margin-top: 1rem;
+  color: var(--sc-paper-faint);
+  font: 500 .58rem/1.3 var(--sc-font-mono);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.overall-counter__sensors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem .8rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sc-line);
+}
+.overall-counter__sensors span {
+  display: grid;
+  gap: .18rem;
+  color: var(--sc-paper-faint);
+  font: 500 .52rem/1.25 var(--sc-font-mono);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.overall-counter__sensors b {
+  color: var(--sc-paper-dim);
+  font-size: .7rem;
+  letter-spacing: 0;
 }
 @media (max-width: 980px) {
   .overall-counter { grid-template-columns: 1fr; }

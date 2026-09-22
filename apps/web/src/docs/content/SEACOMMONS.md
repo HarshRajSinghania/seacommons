@@ -137,6 +137,12 @@ Environmental inputs can degrade. When a preferred marine source is unavailable,
 
 The same principle applies to all modelling in SeaCommons: derivation is valuable precisely when it remains identifiable as derivation.
 
+### How a reconstruction should explain itself
+
+SeaCommons does not treat motion graphics or a single animated trajectory as sufficient explanation. A useful reconstruction should let the reader see the observed inputs, the modelled outputs, the origin and time window, environmental forcing, parameter versions, assumptions, degraded inputs and uncertainty spread. Time controls should reveal how the result evolves rather than merely replaying a fixed animation.
+
+The interface should also answer a simple question in plain language: what does this reconstruction help us understand about the case? A model that cannot expose its inputs, transformations, uncertainty and analytical purpose should remain an internal experiment rather than a public SeaCommons surface.
+
 ## 09. Privacy, publication and security boundaries
 
 SeaCommons applies privacy before presentation.
@@ -195,7 +201,23 @@ Automated cues do not establish motive or illegality. Corroboration does not tur
 
 The system is built to make these limitations inspectable. Uncertainty is part of the record, not a cosmetic confidence label added after the fact.
 
-## 14. Reading SeaCommons responsibly
+## 14. Explanatory simulations and reconstructions
+
+SeaCommons does not use simulation as decoration. A modelled view should exist only when it helps a reader understand a real analytical question and when the required inputs are present.
+
+Simulations belong to the dossier of a case, not to the general Live surface. Each reconstruction must separate four evidentiary states: **Observed**, **Derived**, **Modelled** and **Unknown**. The interface should make those states visually distinct and should expose the inputs, assumptions and provenance that produced the modelled output.
+
+A drift reconstruction should show the reported or otherwise explicit origin, the environmental forcing used, the simulation time window, ensemble members, the uncertainty envelope and any later observation that can be compared with the model. A trajectory without those elements is not an adequate explanation.
+
+An AIS-gap reconstruction should show the known track before and after the gap, neighbouring traffic, available reception or provider context and alternative explanations for the missing positions. The purpose is to distinguish a potentially meaningful silence from weak coverage or upstream degradation, not to label the gap as deliberate dark activity.
+
+A temporal case reconstruction should allow a reader to move through the evidence as it became knowable. At each cutoff, the interface should show which observations existed, which derived cues were available, which independent lineages supported the case, what remained uncertain and how the working hypothesis changed.
+
+Model parameters and sensitivity matter. When changing a plausible input materially changes the result, that dependence should be visible. The reader should be able to understand not only the model output but why the output takes that shape and what would make it different.
+
+A modelled result must never replace the underlying observations in the case record. Simulation is an explanatory layer over evidence, not a new source of truth.
+
+## 15. Reading SeaCommons responsibly
 
 SeaCommons is most useful when the reader follows the evidence chain rather than the headline label.
 

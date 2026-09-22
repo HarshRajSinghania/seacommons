@@ -4,59 +4,60 @@ import { SectionLabel, Display } from '../bits.jsx';
 
 const CAPABILITIES = [
   {
-    n: 'MDA / 01',
-    tag: 'Identity',
-    title: 'Vessel identity & spoofing',
-    body: 'AIS trace anomalies — circular, teleporting or frozen tracks — flagged as identity questions, not identity conclusions.',
-    points: ['Pattern detection', 'GNSS jamming index', 'Confidence, not verdict'],
-    code: 'ID ? = ID',
+    n: 'MAR / 01',
+    tag: 'AIS',
+    title: 'Gaps in transmission',
+    body: 'A long AIS gap may be interesting, but it can also come from weak reception, provider loss or equipment state. SeaCommons checks the surrounding coverage before treating the gap as a case.',
+    points: ['Track before and after', 'Nearby reception context', 'Provider health'],
+    code: 'GAP ≠ INTENT',
     tone: 'blue',
   },
   {
-    n: 'MDA / 02',
-    tag: 'Correlation',
-    title: 'Shadow-fleet correlation',
-    body: 'Ship-to-ship rendezvous, infrastructure loiter and gap-in-track patterns correlated across public sources before a case is opened.',
-    points: ['STS rendezvous', 'Corroboration required', 'No single-source cases'],
-    code: 'OBS × OBS',
+    n: 'MAR / 02',
+    tag: 'Identity',
+    title: 'Position and identity problems',
+    body: 'Frozen positions, impossible jumps and inconsistent identifiers are recorded as integrity problems. They are questions about the track, not automatic claims about the vessel.',
+    points: ['Track consistency', 'Identifier history', 'Alternative explanations'],
+    code: 'TRACK ?',
     tone: 'lime',
   },
   {
-    n: 'MDA / 03',
-    tag: 'Context',
-    title: 'Grey-zone corroboration',
-    body: 'Sanctions and grey-zone context is surfaced as a fusion input alongside other evidence, gated to reduce false-positive alerting.',
-    points: ['Multi-source rule', 'Alert suppression', 'Reviewable rationale'],
-    code: 'CTX + EVID',
+    n: 'MAR / 03',
+    tag: 'Behaviour',
+    title: 'Rendezvous and loitering',
+    body: 'Close approaches, prolonged co-location and unusual stationary behaviour are compared in time and space. A transfer is only described as such when the available evidence supports that wording.',
+    points: ['Time overlap', 'Distance and speed', 'Independent evidence'],
+    code: 'VESSEL × VESSEL',
     tone: 'paper',
   },
   {
-    n: 'MDA / 04',
-    tag: 'Infrastructure',
-    title: 'Chokepoint & infrastructure analytics',
-    body: 'Cables, pipelines, platforms and ports indexed as a geographic reference layer for proximity and traffic-pattern analysis.',
-    points: ['Reference index', 'Traffic patterns', 'Read-only layer'],
-    code: 'GEO / REF',
+    n: 'MAR / 04',
+    tag: 'Context',
+    title: 'What surrounds the event',
+    body: 'Ports, offshore infrastructure, sanctions references, navigation status, radio and satellite observations can change how a track should be read. Context is stored as context, not as guilt by association.',
+    points: ['Ports and infrastructure', 'Sanctions references', 'Radio and satellite'],
+    code: 'CASE + CONTEXT',
     tone: 'amber',
   },
 ];
 
 export default function MDA() {
   return (
-    <section id="mda" className="section programme">
-      <SectionLabel index="MDA / 007" title="Maritime domain awareness" tone="light" />
-      <Display id="mda-title">
-        The same fusion discipline,<br />applied to a wider signal set.
-      </Display>
-      <Reveal delay={120}>
-        <p>
-          Alongside distress fusion, SeaCommons develops maritime domain awareness (MDA) methods —
-          vessel identity, shadow-fleet behaviour, sanctions context and infrastructure proximity —
-          built on the same corroboration and human-review rules described in Governance. MDA
-          outputs are not published as a real-time public feed: access follows the OPERATIONAL / O2
-          tier, and no case is opened from a single uncorroborated source.
-        </p>
-      </Reveal>
+    <section id="maritime-detail" className="section programme maritime-detail">
+      <SectionLabel index="Maritime / 004" title="How a maritime investigation starts" tone="light" />
+      <div className="maritime-detail__head">
+        <Display id="maritime-title">
+          An anomaly is a reason to look.<br />It is not the answer.
+        </Display>
+        <Reveal delay={120}>
+          <p>
+            SeaCommons looks for patterns in vessel movement and identity, then asks whether the
+            pattern survives basic checks: was there coverage, is the identity stable, is the timing
+            compatible, and is there any independent evidence? Cases that fail those checks should
+            stay weak, expire or never be published.
+          </p>
+        </Reveal>
+      </div>
 
       <Reveal className="wp-grid" stagger={90}>
         {CAPABILITIES.map((c) => (
@@ -68,13 +69,20 @@ export default function MDA() {
             <h3>{c.title}</h3>
             <p>{c.body}</p>
             <ul>
-              {c.points.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
+              {c.points.map((p) => <li key={p}>{p}</li>)}
             </ul>
             <span className="wp-card__code" aria-hidden="true">{c.code}</span>
           </TiltCard>
         ))}
+      </Reveal>
+
+      <Reveal className="maritime-detail__rule">
+        <strong>Corroboration rule</strong>
+        <p>
+          Two providers do not necessarily mean two sources. If both are carrying the same AIS
+          broadcast, SeaCommons still has one AIS lineage. Independent corroboration has to come
+          from evidence that is independent of that broadcast.
+        </p>
       </Reveal>
     </section>
   );

@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Header, Footer } from './chrome.jsx';
 import Hero from './sections/Hero.jsx';
 import OverallCounter from './sections/OverallCounter.jsx';
-import Environments from './sections/Environments.jsx';
+import Domains from './sections/Domains.jsx';
+import Humanitarian from './sections/Humanitarian.jsx';
+import Sources from './sections/Sources.jsx';
 import Programme from './sections/Programme.jsx';
 import SystemView from './sections/SystemView.jsx';
-import Engine from './sections/Engine.jsx';
 import MDA from './sections/MDA.jsx';
 import Governance from './sections/Governance.jsx';
 import Closing from './sections/Closing.jsx';
@@ -41,11 +42,12 @@ export default function SiteApp() {
       <main id="main">
         <Hero />
         <OverallCounter />
-        <Environments />
+        <Domains />
+        <Humanitarian />
+        <MDA />
+        <Sources />
         <Programme />
         <SystemView />
-        <Engine />
-        <MDA />
         <Governance />
         <Closing />
       </main>

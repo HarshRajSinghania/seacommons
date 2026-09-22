@@ -81,11 +81,6 @@
     },
     {
       "source": "/",
-      "has": [{ "type": "host", "value": "engine.seacommons.org" }],
-      "destination": "/console.html"
-    },
-    {
-      "source": "/",
       "has": [{ "type": "host", "value": "console.seacommons.org" }],
       "destination": "/console.html"
     },

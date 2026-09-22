@@ -4,39 +4,39 @@ import { SectionLabel, Display } from '../bits.jsx';
 
 const WP = [
   {
-    n: 'WP / 01',
-    tag: 'Corpus',
-    title: 'Governed observations',
-    body: 'Canonical signal records, provenance, sensitivity tiers, consent and retention rules.',
-    points: ['Source lineage', 'Idempotent intake', 'Access boundaries'],
-    code: 'OBS → REC',
+    n: '01',
+    tag: 'Keep',
+    title: 'Store what arrived',
+    body: 'The first record keeps the source, transport, timestamps, payload reference and location precision before interpretation begins.',
+    points: ['Original source', 'Received time', 'Precision and privacy'],
+    code: 'SOURCE → OBS',
     tone: 'blue',
   },
   {
-    n: 'WP / 02',
-    tag: 'Fusion',
-    title: 'Calibrated inference',
-    body: 'Reliability, missingness and conflicting evidence remain visible throughout analysis.',
-    points: ['Confidence', 'Human review', 'Source comparison'],
-    code: 'SIG ≠ FACT',
+    n: '02',
+    tag: 'Translate',
+    title: 'Put different sources in one vocabulary',
+    body: 'Provider-specific fields are normalised so they can be compared. The normalisation does not erase who said what or how precise the original information was.',
+    points: ['Canonical event types', 'Source lineage kept', 'Unknown stays unknown'],
+    code: 'OBS → EVENT',
     tone: 'lime',
   },
   {
-    n: 'WP / 03',
-    tag: 'Drift',
-    title: 'Ensemble trajectories',
-    body: 'Search surfaces shaped by ocean and atmosphere forcing, expressed as probabilistic ranges rather than point estimates.',
-    points: ['OpenDrift', 'CMEMS forcing', 'Uncertainty cones'],
-    code: 'T₀ → T₊₂₄',
+    n: '03',
+    tag: 'Test',
+    title: 'Derive cues without promoting them to facts',
+    body: 'Rules and models can flag a gap, a rendezvous, an identity problem or response context. These outputs remain derived cues until other evidence supports a stronger claim.',
+    points: ['Rules and models', 'Counter-indicators', 'Expiry when support disappears'],
+    code: 'EVENT → CUE',
     tone: 'paper',
   },
   {
-    n: 'WP / 04',
-    tag: 'Decision',
-    title: 'Accountable interfaces',
-    body: 'Human-centred views that support scrutiny, correction and proportionate action.',
-    points: ['Case timelines', 'Audit trails', 'Operational limits'],
-    code: 'ACT + TRACE',
+    n: '04',
+    tag: 'Publish',
+    title: 'Show only what survives the public rules',
+    body: 'Cases cross into Live only after privacy, lifecycle, source policy and location precision are checked. Play keeps the public history after the immediate Live window.',
+    points: ['Fail closed', 'Versioned lifecycle', 'Persistent archive'],
+    code: 'CASE → PUBLIC',
     tone: 'amber',
   },
 ];
@@ -44,10 +44,19 @@ const WP = [
 export default function Programme() {
   return (
     <section id="research" className="section programme">
-      <SectionLabel index="Programme / 003" title="Four connected workstreams" tone="light" />
-      <Display id="research-title">
-        Four workstreams,<br />one accountable pipeline.
-      </Display>
+      <SectionLabel index="Pipeline / 006" title="What happens after a source arrives" tone="light" />
+      <div className="programme__head">
+        <Display id="research-title">
+          The system keeps the steps separate<br />because they mean different things.
+        </Display>
+        <Reveal delay={120}>
+          <p>
+            A source observation, a normalised event, a derived cue and a public case are not four
+            names for the same object. SeaCommons keeps the boundaries between them so later readers
+            can see what was received, what software added and what was finally published.
+          </p>
+        </Reveal>
+      </div>
 
       <Reveal className="wp-grid" stagger={90}>
         {WP.map((w) => (
@@ -58,11 +67,7 @@ export default function Programme() {
             </div>
             <h3>{w.title}</h3>
             <p>{w.body}</p>
-            <ul>
-              {w.points.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
-            </ul>
+            <ul>{w.points.map((p) => <li key={p}>{p}</li>)}</ul>
             <span className="wp-card__code" aria-hidden="true">{w.code}</span>
           </TiltCard>
         ))}

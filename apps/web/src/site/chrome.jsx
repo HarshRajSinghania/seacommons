@@ -22,10 +22,10 @@ const NAV = [
   ['Docs', '/docs'],
   ['Live', 'https://live.seacommons.org'],
   ['Play', 'https://play.seacommons.org'],
-  ['Research', '#research'],
-  ['System', '#system'],
+  ['Humanitarian', '#humanitarian'],
+  ['Maritime', '#maritime'],
+  ['Sources', '#sources'],
   ['Method', '#method'],
-  ['MDA', '#mda'],
   ['Governance', '#governance'],
 ];
 
@@ -113,21 +113,22 @@ export function Footer() {
           <BrandMark small />
           <span>SEA<br />COMMONS</span>
         </a>
-        <p>Open research infrastructure for accountable maritime evidence.</p>
+        <p>Public research infrastructure for humanitarian and maritime evidence.</p>
       </div>
       <div className="site-footer__cols">
         <div>
-          <span>Programme</span>
-          <a href="#research">Research</a>
-          <a href="#method">Methods</a>
+          <span>Domains</span>
+          <a href="#humanitarian">Humanitarian</a>
+          <a href="#maritime">Maritime</a>
+          <a href="#sources">Sources</a>
+          <a href="#method">Method</a>
           <a href="#governance">Governance</a>
-          <a href="/docs">Documentation</a>
         </div>
         <div>
           <span>Surfaces</span>
-          <a href="https://play.seacommons.org">Play ↗</a>
           <a href="https://live.seacommons.org">Live ↗</a>
-          <a href="https://github.com/suezcanalxyz/seacommons">GitHub ↗</a>
+          <a href="https://play.seacommons.org">Play ↗</a>
+          <a href="/docs">Documentation</a>
         </div>
         <div>
           <span>Framework</span>
@@ -139,7 +140,7 @@ export function Footer() {
         </div>
       </div>
       <div className="site-footer__base">
-        <span>SeaCommons / research prototype</span>
+        <span>SeaCommons / public research infrastructure</span>
         <a href="https://suezcanal.xyz">Developed by suezcanal.xyz</a>
         <span>© 2026</span>
       </div>

@@ -32,16 +32,18 @@ export default function Hero() {
       </div>
 
       <div className="hero__copy">
-        <p className="kicker"><ShinyText static>Observe · normalize · correlate · preserve</ShinyText></p>
+        <p className="kicker"><ShinyText static>Humanitarian incidents · Maritime investigations</ShinyText></p>
         <h1 id="hero-title" className="hero__title">
-          <SplitText text="From fragmented maritime signals to" as="span" />
+          <SplitText text="SeaCommons reconstructs maritime incidents" as="span" />
           <br />
-          <em><SplitText text="traceable public cases." as="span" delay={520} /></em>
+          <em><SplitText text="from incomplete evidence." as="span" delay={520} /></em>
         </h1>
         <Reveal className="hero__intro" delay={200}>
           <p>
-            SeaCommons receives heterogeneous observations, preserves provenance, derives bounded
-            analytical cues and groups related evidence without converting uncertainty into certainty.
+            Public reports, vessel tracks, maritime radio, satellite observations and environmental
+            data rarely arrive together. SeaCommons keeps them as separate pieces of evidence,
+            records where each one came from, and links them only when time, place, identity and
+            source lineage support the connection.
           </p>
           <div className="hero__actions">
             <Magnetic>
@@ -50,13 +52,13 @@ export default function Hero() {
               </a>
             </Magnetic>
             <a className="btn btn--ghost" href="/docs">
-              Read the docs <span aria-hidden="true">→</span>
+              Documentation <span aria-hidden="true">→</span>
             </a>
           </div>
         </Reveal>
       </div>
 
-      <a className="hero__scroll" href="#environments" aria-label="Scroll to environments">
+      <a className="hero__scroll" href="#humanitarian" aria-label="Scroll to Humanitarian and Maritime overview">
         <span />
       </a>
     </section>

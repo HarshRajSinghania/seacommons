@@ -36,14 +36,13 @@ Engineering documentation remains versioned under `docs/`, with `docs/README.md`
 The institutional site and public docs must reuse canonical public contracts.
 They must not implement a parallel analytics pipeline.
 
-The homepage system view reads:
+The homepage totals strip reads only:
 
-- `GET /api/v1/status?hours=24`
 - `GET /api/v1/play/counts`
 
-The status endpoint already defines the semantics for raw observations,
-normalized events, derived cues, episodes, hypotheses, corroboration, public
-Live, sensor activity and freshness.
+Those values are all-time public catalogue counts and must stay visually comparable on one line. Rolling-window pipeline, sensor and freshness metrics belong in technical/status surfaces, not in the homepage totals strip.
+
+The status endpoint remains the canonical contract for raw observations, normalized events, derived cues, episodes, hypotheses, corroboration, public Live, sensor activity and freshness.
 
 ## Routing
 
@@ -57,11 +56,65 @@ its host-specific `/docs` route before the institutional `/docs` rewrite.
 
 ## Copy rules
 
-Public copy should distinguish observation from interpretation. In particular:
+Public copy is part of the evidence boundary. It should be written in plain
+language and should describe what the system actually does before describing
+why that work matters.
+
+Editorial rules:
+
+- prefer concrete nouns and verbs over abstract product language;
+- explain a mechanism with an example or limit instead of adding an adjective;
+- avoid stacked slogans, symmetrical headline pairs and generic phrases such as
+  "actionable insights", "trusted intelligence", "uncertainty-aware",
+  "accountable evidence" or similar language when the sentence does not explain
+  the underlying mechanism;
+- do not use three-part rhetorical lists merely for rhythm;
+- one sentence should make one main claim when possible;
+- name the source, transformation, output or failure mode when it matters;
+- say when a capability is partial, experimental, unavailable or planned;
+- never describe planned or experimental work as a current production feature;
+- distinguish current data coverage from the theoretical capability of the
+  architecture;
+- state limitations in the same section as the capability they qualify, not in
+  a distant disclaimer;
+- write for a reader who does not know the internal taxonomy, then provide the
+  technical term after the plain-language explanation;
+- avoid language that implies certainty, intent, wrongdoing or completeness
+  beyond what the evidence supports.
+
+The copy must also preserve SeaCommons domain distinctions:
 
 - a received observation is not a verified incident;
 - a derived cue is not a factual finding;
 - repeated transformations of one lineage do not create independent corroboration;
+- source credibility is not location credibility;
+- an extracted coordinate is not automatically a verified coordinate;
+- an HTTP or provider failure is not an empty dataset;
 - category colour and lifecycle styling are separate;
 - model coordinates remain derived candidates rather than reported geometry;
-- no automated illegality finding is implied by anomaly labels.
+- no automated illegality finding is implied by anomaly labels;
+- Humanitarian privacy takes priority over public map precision.
+
+A useful editorial test is simple: if a sentence could be pasted unchanged
+onto an unrelated AI or OSINT product, rewrite it until it says something
+specific about SeaCommons.
+
+
+## Simulation and reconstruction presentation
+
+SeaCommons must not use decorative simulation as a substitute for explanation.
+
+Any future public reconstruction or simulation must expose, in the same interface:
+
+- the observed inputs and their provenance;
+- the explicit modelled outputs, visually separated from observations;
+- the scenario origin and time window;
+- forcing inputs and parameter versions;
+- assumptions and degraded/fallback inputs;
+- a time control that shows how the result evolves;
+- uncertainty or ensemble spread, not only a single path;
+- a plain-language explanation of what changed and why;
+- the analytical question the reconstruction helps answer;
+- links back to the underlying case/evidence record.
+
+A simulation that cannot explain its inputs, transformations, uncertainty and purpose should not be published as a SeaCommons product surface.

@@ -3,19 +3,21 @@ import { Reveal } from '../../ui/index.js';
 import { SectionLabel, Display } from '../bits.jsx';
 
 const TIERS = [
-  { code: 'PUBLIC / P0', title: 'Methods and synthetic fixtures', body: 'Open source code, documentation, aggregated indicators and scenarios that do not represent real people.', tone: 'lime' },
-  { code: 'RESEARCH / R1', title: 'Controlled analytical material', body: 'Purpose-bound datasets with documented minimisation, access, review and retention conditions.', tone: 'sea' },
-  { code: 'OPERATIONAL / O2', title: 'Live and identifying information', body: 'Positions, contact details and case material available only to authorised teams and audited services.', tone: 'amber' },
+  { code: 'PUBLIC / P0', title: 'Public methods and case records', body: 'Documentation, public case projections, aggregated system status and material that can be released without exposing private operational data.', tone: 'lime' },
+  { code: 'RESEARCH / R1', title: 'Controlled analytical material', body: 'Purpose-bound datasets and working material with documented access, minimisation, retention and review conditions.', tone: 'sea' },
+  { code: 'OPERATIONAL / O2', title: 'Sensitive operational material', body: 'Identifying reports, precise sensitive positions, contact details, private attachments and analyst state. This does not belong in the public projection.', tone: 'amber' },
 ];
 
-const PRINCIPLES = ['Data minimisation', 'Purpose limitation', 'Human review', 'Correction by design', 'Dual-use assessment', 'Documented deletion'];
+const PRINCIPLES = ['Minimise what is stored', 'Keep purpose explicit', 'Review sensitive publication', 'Allow correction', 'Assess dual-use risk', 'Delete when retention ends'];
 
 export default function Governance() {
   return (
     <section id="governance" className="section governance">
-      <SectionLabel index="Governance / 008" title="Access follows sensitivity" />
+      <SectionLabel index="Governance / 008" title="Public does not mean everything" />
       <div className="governance__grid">
-        <Display id="governance-title">Open where safe.<br />Restricted where necessary.</Display>
+        <Display id="governance-title">
+          SeaCommons publishes a reduced record.<br />The sensitive material stays behind it.
+        </Display>
         <Reveal className="tiers" stagger={90}>
           {TIERS.map((t) => (
             <article className={`tier tier--${t.tone}`} key={t.code}>
@@ -32,18 +34,18 @@ export default function Governance() {
 
       <div className="limits">
         <Reveal className="limits__heading" y={12}>
-          <span>Operational boundary</span>
-          <h2>This is research infrastructure.<br />It is not an emergency service.</h2>
+          <span>Operational limit</span>
+          <h2>SeaCommons can be incomplete, delayed or wrong.</h2>
         </Reveal>
         <Reveal className="limits__copy" delay={120}>
           <p>
-            SeaCommons outputs are experimental and may be incomplete, delayed or wrong. They must not
-            replace official search-and-rescue coordination, emergency communications or qualified
-            operational judgment.
+            Coverage changes by provider, geography, licensing and sensor availability. AIS gaps
+            are ambiguous without reception context. Satellite acquisitions can miss the relevant
+            time. Human reports can be approximate or late. A modelled position remains modelled.
           </p>
           <p>
-            If a life may be at risk, contact the appropriate emergency and maritime rescue authorities
-            through established channels.
+            SeaCommons is research infrastructure, not an emergency dispatch service. It must not
+            replace rescue coordination, emergency communications or qualified operational judgment.
           </p>
         </Reveal>
       </div>

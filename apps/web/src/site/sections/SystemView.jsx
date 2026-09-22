@@ -1,110 +1,41 @@
 import React from 'react';
-import { Reveal, SpotlightCard } from '../../ui/index.js';
+import { Reveal } from '../../ui/index.js';
 import { SectionLabel, Display } from '../bits.jsx';
 
 const STEPS = [
-  { n: '01', tag: 'IN', title: 'Observe', body: 'Receive a public, partner, environmental or manually entered signal.', foot: 'Raw acquisition' },
-  { n: '02', tag: 'QC', title: 'Qualify', body: 'Extract position, assess confidence, deduplicate and flag ambiguity.', foot: 'Human review boundary' },
-  { n: '03', tag: 'SIM', title: 'Simulate', body: 'Run versioned environmental and drift models with explicit parameters.', foot: 'Ensemble output' },
-  { n: '04', tag: 'LOG', title: 'Preserve', body: 'Link evidence, result and actor in a reviewable forensic chain.', foot: 'Signed audit record' },
+  { n: '01', tag: 'OBS', title: 'Observation', body: 'An immutable source envelope: who or what supplied it, when SeaCommons received it, and what the source actually contained.', foot: 'No verification implied' },
+  { n: '02', tag: 'EVENT', title: 'Normalised event', body: 'The source is translated into a shared vocabulary while its original authority, precision and lineage stay attached.', foot: 'Comparable, not equal' },
+  { n: '03', tag: 'CUE', title: 'Derived cue', body: 'A rule or model identifies something worth checking: a gap, a rendezvous, a position problem, a radio association or another bounded signal.', foot: 'Still not a finding' },
+  { n: '04', tag: 'EP', title: 'Episode or hypothesis', body: 'Related material is grouped only when identity, time, place and source lineage support the association. Weak associations can expire.', foot: 'Contestable analysis' },
+  { n: '05', tag: 'LIVE', title: 'Public case', body: 'A reduced version crosses the public boundary only after privacy, publication policy, lifecycle and geometry precision checks.', foot: 'Public projection' },
+  { n: '06', tag: 'PLAY', title: 'Archive record', body: 'The case remains in Play with its timeline, so later evidence can add to the record without pretending it was known earlier.', foot: 'History is preserved' },
 ];
 
 const METHOD = [
-  { n: '01', title: 'Provenance', body: 'Where the observation came from, when it arrived and how it was obtained.' },
-  { n: '02', title: 'Transformation', body: 'Software version, environmental source, parameters and computational path.' },
-  { n: '03', title: 'Uncertainty', body: 'Confidence, missing fields, disagreement and sensitivity to assumptions.' },
-  { n: '04', title: 'Contestability', body: 'Corrections, alternative interpretations and the record of human decisions.' },
+  { n: '01', title: 'Provenance', body: 'The record says where a claim came from and which later outputs depend on it.' },
+  { n: '02', title: 'Independence', body: 'Copies, transports and reprocessing do not manufacture independent corroboration.' },
+  { n: '03', title: 'Precision', body: 'An exact point, an approximate point, an area and an unknown location remain different states.' },
+  { n: '04', title: 'Contradiction', body: 'Later evidence can support, weaken or contradict a case without deleting the earlier state.' },
 ];
-
-function DriftFigure() {
-  return (
-    <figure className="drift-figure">
-      <figcaption>
-        <span>Drift surface / illustrative</span>
-        <span>Not for operational use</span>
-      </figcaption>
-      <svg viewBox="0 0 1200 300" role="img" aria-label="Illustrative ensemble of drift trajectories with widening uncertainty">
-        <defs>
-          <pattern id="scGrid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth=".5" opacity=".22" />
-          </pattern>
-          <linearGradient id="scCone" x1="0" x2="1">
-            <stop offset="0" stopColor="#c7dcf5" stopOpacity=".05" />
-            <stop offset="1" stopColor="#c7dcf5" stopOpacity=".24" />
-          </linearGradient>
-          <radialGradient id="scScene" cx="72%" cy="8%" r="90%">
-            <stop offset="0" stopColor="#111f3b" />
-            <stop offset="0.55" stopColor="#0a1324" />
-            <stop offset="1" stopColor="#060a14" />
-          </radialGradient>
-        </defs>
-        <rect width="1200" height="300" fill="url(#scScene)" />
-        <rect width="1200" height="300" fill="url(#scGrid)" />
-        <path
-          className="df-bathy"
-          d="M-60 96C220 46 360 210 620 150s330-16 470 62 260 44 410 4M-40 236c220-118 400 58 600-14s330-2 470 72 260 40 420-16"
-        />
-        <path className="df-cone df-cone--24" d="M110 246C230 190 400 100 610 66c150-24 360-18 480 14 108 62 40 150-110 190-230 62-540 74-980-24Z" />
-        <path className="df-cone df-cone--12" d="M110 246c96-64 210-160 330-256 88-70 210-66 258 6 46 74-24 158-124 190-150 48-320 66-464 60Z" />
-        <g className="df-ambient">
-          <polygon transform="translate(940,58) rotate(38) scale(0.8)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon transform="translate(1040,190) rotate(-64) scale(0.6)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon transform="translate(210,60) rotate(150) scale(0.55)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon transform="translate(700,250) rotate(96) scale(0.7)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon transform="translate(1140,110) rotate(-20) scale(0.5)" points="0,-6 5,4.5 -5,4.5" />
-        </g>
-        <g className="df-ensemble">
-          <path d="M110 246c110-58 200-146 320-208 110-56 260-70 420-40" />
-          <path d="M110 246c98-72 176-172 292-232 116-60 268-58 424-16" />
-          <path d="M110 246c86-46 176-118 268-186 122-88 292-96 452-52" />
-        </g>
-        <path className="df-trace" d="M110 246c100-64 188-160 300-224 116-66 264-72 420-30" />
-        <g className="df-points">
-          <polygon className="df-vessel" transform="translate(110,246) rotate(-32)" points="0,-8 6.5,6 -6.5,6" />
-          <polygon className="df-vessel" transform="translate(340,148) rotate(-30)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon className="df-vessel" transform="translate(560,80) rotate(-18)" points="0,-6 5,4.5 -5,4.5" />
-          <polygon className="df-vessel df-vessel--now" transform="translate(830,16) rotate(-10)" points="0,-9 7,7 -7,7" />
-        </g>
-        <g className="df-labels">
-          <text x="86" y="272"><tspan className="df-labels__t" x="86">T+00</tspan><tspan x="86" dy="12">distress signal</tspan></text>
-          <text x="316" y="176"><tspan className="df-labels__t" x="316">T+06</tspan><tspan x="316" dy="12">cone / advisory</tspan></text>
-          <text x="536" y="108"><tspan className="df-labels__t" x="536">T+12</tspan><tspan x="536" dy="12">search spread</tspan></text>
-          <text x="806" y="44"><tspan className="df-labels__t" x="806">T+24</tspan><tspan x="806" dy="12">max envelope</tspan></text>
-        </g>
-        <circle className="df-marker" r="5">
-          <animateMotion dur="9s" repeatCount="indefinite" path="M110 246c100-64 188-160 300-224 116-66 264-72 420-30" />
-        </circle>
-      </svg>
-      <div className="drift-figure__status" aria-hidden="true">
-        <span><i /> wind <b>18.2</b> kn</span>
-        <span><i /> current <b>0.8</b> kn</span>
-        <span><i /> wave <b>1.8</b> m</span>
-        <span className="drift-figure__status-live"><i className="drift-figure__pulse" /> drift simulation active</span>
-      </div>
-      <div className="drift-figure__legend">
-        <span><i className="ln" /> Median trajectory</span>
-        <span><i className="en" /> Ensemble members</span>
-        <span><i className="ar" /> Uncertainty envelope</span>
-      </div>
-    </figure>
-  );
-}
 
 export default function SystemView() {
   return (
     <section id="system" className="section systemview">
-      <SectionLabel index="System / 004" title="Current research architecture" tone="dark" />
+      <SectionLabel index="Architecture / 007" title="The evidence model" tone="dark" />
       <div className="systemview__head">
-        <Display id="system-title">From intake to<br />an auditable trace.</Display>
+        <Display id="system-title">
+          Six stages.<br />Each answers a different question.
+        </Display>
         <Reveal delay={120}>
           <p>
-            The interface never becomes the source of truth. Inputs, transformations, parameters and
-            outputs are preserved as linked records that can be inspected independently.
+            PostgreSQL is the durable system of record. Live and Play read public projections of
+            that record; they do not run separate investigative logic. Edge and browser snapshots
+            can keep the interface available, but they are caches, not a second truth.
           </p>
         </Reveal>
       </div>
 
-      <Reveal as="ol" className="pipeline" stagger={80}>
+      <Reveal as="ol" className="pipeline pipeline--six" stagger={70}>
         {STEPS.map((s) => (
           <li key={s.n}>
             <div><span>{s.n}</span><i>{s.tag}</i></div>
@@ -115,35 +46,17 @@ export default function SystemView() {
         ))}
       </Reveal>
 
-      <Reveal delay={60}>
-        <DriftFigure />
-      </Reveal>
-
-      <Reveal className="systemview__views" stagger={120}>
-        <SpotlightCard as="article" className="evidence-panel">
-          <header><span>Evidence packet</span><span>SC-EV-00041</span></header>
-          <div className="evidence-panel__wave" aria-hidden="true">
-            {Array.from({ length: 26 }).map((_, i) => <i key={i} />)}
-          </div>
-          <dl>
-            <div><dt>Classification</dt><dd>Illustrative distress signal</dd></div>
-            <div><dt>Position source</dt><dd>Explicit coordinate pair</dd></div>
-            <div><dt>Confidence</dt><dd>0.82 / requires review</dd></div>
-            <div><dt>Transformation</dt><dd>drift.engine / versioned</dd></div>
-            <div><dt>Record status</dt><dd>Append-only / traceable</dd></div>
-          </dl>
-          <p>This packet is a design specimen. It contains no real person, vessel or event.</p>
-        </SpotlightCard>
-      </Reveal>
-
       <div id="method" className="method">
-        <SectionLabel index="Method / 005" title="Proof before presentation" />
+        <SectionLabel index="Method / 007A" title="Four distinctions the interface should never hide" />
         <div className="method__head">
-          <Display id="method-title">Explainability is a methodological requirement.</Display>
+          <Display id="method-title">
+            The useful part is not the marker.<br />It is the chain behind it.
+          </Display>
           <Reveal delay={120}>
             <p>
-              Analytical authority does not come from visual polish. A useful result must expose what
-              entered the system, what changed, what remains unknown and who can contest it.
+              SeaCommons is designed so a reader can move backwards from a public case to the
+              observations, transformations and uncertainties that produced it. If that chain is
+              missing, the result should not be presented as well established.
             </p>
           </Reveal>
         </div>

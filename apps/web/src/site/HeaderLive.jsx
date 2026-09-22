@@ -7,14 +7,11 @@ import { resolveSiteApiBase, LIVE_HOST_URL } from './liveApi.js';
 const POLL_MS = 20000;
 const MAX_ITEMS = 8;
 
-// Status-color mapping is fixed brand-wide (see ui/ui.css): rose = critical,
-// amber = unconfirmed/uncertain, sea = nominal. Never a per-module color.
-function severityToken(properties) {
-  const severity = String(properties?.severity || '').toLowerCase();
-  if (severity === 'critical' || severity === 'high') return 'rose';
-  if (severity === 'medium') return 'amber';
-  if (properties?.verification_status === 'unverified_public_source') return 'amber';
-  return 'sea';
+// Rose is reserved for Humanitarian across the public SeaCommons UI.
+// Maritime uses the sea token; the header does not encode severity as colour.
+function categoryToken(properties) {
+  const category = String(properties?.main_category || properties?.maritime_domain || '').toLowerCase();
+  return category === 'humanitarian' ? 'rose' : 'sea';
 }
 
 function relativeTime(isoString) {
@@ -63,16 +60,16 @@ export default function HeaderLive() {
   }, []);
 
   const top = items?.[0]?.properties;
-  const dotState = failed ? 'idle' : top ? severityToken(top) : 'idle';
+  const dotState = failed ? 'idle' : top ? categoryToken(top) : 'idle';
 
   return (
-    <a className="site-header__live" href={LIVE_HOST_URL} aria-label="Open Live — latest public signals">
+    <a className="site-header__live" href={LIVE_HOST_URL} aria-label="Open Live — latest public cases">
       <i className={`site-header__live-dot is-${dotState}`} aria-hidden="true" />
       <span className="site-header__live-label">Live</span>
       <span className="site-header__live-ticker">
         {failed && <span className="site-header__live-status">Live feed unavailable</span>}
         {!failed && items === null && <span className="site-header__live-status">Connecting…</span>}
-        {!failed && items?.length === 0 && <span className="site-header__live-status">No active signals</span>}
+        {!failed && items?.length === 0 && <span className="site-header__live-status">No active public cases</span>}
         {!failed && items && items.length > 0 && (
           <Ticker
             duration={26}

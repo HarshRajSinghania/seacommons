@@ -88,7 +88,8 @@ static (double lat, double lon)? ParsePosition(string? value)
 
 sealed class DecoderState
 {
-    readonly FskAutoTuner tuner;
+    const float MarkHz = 1615;
+    const float SpaceHz = 1785;
     readonly DSCDecoder decoder;
     readonly GMDSSDecoder[] gmdss;
     readonly ConcurrentQueue<DSCMessage> pending = new();
@@ -97,10 +98,7 @@ sealed class DecoderState
     {
         // MF/HF DSC receivers stay on the assigned RF channel. J2B
         // demodulation yields the standard 1615/1785 Hz audio pair directly.
-        // Fixed tones are safer than opportunistic retuning to HF noise peaks.
-        tuner = new FskAutoTuner(1900, 1500, sampleRate, 170);
-        tuner.IsAutoTuningEnabled = false;
-        tuner.SetManualLeftFreq(1615);
+        // The tones are fixed, so bypass the FFT auto-tuner entirely.
         decoder = new DSCDecoder(100, sampleRate);
         gmdss = Enumerable.Range(0, DSCDecoder.SlideWindowsNumber).Select(_ => new GMDSSDecoder()).ToArray();
         foreach (var item in gmdss) item.OnMessageDecoded += msg => pending.Enqueue(msg);
@@ -114,9 +112,7 @@ sealed class DecoderState
             short sample = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8));
             signal[i] = sample / 32768f;
         }
-        var processed = tuner.ProcessSignal(signal);
-        if (processed.Length == 0) return;
-        var bits = decoder.DecodeFSK(processed, tuner.LeftFreq, tuner.RightFreq);
+        var bits = decoder.DecodeFSK(signal, MarkHz, SpaceHz);
         for (var i = 0; i < Math.Min(bits.Length, gmdss.Length); i++) gmdss[i].AddBits(bits[i]);
     }
 

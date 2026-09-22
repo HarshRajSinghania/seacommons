@@ -288,7 +288,7 @@ def test_gap_scan_does_not_cross_cue_young_gap(monkeypatch):
     assert calls == []
 
 
-def test_gap_scan_cross_cues_only_investigation_window(monkeypatch):
+def test_gap_scan_keeps_satellite_enrichment_off_detector_hot_path(monkeypatch):
     from core.mda import darkship_cue
     calls = []
     monkeypatch.setattr(darkship_cue, "build", lambda **kwargs: calls.append(kwargs) or {"association_status": "no_detection"})
@@ -299,7 +299,7 @@ def test_gap_scan_cross_cues_only_investigation_window(monkeypatch):
         _witness(f"11100017{k}", 37.01, 18.01, minutes_ago=310)
         _witness(f"11100017{k}", 37.01, 18.01, minutes_ago=120)
     assert MdaWatch().scan_gaps() == 1
-    assert len(calls) == 1
+    assert calls == []
 
 def test_spoofing_circular_ignores_tug_working_the_breakwater():
     import math

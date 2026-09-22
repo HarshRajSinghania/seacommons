@@ -939,14 +939,11 @@ class MdaWatch:
                     ).as_metadata()
                 except Exception as exc:  # pragma: no cover
                     logger.debug("track corridor coverage failed: %s", exc)
-                try:
-                    from core.mda.darkship_cue import build as _cue
-                    course = pre_gap_course
-                    cue = _cue(lat=last.lat, lon=last.lon, course_deg=course,
-                               speed_kn=last.sog,
-                               gap_start=datetime.fromtimestamp(last.ts, tz=timezone.utc))
-                except Exception as exc:  # pragma: no cover
-                    logger.debug("darkship_cue failed: %s", exc)
+                # Satellite/SAR enrichment is deliberately off the detector
+                # hot path. A remote STAC outage must never delay or prevent
+                # creation of a qualified AIS-gap episode. The scheduler's
+                # bounded darkship-cue refresh attaches this context later to
+                # the same durable event/case.
             confidence = round(max(0.2, min(0.9, 0.4 + (time.time() - last.ts) / 14400) - 0.5 * jam), 3)
             severity = "high" if confidence >= 0.7 else "medium"
             # Shadow-mode confidence model (docs/prompt.md phase 9/11): a

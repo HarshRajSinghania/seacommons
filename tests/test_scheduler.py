@@ -40,6 +40,26 @@ def test_incident_watch_job_claims_bounded_batch_and_executes_each(monkeypatch):
     assert calls == ["watch:a", "watch:b"]
 
 
+def test_darkship_cue_refresh_job_is_bounded(monkeypatch):
+    from core import scheduler
+    from core.mda.watch import mda_watch
+
+    calls = []
+    monkeypatch.setattr(
+        mda_watch,
+        "refresh_darkship_cues",
+        lambda *, limit: calls.append(limit) or {
+            "scanned": 0,
+            "refreshed": 0,
+            "with_unmatched_sar": 0,
+            "hypotheses_evaluated": 0,
+        },
+    )
+
+    scheduler._job_darkship_cue_refresh()
+    assert calls == [6]
+
+
 def test_scheduler_registers_incident_watch_job():
     from core import scheduler
 
@@ -48,5 +68,6 @@ def test_scheduler_registers_incident_watch_job():
         scheduler.start()
         ids = {job["id"] for job in scheduler.status()["jobs"]}
         assert "incident_watch" in ids
+        assert "darkship_cue_refresh" in ids
     finally:
         scheduler.stop()

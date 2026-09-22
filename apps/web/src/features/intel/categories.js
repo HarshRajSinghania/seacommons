@@ -101,7 +101,7 @@ export function classifyEventVisual(properties = {}) {
 
   const tokens = eventTokens(properties);
   const navStatus = Number(properties.latest_nav_status);
-  if (/circle_spoof|circular_spoof|spoofing|teleport|impossible_speed|impossible_movement|gnss_manipulation/.test(tokens)) {
+  if (/circle_spoof|circular_spoof|spoofing|teleport|position_jump|impossible_speed|impossible_movement|gnss_manipulation/.test(tokens)) {
     return _VISUAL_BY_KEY.spoofing;
   }
   if (/ais_gap|dark_vessel|dark_activity|signal_gap|transponder_off|(^|_)gap($|_)/.test(tokens)) return _VISUAL_BY_KEY.ais_gap;

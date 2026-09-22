@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { classifyEventVisual, isAlarmPhoneSource, signalCategoryOf } from '../features/intel/categories.js';
-import { locationLabel, relativeTime } from '../features/live/eventPresentation.js';
+import { caseEvidenceLabel, locationLabel, relativeTime } from '../features/live/eventPresentation.js';
 
 const ALARM_PHONE_SOURCE = 'Alarm Phone';
 const SEV_LABELS = ['critical', 'high', 'medium', 'low'];
@@ -399,6 +399,7 @@ export default function IntelDashboard({
       || p.title
       || (isHumanitarianRow ? 'Distress report' : 'Unknown vessel');
     const incidentType = eventIncidentType(p).replace(/_/g, ' ');
+    const evidenceLabel = caseEvidenceLabel(p);
     // F-12: report time visible in every row; a missing coordinate reads as a
     // reason (OCR PROCESSING / OCR DISPUTED / REGION ONLY / WITHHELD / NOT
     // EXTRACTED), never a bare "position unavailable".
@@ -428,7 +429,7 @@ export default function IntelDashboard({
             title={visual.label}
           />
           <strong>{vesselName}</strong>
-          <span>{incidentType}{p.input_modality ? ` · ${p.input_modality.replace('_', ' ')}` : ''}</span>
+          <span>{incidentType}{evidenceLabel ? ` · ${evidenceLabel}` : ''}</span>
           {reported && <span className="intel-log-time">{reported}</span>}
           <code className={`intel-log-loc intel-log-loc--${location.tone}`}>{location.text}</code>
         </button>

@@ -15,6 +15,13 @@ test('classifies unable-to-manoeuvre reports as red navigation casualties', () =
   assert.equal(eventAnomalyLabel(event), 'unable to manoeuvre');
 });
 
+test('position_jump is rendered as position integrity, matching incident taxonomy', () => {
+  assert.equal(classifyEventVisual({
+    anomaly_type: 'position_jump',
+    incident_type: 'spoofing',
+  }).key, 'spoofing');
+});
+
 test('explicit anomaly type takes precedence over a vessel latest navigation status', () => {
   assert.equal(classifyEventVisual({
     anomaly_types: ['circle_spoof'],

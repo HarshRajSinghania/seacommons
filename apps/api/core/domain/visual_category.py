@@ -127,7 +127,10 @@ def classify_visual_category(
     tokens = _tokens(event_type, meta)
 
     # 2. Explicit anomaly / security semantics.
-    if re.search(r"spoof|teleport|impossible_speed|impossible_movement|gnss_manip", tokens):
+    if re.search(
+        r"spoof|teleport|position_jump|impossible_speed|impossible_movement|gnss_manip",
+        tokens,
+    ):
         return "spoofing"
     if re.search(r"ais_gap|dark_vessel|dark_activity|signal_gap|transponder_off|(^|_)gap($|_)", tokens):
         return "ais_gap"

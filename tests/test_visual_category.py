@@ -65,6 +65,17 @@ def test_classifier_never_reads_severity() -> None:
     ) == "spoofing"
 
 
+def test_position_jump_is_position_integrity_visual_category() -> None:
+    fields = visual_category_fields(
+        source="SeaCommons episode engine",
+        event_type="ais_anomaly",
+        maritime_domain="grey_zone",
+        metadata={"anomaly_type": "position_jump"},
+    )
+    assert fields["visual_category"] == "spoofing"
+    assert fields["visual_color"] == CATEGORY_COLORS["spoofing"]
+
+
 def test_non_alarm_phone_categories_are_distinct_colours() -> None:
     keys = [
         "navigation_casualty", "spoofing", "ais_gap", "loitering", "rendezvous",

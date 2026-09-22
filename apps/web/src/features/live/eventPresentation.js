@@ -31,6 +31,75 @@ function formatUncertainty(metres) {
  * The location cell for a humanitarian row.
  * Returns { text, tone } where tone is 'ok' | 'pending' | 'review' | 'none'.
  */
+export function caseEvidenceLabel(properties = {}) {
+  const reasonCodes = [
+    ...(Array.isArray(properties.reason_codes) ? properties.reason_codes : []),
+    ...(Array.isArray(properties.offshore_reason_codes) ? properties.offshore_reason_codes : []),
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+
+  const labels = {
+    PROLONGED_OFFSHORE_GAP: 'prolonged offshore gap',
+    LOCAL_AIS_COVERAGE_HEALTHY: 'local AIS coverage healthy',
+    COMMUNITY_AIS_COVERAGE_PRESENT: 'community AIS coverage present',
+    TRACK_CORRIDOR_COVERAGE_PRESENT: 'track corridor coverage present',
+    SUSTAINED_POSITION_RELOCATION: 'sustained position relocation',
+    HIGH_CONFIDENCE_POSITION_INTEGRITY_ANOMALY: 'high-confidence position anomaly',
+    PERSISTENT_AIS_REPORTED_SAFETY_STATE: 'persistent AIS NUC state',
+    REPEATED_AIS_DISTRESS_BEACON: 'repeated distress beacon',
+    SUSTAINED_OPEN_SEA_RENDEZVOUS: 'sustained open-sea rendezvous',
+    SUSTAINED_INFRASTRUCTURE_PROXIMITY: 'sustained infrastructure proximity',
+    SUSTAINED_STS_ZONE_DWELL: 'sustained STS-zone dwell',
+    STRONG_SANCTIONS_IDENTITY_MATCH: 'strong IMO/MMSI sanctions match',
+  };
+  const preferredOrder = [
+    'PROLONGED_OFFSHORE_GAP',
+    'SUSTAINED_POSITION_RELOCATION',
+    'PERSISTENT_AIS_REPORTED_SAFETY_STATE',
+    'REPEATED_AIS_DISTRESS_BEACON',
+    'SUSTAINED_OPEN_SEA_RENDEZVOUS',
+    'SUSTAINED_INFRASTRUCTURE_PROXIMITY',
+    'SUSTAINED_STS_ZONE_DWELL',
+    'STRONG_SANCTIONS_IDENTITY_MATCH',
+    'TRACK_CORRIDOR_COVERAGE_PRESENT',
+    'LOCAL_AIS_COVERAGE_HEALTHY',
+    'COMMUNITY_AIS_COVERAGE_PRESENT',
+    'HIGH_CONFIDENCE_POSITION_INTEGRITY_ANOMALY',
+  ];
+  const selected = preferredOrder
+    .filter((code) => reasonCodes.includes(code))
+    .slice(0, 2)
+    .map((code) => labels[code]);
+
+  if (selected.length) return selected.join(' · ');
+
+  const family = String(properties.episode_family || '');
+  const anomaly = String(
+    properties.anomaly_type
+      || (Array.isArray(properties.anomaly_types) ? properties.anomaly_types[0] : '')
+      || properties.observation_type
+      || '',
+  ).trim();
+  const fallback = {
+    gap: 'AIS reporting gap',
+    long_gap: 'prolonged AIS reporting gap',
+    ais_gap: 'AIS reporting gap',
+    position_jump: 'position relocation anomaly',
+    position_anomaly: 'position integrity anomaly',
+    distress_beacon: 'AIS distress beacon',
+    not_under_command: 'AIS not-under-command state',
+    rendezvous: 'vessel proximity / rendezvous',
+    infrastructure_proximity: 'infrastructure proximity',
+  };
+  if (fallback[anomaly]) return fallback[anomaly];
+  if (family === 'gap_episode') return 'offshore AIS gap dossier';
+  if (family === 'spoofing_episode') return 'position integrity dossier';
+  if (family === 'safety_episode') return 'navigation safety dossier';
+  if (family === 'rendezvous_episode') return 'rendezvous dossier';
+  if (family === 'infrastructure_proximity_episode') return 'infrastructure proximity dossier';
+  return '';
+}
+
+
 export function locationLabel(properties = {}, coords = null) {
   const review = String(properties.coordinate_review_status || '').toLowerCase();
   const status = String(properties.location_status || '').toLowerCase();

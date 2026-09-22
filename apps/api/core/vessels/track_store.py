@@ -69,6 +69,12 @@ class TrackStore:
             return
         self._running = True
         try:
+            hydrated = self.hydrate_recent_last_seen(max_age_hours=12.0)
+            if hydrated:
+                logger.info("TrackStore hydrated %d recent vessel states from DB", hydrated)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("TrackStore: recent-state hydration failed: %s", exc)
+        try:
             from core.vessels import aisstream
 
             aisstream.register_position_hook(self.on_position)
@@ -183,6 +189,59 @@ class TrackStore:
             return n
         except Exception as exc:  # pragma: no cover
             logger.warning("TrackStore prune failed: %s", exc)
+            return 0
+
+    def hydrate_recent_last_seen(self, *, max_age_hours: float = 12.0) -> int:
+        """Restore the latest persisted fix per MMSI into the in-memory gap index.
+
+        Gap detection uses the in-memory last-fix map for fast silence sweeps.
+        Rebuilding it from durable track history at startup makes open gaps
+        survive API restarts instead of disappearing until a vessel transmits again.
+        """
+        try:
+            from sqlalchemy import func
+
+            from core.db.models import VesselTrackDB
+            from core.db.session import session_scope
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+            with session_scope() as db:
+                ranked = db.query(
+                    VesselTrackDB.mmsi.label("mmsi"),
+                    VesselTrackDB.ts.label("ts"),
+                    VesselTrackDB.lat.label("lat"),
+                    VesselTrackDB.lon.label("lon"),
+                    VesselTrackDB.sog.label("sog"),
+                    VesselTrackDB.nav_status.label("nav_status"),
+                    func.row_number().over(
+                        partition_by=VesselTrackDB.mmsi,
+                        order_by=VesselTrackDB.ts.desc(),
+                    ).label("rank"),
+                ).filter(VesselTrackDB.ts >= cutoff).subquery()
+                rows = db.query(ranked).filter(ranked.c.rank == 1).all()
+
+            hydrated = 0
+            for row in rows:
+                if row.ts is None or row.lat is None or row.lon is None:
+                    continue
+                observed = row.ts
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                mmsi = str(row.mmsi or "")
+                if not mmsi:
+                    continue
+                self._last[mmsi] = _Last(
+                    float(row.lat),
+                    float(row.lon),
+                    float(row.sog or 0.0),
+                    observed.timestamp(),
+                    int(row.nav_status) if row.nav_status is not None else None,
+                    "",
+                )
+                hydrated += 1
+            return hydrated
+        except Exception as exc:  # pragma: no cover
+            logger.warning("TrackStore hydration failed: %s", exc)
             return 0
 
     # ── reads ────────────────────────────────────────────────────────────────

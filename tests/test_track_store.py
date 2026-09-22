@@ -60,6 +60,21 @@ def test_silent_since(store):
     assert dict(store.silent_since(min_silent_s=3 * 3600)) == {}
 
 
+def test_recent_last_seen_hydrates_gap_state_after_restart(store):
+    mmsi = "111000556"
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    _pos(store, mmsi, 35.2, 18.2, sog=11.0, recv=old)
+
+    restarted = TrackStore()
+    assert restarted._last == {}
+    assert restarted.hydrate_recent_last_seen(max_age_hours=12) >= 1
+
+    quiet = dict(restarted.silent_since(min_silent_s=3600))
+    assert mmsi in quiet
+    assert quiet[mmsi].lat == 35.2
+    assert quiet[mmsi].sog == 11.0
+
+
 def test_positions_between_bbox(store):
     now = datetime.now(timezone.utc)
     _pos(store, "111000666", 35.0, 18.0, recv=now)

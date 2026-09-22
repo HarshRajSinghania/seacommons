@@ -2551,7 +2551,17 @@ def test_public_live_hides_legacy_gap_without_strong_reception_expectation() -> 
                 "anomaly_type": "long_gap",
                 "publication_status": "published",
                 "analysis_state": "evidence_candidate",
-                "reception_expectation": {"support_level": "strong"},
+                "reception_expectation": {
+                    "support_level": "strong",
+                    "expected_messages_during_gap": 120,
+                },
+                "gap_still_open": True,
+                "current_silent_seconds": 18_000,
+                "silent_seconds": 18_000,
+                "offshore_reason_codes": [
+                    "STRONG_RECEPTION_EXPECTATION",
+                    "PROLONGED_OFFSHORE_GAP",
+                ],
             },
         ))
         for episode_id, event_id, mmsi, lat, lon in (
@@ -2584,9 +2594,20 @@ def test_public_live_hides_legacy_gap_without_strong_reception_expectation() -> 
             ))
 
     try:
-        ids = {item["id"] for item in _published_open_episode_features(500)}
-        assert legacy_episode not in ids
-        assert strong_episode in ids
+        features = _published_open_episode_features(500)
+        by_id = {item["id"]: item for item in features}
+        assert legacy_episode not in by_id
+        assert strong_episode in by_id
+        props = by_id[strong_episode]["properties"]
+        assert props["anomaly_type"] == "long_gap"
+        assert props["reception_expectation"]["support_level"] == "strong"
+        assert props["reception_expectation"]["expected_messages_during_gap"] == 120
+        assert props["gap_still_open"] is True
+        assert props["current_silent_seconds"] == 18_000
+        assert props["offshore_reason_codes"] == [
+            "STRONG_RECEPTION_EXPECTATION",
+            "PROLONGED_OFFSHORE_GAP",
+        ]
     finally:
         with session_scope() as db:
             for episode_id in (legacy_episode, strong_episode):

@@ -31,6 +31,11 @@ def _qualified_ais_event(event_id: str, mmsi: str, *, lat=34.5, lon=17.0) -> Int
             "verification_status": "ais_transponder",
             "analysis_state": "evidence_candidate",
             "offshore_anomaly_qualified": True,
+            "reception_expectation": {
+                "support_level": "strong",
+                "expected_messages_during_gap": 120,
+            },
+            "gap_still_open": True,
         },
     )
 

@@ -92,6 +92,67 @@ def test_exit_gate_a_single_low_specificity_observation_stays_episode_only():
     assert hyp is None
 
 
+def test_reappeared_gap_updates_same_canonical_episode_to_resolved():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    event_id = "gap-resolve-1"
+    episode_id = "episode:test:gap-resolve"
+    _add_event(
+        event_id,
+        gap_still_open=True,
+        resolution_state="open",
+        publication_status="published",
+        analysis_state="evidence_candidate",
+        gap_reason={"hypothesis": "vessel_gap", "confidence": 0.9},
+        reception_expectation={"support_level": "strong"},
+    )
+    opened = _episode(
+        "gap_episode",
+        signal_ids=[event_id],
+        episode_id=episode_id,
+    )
+    opened["properties"].update({
+        "publication_state": "published",
+        "resolution_state": "open",
+        "gap_still_open": True,
+    })
+    evaluate_episode(opened)
+
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        assert row is not None
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        assert analysis["resolution_state"] == "open"
+
+    intel_store.update_metadata(
+        event_id,
+        metadata={
+            "gap_still_open": False,
+            "gap_reappearance_confirmed": True,
+            "resolution_state": "resolved",
+            "incident_lifecycle": "resolved",
+        },
+    )
+    resolved = _episode(
+        "gap_episode",
+        signal_ids=[event_id],
+        episode_id=episode_id,
+    )
+    resolved["properties"].update({
+        "publication_state": "published",
+        "resolution_state": "resolved",
+        "gap_still_open": False,
+    })
+    evaluate_episode(resolved)
+
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        assert row is not None
+        analysis = (row.behaviour_context or {}).get("analysis") or {}
+        assert analysis["resolution_state"] == "resolved"
+
+
 def test_single_sustained_position_relocation_opens_dossier_without_corroboration():
     from core.db.models import MaritimeEpisodeDB
     from core.db.session import session_scope

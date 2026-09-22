@@ -60,7 +60,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "state_sar": "State SAR / Coast Guard",
     "navigation_casualty": "Navigation casualty",
     "spoofing": "Position integrity anomaly",
-    "ais_gap": "AIS gap / dark activity",
+    "ais_gap": "AIS reporting gap / dark candidate",
     "loitering": "Loitering / abnormal dwell",
     "rendezvous": "Rendezvous / ship-to-ship",
     "sanctions": "Sanctions match",

@@ -168,7 +168,7 @@ const SIGNALS_MACRO_GROUPS = [
     key: 'maritime',
     label: 'Maritime',
     categories: [
-      { key: 'dark_activity', label: 'Dark activity', groupKey: 'signal_type_dark_activity' },
+      { key: 'dark_activity', label: 'AIS gaps / dark candidates', groupKey: 'signal_type_dark_activity' },
       { key: 'spoofing', label: 'Position integrity', groupKey: 'signal_type_spoofing' },
       { key: 'transfer', label: 'Transfers / rendezvous', groupKey: 'signal_type_transfer' },
       { key: 'loitering', label: 'Loitering', groupKey: 'signal_type_loitering' },
@@ -1937,11 +1937,10 @@ function App() {
           layout: { visibility: 'none' },
           paint: {
             'circle-radius': ['match', ['get', 'type'], 'ais_anomaly', 5, 4],
-            'circle-color': ['match', ['get', 'type'],
-              'ais_anomaly', 'rgba(244,114,182,0.15)', 'rgba(96,165,250,0.12)'],
+            'circle-color': ['coalesce', ['get', 'visual_color'], '#60a5fa'],
+            'circle-opacity': 0.16,
             'circle-stroke-width': 1.5,
-            'circle-stroke-color': ['match', ['get', 'type'],
-              'ais_anomaly', '#f472b6', '#60a5fa'],
+            'circle-stroke-color': ['coalesce', ['get', 'visual_color'], '#60a5fa'],
           },
         });
 

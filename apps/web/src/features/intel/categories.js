@@ -44,7 +44,7 @@ export const EVENT_VISUAL_CATEGORIES = [
   { key: 'distress', label: 'Maritime distress', color: '#ff3b3b' },
   { key: 'navigation_casualty', label: 'Unable to manoeuvre / aground', color: '#ff4d5e' },
   { key: 'spoofing', label: 'Position integrity', color: '#c084fc' },
-  { key: 'ais_gap', label: 'AIS gap / dark activity', color: '#fb923c' },
+  { key: 'ais_gap', label: 'AIS reporting gap / dark candidate', color: '#fb923c' },
   { key: 'loitering', label: 'Loitering / abnormal dwell', color: '#facc15' },
   { key: 'rendezvous', label: 'Rendezvous / ship-to-ship', color: '#f97316' },
   { key: 'sanctions', label: 'Sanctions match', color: '#f472b6' },

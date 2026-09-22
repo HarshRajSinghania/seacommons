@@ -226,8 +226,13 @@ def _investigation_projection(hypothesis, episode=None, evidence_event=None) -> 
     corroborated = (
         verification_status == "multi_source_corroborated" or len(independence_groups) >= 2
     )
+    canonical_id = (
+        str(episode.episode_id) if episode is not None else hypothesis.hypothesis_id
+    )
     return {
-        "incident_id": hypothesis.hypothesis_id,
+        "incident_id": canonical_id,
+        "episode_id": str(episode.episode_id) if episode is not None else None,
+        "hypothesis_id": hypothesis.hypothesis_id,
         "incident_status": hypothesis.state,
         "surface": "play",
         "case_type": hypothesis.hypothesis_type,
@@ -390,6 +395,21 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 .all()
             ):
                 satellite_counts[str(incident_id)] = int(count or 0)
+            # Associated satellite detections are linked directly to the
+            # canonical MaritimeEpisode, even when their originating incident
+            # key is an evidence child rather than the public parent ID.
+            for episode_id, count in (
+                db.query(SatelliteObservationDB.episode_id, func.count(SatelliteObservationDB.observation_id))
+                .filter(
+                    SatelliteObservationDB.episode_id.in_(public_ids),
+                    SatelliteObservationDB.association_status == "strong",
+                )
+                .group_by(SatelliteObservationDB.episode_id)
+                .all()
+            ):
+                if episode_id:
+                    key = str(episode_id)
+                    satellite_counts[key] = satellite_counts.get(key, 0) + int(count or 0)
 
         for item in combined:
             incident_id = str(item["incident_id"])
@@ -669,6 +689,12 @@ def _radio_item(observation, association) -> dict[str, Any]:
             "distance_km": association.distance_km,
             "ais_observed_at": association.ais_observed_at,
             "episode_eligible": bool(association.episode_eligible),
+            "episode_id": association.episode_id,
+            "evidence_role": (
+                "corroboration"
+                if association.match_status == "strong" and association.episode_id
+                else "context"
+            ),
             "source_lineage": "radio_transmission",
             "association_uses_lineage": "ais_sensor_lineage",
         },
@@ -696,6 +722,15 @@ def play_incident_timeline(incident_id: str):
     now = datetime.now(timezone.utc)
     with session_scope() as db:
         hypothesis = db.get(InvestigationHypothesisDB, incident_id)
+        if hypothesis is None:
+            # New canonical URLs use MaritimeEpisode. Keep old hypothesis URLs
+            # resolving to the same dossier during the transition.
+            hypothesis = (
+                db.query(InvestigationHypothesisDB)
+                .filter(InvestigationHypothesisDB.episode_id == incident_id)
+                .order_by(InvestigationHypothesisDB.updated_at.desc())
+                .first()
+            )
         if hypothesis is not None and _is_public_play_investigation(hypothesis):
             episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id) if hypothesis.episode_id else None
             evidence_links = [
@@ -731,15 +766,18 @@ def play_incident_timeline(incident_id: str):
             projection = _investigation_projection(
                 hypothesis, episode, evidence_event=primary_evidence
             )
+            canonical_id = str(projection["incident_id"])
             timeline = [{
-                "id": hypothesis.hypothesis_id,
+                "id": canonical_id,
                 "at": projection["reported_at"],
-                "type": "hypothesis",
+                "type": "episode" if episode is not None else "hypothesis",
                 "source": "SeaCommons evidence engine",
                 "title": projection["title"],
                 "geometry": projection["geometry"],
                 "properties": {
                     "state": hypothesis.state,
+                    "hypothesis_id": hypothesis.hypothesis_id,
+                    "episode_id": str(episode.episode_id) if episode is not None else None,
                     "evidence_stage": hypothesis.evidence_stage,
                     "episode_present": episode is not None,
                     "archive_source": projection["archive_source"],
@@ -778,7 +816,12 @@ def play_incident_timeline(incident_id: str):
             # prefixed, matching drift_service's own persistence convention)
             # -- a naive incident_id == hypothesis_id match returns nothing.
             evidence_ids = [e.id for e in evidence_events]
-            drift_keys = [incident_id, f"intel:{incident_id}"]
+            drift_keys = [
+                canonical_id,
+                f"intel:{canonical_id}",
+                hypothesis.hypothesis_id,
+                f"intel:{hypothesis.hypothesis_id}",
+            ]
             for evidence_id in evidence_ids:
                 drift_keys.append(evidence_id)
                 drift_keys.append(f"intel:{evidence_id}")
@@ -793,10 +836,15 @@ def play_incident_timeline(incident_id: str):
             ) if drift_keys else []
             timeline.extend(_drift_item(row) for row in drifts)
 
-            satellite_ids = [incident_id, *evidence_ids]
+            satellite_ids = [canonical_id, hypothesis.hypothesis_id, *evidence_ids]
             satellites = (
                 db.query(SatelliteObservationDB)
-                .filter(SatelliteObservationDB.incident_id.in_(satellite_ids))
+                .filter(
+                    or_(
+                        SatelliteObservationDB.episode_id == canonical_id,
+                        SatelliteObservationDB.incident_id.in_(satellite_ids),
+                    )
+                )
                 .order_by(SatelliteObservationDB.acquisition_time.asc())
                 .all()
             ) if satellite_ids else []
@@ -825,49 +873,58 @@ def play_incident_timeline(incident_id: str):
                 if str(event.linked_mmsi or "").strip()
             }
             radio_rows: list[tuple[Any, Any]] = []
+            association_scope = RadioAISAssociationDB.episode_id == canonical_id
             if evidence_mmsis:
-                associations = (
-                    db.query(RadioAISAssociationDB)
-                    .filter(
-                        RadioAISAssociationDB.mmsi.in_(sorted(evidence_mmsis)),
-                        RadioAISAssociationDB.match_status.in_(("strong", "identity_only")),
-                        RadioAISAssociationDB.confidence >= 0.8,
-                    )
-                    .order_by(RadioAISAssociationDB.created_at.asc())
-                    .limit(200)
-                    .all()
+                association_scope = or_(
+                    association_scope,
+                    RadioAISAssociationDB.mmsi.in_(sorted(evidence_mmsis)),
                 )
-                observation_ids = [row.observation_id for row in associations]
-                observation_by_id = {
-                    row.observation_id: row
-                    for row in (
-                        db.query(SourceObservationDB)
-                        .filter(
-                            SourceObservationDB.observation_id.in_(observation_ids),
-                            SourceObservationDB.observation_type == "dsc_message",
-                        )
-                        .all()
-                        if observation_ids else []
+            associations = (
+                db.query(RadioAISAssociationDB)
+                .filter(
+                    association_scope,
+                    RadioAISAssociationDB.match_status.in_(("strong", "identity_only")),
+                    RadioAISAssociationDB.confidence >= 0.8,
+                )
+                .order_by(RadioAISAssociationDB.created_at.asc())
+                .limit(200)
+                .all()
+            )
+            observation_ids = [row.observation_id for row in associations]
+            observation_by_id = {
+                row.observation_id: row
+                for row in (
+                    db.query(SourceObservationDB)
+                    .filter(
+                        SourceObservationDB.observation_id.in_(observation_ids),
+                        SourceObservationDB.observation_type == "dsc_message",
                     )
-                }
-                for association in associations:
-                    observation = observation_by_id.get(association.observation_id)
-                    if observation is None:
-                        continue
-                    observed_at = parse_utc(str(observation.observed_at))
-                    if observed_at is None:
-                        continue
-                    if radio_start is not None and observed_at < radio_start:
-                        continue
-                    if radio_end is not None and observed_at > radio_end:
-                        continue
-                    radio_rows.append((observation, association))
-                timeline.extend(_radio_item(observation, association) for observation, association in radio_rows)
+                    .all()
+                    if observation_ids else []
+                )
+            }
+            for association in associations:
+                observation = observation_by_id.get(association.observation_id)
+                if observation is None:
+                    continue
+                observed_at = parse_utc(str(observation.observed_at))
+                if observed_at is None:
+                    continue
+                if radio_start is not None and observed_at < radio_start:
+                    continue
+                if radio_end is not None and observed_at > radio_end:
+                    continue
+                radio_rows.append((observation, association))
+            timeline.extend(_radio_item(observation, association) for observation, association in radio_rows)
 
             timeline = [item for item in timeline if item.get("at")]
             timeline.sort(key=lambda item: item["at"])
             return {
-                "incident_id": incident_id, "incident_status": hypothesis.state,
+                "incident_id": canonical_id,
+                "requested_incident_id": incident_id,
+                "episode_id": str(episode.episode_id) if episode is not None else None,
+                "hypothesis_id": hypothesis.hypothesis_id,
+                "incident_status": hypothesis.state,
                 "surface": "play", "domain": "maritime",
                 "main_category": "maritime",
                 "incident_type": projection["incident_type"],
@@ -882,7 +939,35 @@ def play_incident_timeline(incident_id: str):
                 "reason_codes": projection.get("reason_codes"),
                 "counter_indicators": projection.get("counter_indicators"),
                 "satellite_count": len(satellites),
+                "satellite_evidence_count": sum(
+                    1 for row in satellites
+                    if row.association_status == "strong"
+                    and row.episode_id
+                    and str(row.episode_id) == canonical_id
+                ),
+                "satellite_context_count": sum(
+                    1 for row in satellites
+                    if not (
+                        row.association_status == "strong"
+                        and row.episode_id
+                        and str(row.episode_id) == canonical_id
+                    )
+                ),
                 "radio_count": len(radio_rows),
+                "radio_evidence_count": sum(
+                    1 for _observation, row in radio_rows
+                    if row.match_status == "strong"
+                    and row.episode_id
+                    and str(row.episode_id) == canonical_id
+                ),
+                "radio_context_count": sum(
+                    1 for _observation, row in radio_rows
+                    if not (
+                        row.match_status == "strong"
+                        and row.episode_id
+                        and str(row.episode_id) == canonical_id
+                    )
+                ),
                 "drift_count": len(drifts),
                 "timeline": timeline, "generated_at": now.isoformat(),
             }
@@ -991,6 +1076,12 @@ def _satellite_item(row) -> dict[str, Any]:
             "polarisation": row.polarisation,
             "evidence_status": row.evidence_status,
             "association_status": row.association_status,
+            "episode_id": row.episode_id,
+            "evidence_role": (
+                "corroboration"
+                if row.association_status == "strong" and row.episode_id
+                else "context"
+            ),
             "case_targets": list((row.provenance or {}).get("case_targets") or []),
             "provenance": row.provenance or {},
         },

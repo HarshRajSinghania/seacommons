@@ -244,3 +244,15 @@ def test_rendezvous_feature_uses_explicit_multi_subject_identity():
         "subj:mmsi:247123456", "subj:mmsi:255987654"
     ]
     assert "subj:mmsi:247123456+subj:mmsi:255987654" in result[0]["id"]
+
+
+def test_public_maritime_episode_role_is_explicit() -> None:
+    result = coalesce_security_vessel_episodes([
+        _feature(
+            "intel:episode-role", "2026-09-22T08:00:00+00:00", 14.1, 35.5,
+            type="ais_anomaly", linked_mmsi="211879870", anomaly_type="gap",
+            publication_state="published", analysis_state="evidence_candidate",
+        )
+    ])
+    assert len(result) == 1
+    assert result[0]["properties"]["live_role"] == "maritime_episode"

@@ -119,31 +119,55 @@ def test_decoded_dsc_bridge_attaches_ais_association(monkeypatch):
             1.0,
             msg.observed_at.isoformat(),
             True,
+            "episode:canonical:radio-test",
         ),
     )
-    monkeypatch.setattr(bridge, "persist_strong_radio_ais_episode", lambda msg, assoc: None)
     result = bridge.handle_decoded_radio_message(_message())
     assert result["ais_association"]["mmsi"] == "123456789"
     assert result["ais_association"]["match_status"] == "strong"
+    assert result["ais_association"]["case_associated"] is True
+    assert result["maritime_episode_id"] == "episode:canonical:radio-test"
 
 
-def test_only_strong_match_can_create_cross_modal_episode(monkeypatch):
+def test_strong_radio_match_reuses_existing_episode_and_never_mints_parallel_case():
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
+    from core.intel.episode_store import save_episode
     from core.radio.ais_association import (
         RadioAISAssociation,
         persist_strong_radio_ais_episode,
     )
 
-    seen = []
-    monkeypatch.setattr("core.intel.episode_store.save_episode", lambda feature: seen.append(feature) or feature)
+    episode_id = "episode:test:radio-existing"
+    save_episode({
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [14.5, 35.9]},
+        "properties": {
+            "episode_id": episode_id,
+            "episode_family": "gap_episode",
+            "subject_ids": ["subj:mmsi:123456789"],
+            "related_signal_ids": ["radio-parent-signal"],
+            "timestamp_utc": "2026-09-07T15:00:00+00:00",
+            "verification_status": "single_source_observed",
+        },
+    })
     strong = RadioAISAssociation(
-        "obs:episode", "123456789", "strong", 0.95, 2.3, "2026-09-07T15:00:00+00:00", True
+        "obs:episode", "123456789", "strong", 0.95, 2.3,
+        "2026-09-07T15:00:00+00:00", True, episode_id,
     )
     weak = RadioAISAssociation(
-        "obs:weak", "123456789", "weak", 0.65, 55.0, "2026-09-07T15:00:00+00:00", False
+        "obs:weak", "123456789", "weak", 0.65, 55.0,
+        "2026-09-07T15:00:00+00:00", False,
     )
-
-    created = persist_strong_radio_ais_episode(_message(), strong)
-    assert created is not None
-    assert seen[0]["properties"]["episode_family"] == "radio_dsc_ais"
-    assert seen[0]["properties"]["verification_status"] == "cross_modal_correlated"
-    assert persist_strong_radio_ais_episode(_message(), weak) is None
+    try:
+        resolved = persist_strong_radio_ais_episode(_message(), strong)
+        assert resolved is not None
+        assert resolved.episode_id == episode_id
+        assert persist_strong_radio_ais_episode(_message(), weak) is None
+        with session_scope() as db:
+            assert db.query(MaritimeEpisodeDB).filter(
+                MaritimeEpisodeDB.episode_family == "radio_dsc_ais"
+            ).count() == 0
+    finally:
+        with session_scope() as db:
+            db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).delete()

@@ -299,6 +299,26 @@ def dedupe_public_case_items(items: list[dict[str, Any]], *, window_seconds: int
     return [item for item in items if fields(item)[4] not in duplicate_ids]
 
 
+def _ship_type_for_public_feature(props: dict[str, Any]) -> int:
+    for value in (props.get("vessel_type_context"), props.get("ship_type")):
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            pass
+    mmsi = str(props.get("linked_mmsi") or props.get("mmsi") or "").strip()
+    if mmsi:
+        try:
+            from core.vessels.registry import registry
+
+            row = (getattr(registry, "_cache", {}) or {}).get(mmsi, {})
+            value = row.get("ship_type")
+            return int(value) if value is not None else 0
+        except Exception:
+            pass
+    return 0
+
+
 def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     """Case-surface quality gate applied after privacy/publication projection.
 
@@ -392,10 +412,7 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
         if not (props.get("offshore_anomaly_qualified") and props.get("analysis_state") == "evidence_candidate"):
             return False
         if anomaly_type in {"gap", "long_gap"}:
-            try:
-                ship_type = int(props.get("ship_type") or props.get("vessel_type_context") or 0)
-            except (TypeError, ValueError):
-                ship_type = 0
+            ship_type = _ship_type_for_public_feature(props)
             low_specificity_class = (
                 ship_type == 30
                 or 40 <= ship_type < 50
@@ -414,13 +431,12 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
                 # prolonged AIS silence with no baseline deviation or second
                 # evidence lineage.
                 return False
-        if anomaly_type == "impossible_speed":
-            verification = str(props.get("verification_status") or "")
-            evidence_count = int(props.get("evidence_count") or 0)
-            if verification == "single_source_observed" and evidence_count < 2:
-                # A single impossible-speed jump can be one malformed AIS fix.
-                # Keep it in Play/evidence, but require a repeated or otherwise
-                # corroborated observation before it becomes a public Live case.
+        if anomaly_type in {"impossible_speed", "position_jump", "teleport"}:
+            # AIS transponder/receiver verification is still one physical
+            # lineage. Repetition inside that same feed does not turn a
+            # position-integrity cue into a public spoofing investigation.
+            sustained = str(props.get("teleport_pattern") or "") == "sustained_relocation"
+            if not is_independently_corroborated(props) and not sustained:
                 return False
     source = str(props.get("source") or "").lower()
     category = str(props.get("visual_category") or "")
@@ -518,11 +534,22 @@ def _public_intel_feature(
     # public case. Grey-zone/sanctions AIS anomalies, fused alerts, identity
     # flags and satellite dark candidates can reach public Live only after
     # they have become a published InvestigationHypothesis.
+    anomaly_type = str(event.metadata.get("anomaly_type") or "").lower()
+    # Single-lineage offshore evidence may open a public investigation for
+    # specific behavioural families (gap/rendezvous). Position-integrity cues
+    # are different: provider replay/interleaving can produce impossible-speed
+    # jumps, so those reach Live only through the assessed hypothesis path or
+    # when the producer explicitly marks a sustained relocation pattern.
+    position_integrity_raw = anomaly_type in {"impossible_speed", "position_jump", "teleport"}
+    sustained_relocation = (
+        str(event.metadata.get("teleport_pattern") or "") == "sustained_relocation"
+    )
     offshore_evidence = bool(
         event.metadata.get("offshore_anomaly_qualified")
         and str(event.metadata.get("analysis_state") or "") == "evidence_candidate"
         and publication == "published"
         and event.type in {"ais_anomaly", "ais_rendezvous"}
+        and (not position_integrity_raw or sustained_relocation)
     )
     if (
         resolved_domain in {"grey_zone", "sanctions"}

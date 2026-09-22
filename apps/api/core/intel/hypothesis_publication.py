@@ -77,9 +77,14 @@ def public_hypothesis_collection(limit: int = 100) -> dict[str, Any]:
         projected = project_public_maritime_assessed(record, hypothesis=hypothesis)
         if projected is None or projected.get("lat") is None or projected.get("lon") is None:
             continue
+        # The hypothesis remains the assessment record, but the persisted
+        # MaritimeEpisode is the canonical public case parent.
+        projected["hypothesis_id"] = hypothesis.hypothesis_id
+        if hypothesis.episode_id:
+            projected["episode_id"] = hypothesis.episode_id
         features.append({
             "type": "Feature",
-            "id": projected["id"],
+            "id": projected.get("episode_id") or projected["id"],
             "geometry": {"type": "Point", "coordinates": [projected["lon"], projected["lat"]]},
             "properties": projected,
         })

@@ -59,7 +59,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "civil_sar": "Civil SAR / NGO",
     "state_sar": "State SAR / Coast Guard",
     "navigation_casualty": "Navigation casualty",
-    "spoofing": "AIS spoofing / impossible movement",
+    "spoofing": "Position integrity anomaly",
     "ais_gap": "AIS gap / dark activity",
     "loitering": "Loitering / abnormal dwell",
     "rendezvous": "Rendezvous / ship-to-ship",

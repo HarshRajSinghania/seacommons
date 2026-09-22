@@ -43,6 +43,7 @@ or more subjects for encounters" (M5.2).
 """
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass, field
 from datetime import datetime

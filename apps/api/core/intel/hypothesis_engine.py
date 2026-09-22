@@ -60,7 +60,10 @@ def _attach_cross_modal_evidence(
     from core.intel.lifecycle import parse_utc
 
     refs: list[EvidenceReference] = []
+    context_ids: list[str] = []
     reason_codes: set[str] = set()
+    episode_props = episode.get("properties") or {}
+    canonical_episode_id = str(episode_props.get("episode_id") or "").strip() or None
     for event in events:
         observed = parse_utc(event.timestamp_utc) or datetime.now(timezone.utc)
         if event.type in {"ais_anomaly", "ais_rendezvous", "ais_spike"}:
@@ -71,36 +74,39 @@ def _attach_cross_modal_evidence(
                 observed_at=observed, confidence=max(0.0, min(1.0, confidence)),
             ))
         cue = (event.metadata or {}).get("darkship_cue") or {}
-        if cue.get("association_status") != "unmatched_candidate":
+        if not isinstance(cue, dict) or not (
+            cue.get("gfw_sar_detections") or cue.get("gfw_unmatched_in_area")
+        ):
             continue
-        # Materialize as proper, persisted satellite evidence -- not
-        # decorative images. Keyed by this event's own id (one of the IDs
-        # that ends up in the hypothesis's evidence_links via related_
-        # signal_ids), so Play's dossier can find it the same way it finds
-        # drift (docs section 6/1's play_incident_timeline fix).
         from core.intel.satellite_observation import (
-            materialize_unmatched_sar_detections,
+            materialize_sar_detections,
             persist_observations,
         )
 
-        satellite_observations = materialize_unmatched_sar_detections(
-            incident_id=event.id, cue=cue,
+        satellite_observations = materialize_sar_detections(
+            incident_id=event.id,
+            cue=cue,
+            expected_mmsi=event.linked_mmsi,
+            episode_id=canonical_episode_id,
         )
         if satellite_observations:
             persist_observations(satellite_observations)
-        for detection in cue.get("gfw_unmatched_in_area") or ():
-            if not isinstance(detection, dict):
-                continue
-            det_at = parse_utc(str(detection.get("timestamp") or "")) or observed
-            lat = detection.get("lat")
-            lon = detection.get("lon")
-            evidence_id = f"sat:gfw_sar:{det_at.isoformat()}:{lat}:{lon}"
-            refs.append(EvidenceReference(
-                evidence_id=evidence_id, evidence_class="satellite_observation",
-                source_lineage="gfw_sar", modality="satellite",
-                observed_at=det_at, confidence=0.45,
-            ))
-            reason_codes.add("SATELLITE_CANDIDATE_IN_REACHABLE_AREA")
+        for satellite in satellite_observations:
+            det_at = parse_utc(satellite.acquisition_time) or observed
+            if satellite.association_status == "strong" and satellite.episode_id:
+                refs.append(EvidenceReference(
+                    evidence_id=satellite.observation_id,
+                    evidence_class="satellite_observation",
+                    source_lineage="gfw_sar",
+                    modality="satellite",
+                    observed_at=det_at,
+                    confidence=0.95,
+                ))
+                reason_codes.add("SATELLITE_DETECTION_ASSOCIATED_EXACT_MMSI")
+            else:
+                context_ids.append(satellite.observation_id)
+                if satellite.association_status == "unmatched_candidate":
+                    reason_codes.add("SATELLITE_CANDIDATE_IN_REACHABLE_AREA")
 
     if not refs:
         return episode
@@ -113,6 +119,7 @@ def _attach_cross_modal_evidence(
     props = updated.setdefault("properties", {})
     props["cross_modal_packet_id"] = packet.packet_id
     props["cross_modal_evidence_ids"] = [ref.evidence_id for ref in packet.evidence]
+    props["cross_modal_context_ids"] = list(dict.fromkeys(context_ids))
     props["cross_modal_modalities"] = list(assessment.modalities)
     props["cross_modal_independence_groups"] = list(assessment.independence_groups)
     props["cross_modal_reason_codes"] = sorted(reason_codes)
@@ -199,7 +206,17 @@ def _should_persist_episode(props: dict[str, Any]) -> bool:
     independent = int(props.get("independent_source_count") or 0)
     verification = str(props.get("verification_status") or "")
     analysis_state = str(props.get("analysis_state") or "")
+    publication_state = str(props.get("publication_state") or "")
     if family in {"safety_episode", "port_call_episode"} and analysis_state in {"signal", "evidence"}:
+        return True
+    # Live/Play must share one canonical case object. If a qualified episode is
+    # explicitly publishable as evidence_candidate/evidence, persist that
+    # episode even when it currently has only one child observation. Raw
+    # detector events remain separate durable evidence.
+    if (
+        publication_state == "published"
+        and analysis_state in {"evidence_candidate", "evidence"}
+    ):
         return True
     if bool(props.get("cross_modal_investigation_ready")):
         return True

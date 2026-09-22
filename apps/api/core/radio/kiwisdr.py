@@ -223,8 +223,11 @@ class KiwiSDRAdapter:
         self._send_tune_message(frequency_hz, normalized_mode)
 
     def _send_tune_message(self, frequency_hz: int, normalized_mode: str) -> None:
+        from core.radio.dsc_tuning import receiver_carrier_hz
+
         low_cut, high_cut = _KIWI_PASSBANDS[normalized_mode]
-        frequency_khz = frequency_hz / 1000
+        wire_frequency_hz = receiver_carrier_hz(frequency_hz, normalized_mode)
+        frequency_khz = wire_frequency_hz / 1000
         self._transport.send(
             f"SET mod={normalized_mode} low_cut={low_cut} high_cut={high_cut} freq={frequency_khz:g}"
         )

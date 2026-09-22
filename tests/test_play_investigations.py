@@ -106,7 +106,8 @@ def test_play_catalog_exposes_review_ready_corroborated_investigation():
     hypothesis_id = _seed_investigation(state="review_ready")
     response = TestClient(app).get("/api/v1/play/incidents?limit=500")
     assert response.status_code == 200
-    row = next(item for item in response.json()["incidents"] if item["incident_id"] == hypothesis_id)
+    row = next(item for item in response.json()["incidents"] if item.get("hypothesis_id") == hypothesis_id)
+    assert row["episode_id"] == row["incident_id"]
     assert row["domain"] == "maritime"
     assert row["main_category"] == "maritime"
     assert row["investigation"] is True
@@ -121,7 +122,8 @@ def test_play_catalog_exposes_review_ready_corroborated_investigation():
 def test_play_catalog_keeps_review_ready_derived_investigation_with_stage():
     hypothesis_id = _seed_investigation(state="review_ready", evidence_stage="derived")
     rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
-    row = next(item for item in rows if item["incident_id"] == hypothesis_id)
+    row = next(item for item in rows if item.get("hypothesis_id") == hypothesis_id)
+    assert row["episode_id"] == row["incident_id"]
     assert row["incident_status"] == "review_ready"
     assert row["evidence_stage"] == "derived"
     assert row["review_boundary_crossed"] is True
@@ -157,7 +159,9 @@ def test_play_review_ready_timeline_exposes_evidence_not_vessel_identity():
     assert payload["investigation"] is True
     assert payload["incident_status"] == "review_ready"
     types = [item["type"] for item in payload["timeline"]]
-    assert "hypothesis" in types
+    assert "episode" in types
+    assert payload["episode_id"] == payload["incident_id"]
+    assert payload["hypothesis_id"] == hypothesis_id
     assert "211879870" not in response.text
 
 

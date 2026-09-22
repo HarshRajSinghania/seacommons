@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Header, Footer } from './chrome.jsx';
 import Hero from './sections/Hero.jsx';
+import OverallCounter from './sections/OverallCounter.jsx';
 import Environments from './sections/Environments.jsx';
 import Programme from './sections/Programme.jsx';
 import SystemView from './sections/SystemView.jsx';
@@ -39,6 +40,7 @@ export default function SiteApp() {
       <Header />
       <main id="main">
         <Hero />
+        <OverallCounter />
         <Environments />
         <Programme />
         <SystemView />

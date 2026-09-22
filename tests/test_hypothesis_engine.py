@@ -397,7 +397,7 @@ def test_durable_gfw_gap_is_not_independent_from_ais_gap(monkeypatch):
     ) is None
 
 
-def test_satellite_candidate_moves_dark_transit_into_collecting():
+def test_unmatched_satellite_candidate_stays_context_and_does_not_promote():
     gap = IntelEvent(
         id="gap-with-sar", type="ais_anomaly", severity="high",
         lat=35.5, lon=14.1, title="isolated AIS gap", source="mda",
@@ -416,15 +416,12 @@ def test_satellite_candidate_moves_dark_transit_into_collecting():
     hyp = evaluate_episode(_episode(
         "gap_episode", signal_ids=[gap.id], episode_id="episode:dark:sar",
     ))
-    assert hyp is not None
-    assert hyp.state == "collecting"
-    assert hyp.evidence_stage == "derived"
-    assert any(link.startswith("sat:gfw_sar:") for link in hyp.evidence_links)
+    # A detection merely inside the reachable area is context. It does not
+    # create an independent corroboration lineage or advance the hypothesis.
+    assert hyp is None
 
-    # The unmatched SAR detection is materialized as proper, persisted
-    # satellite evidence -- not decorative -- keyed by the originating
-    # event's id (which play.py's timeline resolves via evidence_links),
-    # never claiming a vessel match.
+    # The unmatched SAR detection is still materialized as proper, persisted
+    # contextual satellite evidence, never claiming a vessel match.
     from core.intel.satellite_observation import list_incident_observations
 
     observations = list_incident_observations(gap.id)

@@ -157,3 +157,52 @@ def test_regular_satellite_observation_has_no_association_status_by_default():
     reloaded = list_incident_observations("sat-assoc-test-5")
     assert len(reloaded) == 1
     assert reloaded[0].association_status is None
+
+
+def test_exact_provider_mmsi_associates_satellite_to_canonical_episode():
+    from core.intel.satellite_observation import materialize_sar_detections
+
+    cue = {
+        "gfw_sar_detections": [{
+            "lat": 35.53,
+            "lon": 14.15,
+            "timestamp": "2026-09-17T10:15:00+00:00",
+            "matched": True,
+            "mmsi": "211879870",
+        }]
+    }
+    observations = materialize_sar_detections(
+        incident_id="sat-assoc-test-exact",
+        cue=cue,
+        expected_mmsi="211879870",
+        episode_id="episode:test:satellite-parent",
+    )
+    assert len(observations) == 1
+    obs = observations[0]
+    assert obs.association_status == "strong"
+    assert obs.evidence_status == "associated"
+    assert obs.episode_id == "episode:test:satellite-parent"
+
+
+def test_conflicting_provider_mmsi_stays_context():
+    from core.intel.satellite_observation import materialize_sar_detections
+
+    cue = {
+        "gfw_sar_detections": [{
+            "lat": 35.53,
+            "lon": 14.15,
+            "timestamp": "2026-09-17T10:15:00+00:00",
+            "matched": True,
+            "mmsi": "999999999",
+        }]
+    }
+    observations = materialize_sar_detections(
+        incident_id="sat-assoc-test-conflict",
+        cue=cue,
+        expected_mmsi="211879870",
+        episode_id="episode:test:satellite-parent",
+    )
+    obs = observations[0]
+    assert obs.association_status == "conflict"
+    assert obs.evidence_status == "contextual"
+    assert obs.episode_id is None

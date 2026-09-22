@@ -137,13 +137,17 @@ def _published_security_hypothesis_features(limit: int) -> list[dict[str, Any]]:
         timestamp = props.get("timestamp_utc")
         if not timestamp or not feature.get("geometry"):
             continue
+        parent_id = str(props.get("episode_id") or props["id"])
         public = {
             "type": "Feature",
-            "id": props["id"],
+            "id": parent_id,
             "geometry": feature["geometry"],
             "properties": {
                 "schema": LIVE_SIGNAL_SCHEMA,
-                "id": props["id"],
+                "id": parent_id,
+                "episode_id": props.get("episode_id"),
+                "hypothesis_id": props.get("hypothesis_id") or props.get("id"),
+                "live_role": "maritime_episode",
                 "type": "ais_anomaly",
                 **category,
                 **taxonomy,
@@ -265,6 +269,170 @@ def _published_ingested_features(limit: int) -> list[dict[str, Any]]:
         if len(features) >= limit:
             break
     return features
+
+
+def _attach_cross_modal_evidence(
+    features: list[dict[str, Any]], *, now: datetime
+) -> None:
+    """Attach privacy-safe Radio/Satellite evidence counts to public cases.
+
+    These channels never become standalone incidents merely because data
+    exists. They enrich a case/episode only when storage already links the
+    evidence to that case or vessel.
+    """
+    if not features:
+        return
+    incident_keys: set[str] = set()
+    mmsis: set[str] = set()
+    props_by_key: dict[str, list[dict[str, Any]]] = {}
+    props_by_mmsi: dict[str, list[dict[str, Any]]] = {}
+    for feature in features:
+        props = feature.get("properties") or {}
+        keys = {
+            str(value)
+            for value in (
+                props.get("id"),
+                props.get("episode_id"),
+                props.get("humanitarian_case_id"),
+                props.get("incident_id"),
+            )
+            if value
+        }
+        for key in keys:
+            incident_keys.add(key)
+            props_by_key.setdefault(key, []).append(props)
+        mmsi = str(props.get("linked_mmsi") or props.get("mmsi") or "").strip()
+        if mmsi:
+            mmsis.add(mmsi)
+            props_by_mmsi.setdefault(mmsi, []).append(props)
+
+    try:
+        from sqlalchemy import or_
+
+        from core.db.models import RadioAISAssociationDB, SatelliteObservationDB
+        from core.db.session import session_scope
+
+        satellite_rows = []
+        radio_rows = []
+        with session_scope() as db:
+            if incident_keys:
+                satellite_rows = (
+                    db.query(SatelliteObservationDB)
+                    .filter(
+                        or_(
+                            SatelliteObservationDB.incident_id.in_(incident_keys),
+                            SatelliteObservationDB.episode_id.in_(incident_keys),
+                        )
+                    )
+                    .all()
+                )
+            if incident_keys or mmsis:
+                radio_scopes = []
+                if incident_keys:
+                    radio_scopes.append(RadioAISAssociationDB.episode_id.in_(incident_keys))
+                if mmsis:
+                    radio_scopes.append(RadioAISAssociationDB.mmsi.in_(mmsis))
+                radio_rows = (
+                    db.query(RadioAISAssociationDB)
+                    .filter(
+                        or_(*radio_scopes),
+                        RadioAISAssociationDB.created_at >= (now - timedelta(hours=24)).replace(tzinfo=None),
+                    )
+                    .all()
+                )
+    except Exception:
+        logger.debug("Cross-modal Live enrichment unavailable", exc_info=True)
+        return
+
+    satellite_by_case: dict[str, list[Any]] = {}
+    satellite_by_episode: dict[str, list[Any]] = {}
+    for row in satellite_rows:
+        satellite_by_case.setdefault(str(row.incident_id), []).append(row)
+        if row.episode_id:
+            satellite_by_episode.setdefault(str(row.episode_id), []).append(row)
+    radio_by_mmsi: dict[str, list[Any]] = {}
+    radio_by_episode: dict[str, list[Any]] = {}
+    for row in radio_rows:
+        radio_by_mmsi.setdefault(str(row.mmsi), []).append(row)
+        if row.episode_id:
+            radio_by_episode.setdefault(str(row.episode_id), []).append(row)
+
+    for key, targets in props_by_key.items():
+        context_rows = satellite_by_case.get(key) or []
+        associated_rows = [
+            row for row in (satellite_by_episode.get(key) or [])
+            if row.association_status == "strong"
+        ]
+        rows_by_id = {
+            str(row.observation_id): row
+            for row in [*context_rows, *associated_rows]
+        }
+        if not rows_by_id:
+            continue
+        rows = list(rows_by_id.values())
+        associated_ids = {str(row.observation_id) for row in associated_rows}
+        statuses = sorted({str(row.association_status) for row in rows if row.association_status})
+        for props in targets:
+            props["satellite_count"] = max(int(props.get("satellite_count") or 0), len(rows))
+            props["satellite_evidence_count"] = len(associated_ids)
+            props["satellite_context_count"] = len(rows) - len(associated_ids)
+            props["has_satellite"] = True
+            props["has_satellite_evidence"] = bool(associated_ids)
+            props["satellite_association_statuses"] = statuses
+            facets = list(props.get("facets") or [])
+            if "satellite" not in facets:
+                facets.append("satellite")
+            props["facets"] = facets
+
+    # Public assessed Maritime cases intentionally do not expose MMSI, so
+    # canonical episode linkage must be sufficient to surface associated DSC.
+    for key, targets in props_by_key.items():
+        associated = [
+            row for row in (radio_by_episode.get(key) or [])
+            if row.match_status == "strong"
+        ]
+        if not associated:
+            continue
+        statuses = sorted({str(row.match_status) for row in associated if row.match_status})
+        for props in targets:
+            props["radio_count"] = max(int(props.get("radio_count") or 0), len(associated))
+            props["radio_evidence_count"] = len(associated)
+            props["radio_context_count"] = max(
+                0, int(props.get("radio_count") or 0) - len(associated)
+            )
+            props["has_radio"] = True
+            props["has_radio_evidence"] = True
+            props["radio_association_statuses"] = sorted(set(
+                [*(props.get("radio_association_statuses") or []), *statuses]
+            ))
+            facets = list(props.get("facets") or [])
+            if "radio" not in facets:
+                facets.append("radio")
+            props["facets"] = facets
+
+    for mmsi, targets in props_by_mmsi.items():
+        rows = radio_by_mmsi.get(mmsi) or []
+        if not rows:
+            continue
+        statuses = sorted({str(row.match_status) for row in rows if row.match_status})
+        for props in targets:
+            parent_id = str(props.get("episode_id") or props.get("id") or "")
+            associated = [
+                row for row in rows
+                if row.match_status == "strong"
+                and row.episode_id
+                and str(row.episode_id) == parent_id
+            ]
+            props["radio_count"] = max(int(props.get("radio_count") or 0), len(rows))
+            props["radio_evidence_count"] = len(associated)
+            props["radio_context_count"] = len(rows) - len(associated)
+            props["has_radio"] = True
+            props["has_radio_evidence"] = bool(associated)
+            props["radio_association_statuses"] = statuses
+            facets = list(props.get("facets") or [])
+            if "radio" not in facets:
+                facets.append("radio")
+            props["facets"] = facets
 
 
 def public_signal_collection(
@@ -600,6 +768,7 @@ def public_signal_collection(
         sum(mode_counts.values()) if selected_mode == "all"
         else (domain_counts["safety"] if selected_mode == "safety" else mode_counts[selected_mode])
     )
+    _attach_cross_modal_evidence(features, now=now)
 
     return {
         "type": "FeatureCollection",

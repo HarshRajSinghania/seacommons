@@ -238,3 +238,35 @@ def test_acquisition_pipeline_exposes_only_safe_decoder_counters():
     serialized = str(radio).lower()
     assert "secret" not in serialized
     assert "raw audio" not in serialized
+
+
+def test_structured_radio_is_degraded_when_frames_flow_but_nothing_decodes(monkeypatch):
+    from core.config import config
+    from core.radio import decoder_runtime, runtime as radio_runtime
+    from core.radio.bridge import radio_acquisition_status
+
+    monkeypatch.setattr(config, "STRUCTURED_RADIO_ENABLED", True)
+    monkeypatch.setattr(radio_runtime, "get_remote_radio_status", lambda include_receivers=False: {
+        "enabled": True,
+        "configured": 3,
+        "started": 2,
+        "failed": 0,
+        "receivers": [{"receiver_id": "one", "state": "connected"}],
+        "channels": [{"channel_kind": "monitor", "desired": 1, "active": 1}],
+    })
+    monkeypatch.setattr(decoder_runtime, "radio_decoder_status", lambda: {
+        "enabled": True,
+        "decoders": 2,
+        "frames": 1000,
+        "decoded": 0,
+        "invalid": 4,
+        "dropped": 20,
+        "errors": 0,
+        "queued": 0,
+        "worker_alive": True,
+    })
+
+    status = radio_acquisition_status()
+
+    assert status["state"] == "live"
+    assert status["structured_state"] == "degraded"

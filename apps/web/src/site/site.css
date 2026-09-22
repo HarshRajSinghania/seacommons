@@ -963,3 +963,74 @@ button:focus-visible {
   .site-footer { grid-template-columns: 1fr; }
   .site-footer__cols { flex-wrap: wrap; gap: 2rem; }
 }
+
+/* ── Overall counter ─────────────────────────────────────────────────────── */
+.overall-counter {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.1fr) minmax(0, 3fr);
+  gap: 0;
+  border-top: 1px solid var(--sc-line);
+  border-bottom: 1px solid var(--sc-line);
+  background: color-mix(in srgb, var(--sc-ink-850) 72%, transparent);
+}
+.overall-counter__intro {
+  padding: clamp(1.4rem, 3vw, 2.2rem) var(--pad-x);
+  border-right: 1px solid var(--sc-line);
+}
+.overall-counter__intro > span,
+.overall-counter__metric > span,
+.overall-counter__metric > small {
+  display: block;
+  font-family: var(--sc-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.overall-counter__intro > span {
+  color: var(--sc-brand);
+  font-size: 0.62rem;
+}
+.overall-counter__intro > strong {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.1;
+}
+.overall-counter__intro p {
+  max-width: 38ch;
+  margin-top: 0.8rem;
+  color: var(--sc-paper-dim);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.overall-counter__grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.overall-counter__metric {
+  min-width: 0;
+  padding: clamp(1.2rem, 2vw, 1.8rem);
+  border-right: 1px solid var(--sc-line);
+}
+.overall-counter__metric:last-child { border-right: 0; }
+.overall-counter__metric > span {
+  color: var(--sc-paper-dim);
+  font-size: 0.58rem;
+}
+.overall-counter__metric > strong {
+  display: block;
+  margin: 0.45rem 0 0.55rem;
+  color: var(--sc-paper);
+  font: 500 clamp(1.65rem, 3vw, 2.7rem)/1 var(--sc-font-mono);
+  letter-spacing: -0.05em;
+}
+.overall-counter__metric > small {
+  color: var(--sc-paper-faint);
+  font-size: 0.52rem;
+  line-height: 1.35;
+}
+@media (max-width: 980px) {
+  .overall-counter { grid-template-columns: 1fr; }
+  .overall-counter__intro { border-right: 0; border-bottom: 1px solid var(--sc-line); }
+  .overall-counter__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overall-counter__metric { border-bottom: 1px solid var(--sc-line); }
+}

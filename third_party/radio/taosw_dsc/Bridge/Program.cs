@@ -46,7 +46,10 @@ while ((line = Console.In.ReadLine()) is not null)
 
 static bool IsDscFrequency(int hz)
 {
-    int[] allowed = { 2_187_500, 4_207_500, 6_312_000, 8_414_500, 12_577_000, 16_804_500, 156_525_000 };
+    // This bridge implements MF/HF DSC only: 100 Bd, 170 Hz shift.
+    // VHF channel 70 uses 1200 Bd and 1300/2100 Hz tones and requires a
+    // separate decoder contract rather than pretending this path supports it.
+    int[] allowed = { 2_187_500, 4_207_500, 6_312_000, 8_414_500, 12_577_000, 16_804_500 };
     return allowed.Any(value => Math.Abs(value - hz) <= 100);
 }
 
@@ -92,8 +95,12 @@ sealed class DecoderState
 
     public DecoderState(int sampleRate)
     {
-        tuner = new FskAutoTuner(1200, 100, sampleRate, 170);
-        tuner.SetManualLeftFreq(300);
+        // Generic USB receivers are tuned 1700 Hz below the assigned
+        // MF/HF DSC channel, yielding the standard 1615/1785 Hz audio pair.
+        // Fixed tones are safer than opportunistic retuning to HF noise peaks.
+        tuner = new FskAutoTuner(1900, 1500, sampleRate, 170);
+        tuner.IsAutoTuningEnabled = false;
+        tuner.SetManualLeftFreq(1615);
         decoder = new DSCDecoder(100, sampleRate);
         gmdss = Enumerable.Range(0, DSCDecoder.SlideWindowsNumber).Select(_ => new GMDSSDecoder()).ToArray();
         foreach (var item in gmdss) item.OnMessageDecoded += msg => pending.Enqueue(msg);

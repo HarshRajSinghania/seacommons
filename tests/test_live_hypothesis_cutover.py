@@ -55,11 +55,15 @@ def _publish_spoofing_hypothesis():
 def test_live_security_uses_published_hypothesis_not_raw_detector_events():
     hypothesis_id = _publish_spoofing_hypothesis()
     collection = public_signal_collection(mode="maritime", days=1, limit=50)
-    ids = {feature["properties"]["id"] for feature in collection["features"]}
-    assert hypothesis_id in ids
+    features = collection["features"]
+    ids = {feature["properties"]["id"] for feature in features}
+    feature = next(
+        f for f in features
+        if f["properties"].get("hypothesis_id") == hypothesis_id
+    )
+    assert feature["properties"].get("episode_id") == feature["properties"]["id"]
     assert "intel:spoof-a" not in ids
     assert "intel:spoof-b" not in ids
-    feature = next(f for f in collection["features"] if f["properties"]["id"] == hypothesis_id)
     assert feature["properties"]["hypothesis_type"] == "position_spoofing"
     assert feature["properties"]["hypothesis_state"] == "published"
     assert feature["properties"]["visual_category"] == "spoofing"

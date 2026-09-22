@@ -237,7 +237,10 @@ class OpenWebRXAdapter:
             with self._lock:
                 self._pending_tune = (int(frequency_hz), normalized_mode)
             return
-        if not center - sample_rate // 2 <= frequency_hz <= center + sample_rate // 2:
+        from core.radio.dsc_tuning import receiver_carrier_hz
+
+        wire_frequency_hz = receiver_carrier_hz(frequency_hz, normalized_mode)
+        if not center - sample_rate // 2 <= wire_frequency_hz <= center + sample_rate // 2:
             raise ValueError("frequency is outside active OpenWebRX profile")
         wire_mode = _OPENWEBRX_MODE_MAP.get(normalized_mode, normalized_mode)
         if not dsp_started:
@@ -245,7 +248,7 @@ class OpenWebRXAdapter:
         self._transport.send_control(
             {
                 "type": "dspcontrol",
-                "params": {"offset_freq": int(frequency_hz - center), "mod": wire_mode},
+                "params": {"offset_freq": int(wire_frequency_hz - center), "mod": wire_mode},
             }
         )
         with self._lock:

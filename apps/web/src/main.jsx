@@ -169,7 +169,7 @@ const SIGNALS_MACRO_GROUPS = [
     label: 'Maritime',
     categories: [
       { key: 'dark_activity', label: 'Dark activity', groupKey: 'signal_type_dark_activity' },
-      { key: 'spoofing', label: 'Spoofing / position integrity', groupKey: 'signal_type_spoofing' },
+      { key: 'spoofing', label: 'Position integrity', groupKey: 'signal_type_spoofing' },
       { key: 'transfer', label: 'Transfers / rendezvous', groupKey: 'signal_type_transfer' },
       { key: 'loitering', label: 'Loitering', groupKey: 'signal_type_loitering' },
       { key: 'infrastructure_proximity', label: 'Infrastructure proximity', groupKey: 'signal_type_infrastructure' },
@@ -688,6 +688,7 @@ function App() {
   const [expandedMacros, setExpandedMacros] = useState(() => new Set());
   const [liveFacets, setLiveFacets] = useState(() => ({
     satellite: false,
+    radio: false,
     sanctions: false,
     sar_fleet: false,
   }));
@@ -2693,6 +2694,7 @@ function App() {
       if (!activeSignalCategories.has(signalCategoryOf(props))) return false;
       if (!alarmPhoneOn && isAlarmPhoneSource(props.source)) return false;
       if (liveFacets.satellite && !props.has_satellite) return false;
+      if (liveFacets.radio && !props.has_radio) return false;
       if (liveFacets.sanctions && !props.sanctions_matched) return false;
       return true;
     });
@@ -3827,7 +3829,7 @@ function App() {
               </div>
               <div className="signals-selector">
                 <div className="signals-selector__row">
-                  <span className="signals-selector__label">Signals</span>
+                  <span className="signals-selector__label">Investigations</span>
                   <a
                     href="#all"
                     className={`signals-selector__link ${
@@ -3839,19 +3841,20 @@ function App() {
                     type="button"
                     className={`signals-selector__chevron ${signalsExpanded ? 'is-open' : ''}`}
                     aria-expanded={signalsExpanded}
-                    aria-label={signalsExpanded ? 'Collapse signal categories' : 'Expand signal categories'}
+                    aria-label={signalsExpanded ? 'Collapse investigation categories' : 'Expand investigation categories'}
                     onClick={() => setSignalsExpanded((open) => !open)}
                   ><i /></button>
                 </div>
                 {signalsExpanded && (
-                  <div className="signals-selector__macros" role="group" aria-label="Signal categories">
+                  <div className="signals-selector__macros" role="group" aria-label="Investigation categories">
                     <div className="signals-selector__role-summary">
                       Cases {Number(liveRoleCounts?.humanitarian_case || 0)} · Episodes {Number(liveRoleCounts?.maritime_episode || 0)} · Evidence {Number(liveRoleCounts?.maritime_evidence || 0)} · Operational signals {Number(liveRoleCounts?.operational_signal || 0)}
                     </div>
                     <div className="signals-selector__role-summary">Evidence filters</div>
                     <div className="signals-selector__list">
                       {[
-                        ['satellite', 'Satellite'],
+                        ['satellite', 'Satellite evidence'],
+                        ['radio', 'Radio evidence'],
                         ['sanctions', 'Sanctions'],
                         ['sar_fleet', 'Civil SAR fleet'],
                       ].map(([key, label]) => (

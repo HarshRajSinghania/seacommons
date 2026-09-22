@@ -508,6 +508,10 @@ class AISAnomalyDetector:
                         "offshore_reason_codes": list(offshore_qualification.get("reason_codes") or ()),
                         "offshore_rationale": offshore_qualification.get("rationale"),
                         "vessel_name": event.vessel_name or None,
+                        # Preserve registry class into the durable event. Live
+                        # and hypothesis gates cannot apply passenger/HSC
+                        # context if the detector silently drops ship_type.
+                        "vessel_type_context": vessel_context.get("ship_type"),
                         "detection_reason": reason,
                     },
                 ),

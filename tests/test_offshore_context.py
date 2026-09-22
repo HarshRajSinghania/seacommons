@@ -31,9 +31,33 @@ def test_offshore_gap_needs_healthy_coverage_and_strong_context(monkeypatch):
         "behaviour_context": {"reason_codes": []},
     }, context)
     assert context["offshore"] is True
-    assert result["qualified"] is True
+    assert result["qualified"] is False
     assert "LOCAL_AIS_COVERAGE_HEALTHY" in result["reason_codes"]
     assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]
+    assert "OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS" in result["reason_codes"]
+
+
+def test_reappeared_offshore_gap_with_healthy_coverage_qualifies(monkeypatch):
+    monkeypatch.setattr(reference, "nearest_port_km", lambda lat, lon: ("Test Port", 120.0))
+    monkeypatch.setattr(reference, "distance_from_coast_km", lambda lat, lon: 90.0)
+    monkeypatch.setattr(reference, "in_port_or_anchorage", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "in_sts_zone", lambda lat, lon: None)
+    monkeypatch.setattr(reference, "chokepoint_of", lambda lat, lon: None)
+    context = build_offshore_context(35.0, 15.0)
+    result = qualify_offshore_anomaly("gap", {
+        "silent_seconds": 5 * 3600,
+        "gap_reappearance_confirmed": True,
+        "jamming_score": 0.0,
+        "gap_reason": {
+            "hypothesis": "vessel_gap",
+            "nearby_vessels_reporting_before": 6,
+            "nearby_vessels_reporting_after": 7,
+            "confidence": 0.72,
+        },
+        "behaviour_context": {"reason_codes": []},
+    }, context)
+    assert result["qualified"] is True
+    assert "GAP_REAPPEARANCE_CONFIRMED" in result["reason_codes"]
 
 
 def test_same_gap_near_coast_stays_raw_anomaly(monkeypatch):
@@ -143,7 +167,7 @@ def test_zero_interval_position_jump_stays_anomaly(monkeypatch):
     assert result["qualified"] is False
 
 
-def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> None:
+def test_same_lineage_impossible_speed_stays_play_only_even_when_repeated() -> None:
     base = {
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [23.28, 37.70]},
@@ -165,8 +189,17 @@ def test_single_impossible_speed_outlier_stays_play_only_until_repeated() -> Non
         **base,
         "properties": {**base["properties"], "evidence_count": 2},
     }
+    sustained = {
+        **base,
+        "properties": {
+            **base["properties"],
+            "evidence_count": 2,
+            "teleport_pattern": "sustained_relocation",
+        },
+    }
     assert is_useful_public_case_feature(one) is False
-    assert is_useful_public_case_feature(repeated) is True
+    assert is_useful_public_case_feature(repeated) is False
+    assert is_useful_public_case_feature(sustained) is True
 
 
 def test_non_offshore_qualification_preserves_full_result_contract() -> None:
@@ -246,7 +279,7 @@ def test_passenger_class_does_not_suppress_high_specificity_position_anomaly() -
     assert "PASSENGER_HSC_LOW_SPECIFICITY" not in result["reason_codes"]
 
 
-def test_prolonged_healthy_coverage_gap_is_not_suppressed_by_ship_class() -> None:
+def test_prolonged_open_gap_with_only_origin_neighbor_coverage_stays_candidate() -> None:
     result = qualify_offshore_anomaly(
         "long_gap",
         {
@@ -262,10 +295,34 @@ def test_prolonged_healthy_coverage_gap_is_not_suppressed_by_ship_class() -> Non
             },
             "behaviour_context": {"status": "expected", "reason_codes": []},
         },
-        {"offshore": True},
+        {"offshore": True, "ais_coverage_witnesses": []},
+    )
+    assert result["qualified"] is False
+    assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]
+    assert "OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS" in result["reason_codes"]
+
+
+def test_prolonged_gap_with_temporal_community_coverage_can_qualify() -> None:
+    result = qualify_offshore_anomaly(
+        "long_gap",
+        {
+            "silent_seconds": 6 * 3600,
+            "jamming_score": 0.0,
+            "gap_reason": {
+                "hypothesis": "vessel_gap",
+                "confidence": 0.9,
+                "nearby_vessels_reporting_before": 0,
+                "nearby_vessels_reporting_after": 0,
+            },
+            "behaviour_context": {"status": "insufficient_history", "reason_codes": []},
+        },
+        {
+            "offshore": True,
+            "ais_coverage_witnesses": [{"station_id": "3372", "coverage_role": "same_lineage_coverage_witness"}],
+        },
     )
     assert result["qualified"] is True
-    assert "PROLONGED_OFFSHORE_GAP" in result["reason_codes"]
+    assert "COMMUNITY_AIS_COVERAGE_PRESENT" in result["reason_codes"]
 
 
 def test_passenger_ferry_pair_does_not_turn_same_lineage_gap_into_sts_case() -> None:
@@ -278,6 +335,21 @@ def test_passenger_ferry_pair_does_not_turn_same_lineage_gap_into_sts_case() -> 
             "tanker": False,
             "independent_source_count": 1,
             "contributing_independence_groups": ["ais_sensor_lineage"],
+        },
+        {"offshore": True},
+    )
+    assert result["qualified"] is False
+    assert "PASSENGER_HSC_LOW_SPECIFICITY" in result["reason_codes"]
+
+
+def test_passenger_impossible_speed_without_sustained_relocation_is_suppressed() -> None:
+    result = qualify_offshore_anomaly(
+        "impossible_speed",
+        {
+            "vessel_type_context": 69,
+            "anomaly_confidence": 0.95,
+            "anomaly_evidence": {"gap_s": 120, "computed_kts": 600},
+            "behaviour_context": {"status": "expected", "reason_codes": []},
         },
         {"offshore": True},
     )

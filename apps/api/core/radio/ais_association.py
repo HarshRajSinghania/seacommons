@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
-import hashlib
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from core.db.models import RadioAISAssociationDB
@@ -19,6 +18,7 @@ class RadioAISAssociation:
     distance_km: float | None
     ais_observed_at: str | None
     episode_eligible: bool
+    episode_id: str | None = None
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -126,6 +126,7 @@ def persist_association(db, association: RadioAISAssociation):
         "distance_km": association.distance_km,
         "ais_observed_at": association.ais_observed_at,
         "episode_eligible": association.episode_eligible,
+        "episode_id": association.episode_id,
     }
     if row is None:
         row = RadioAISAssociationDB(observation_id=association.observation_id, **values)
@@ -146,6 +147,14 @@ def associate_and_persist_dsc(
     if not str(payload.get("mmsi") or "").strip():
         return None
     association = associate_dsc_with_ais(message, observation_id=observation_id)
+    if association.episode_eligible and association.match_status == "strong":
+        from core.intel.episode_association import unique_episode_for_mmsi
+
+        episode_id = unique_episode_for_mmsi(
+            association.mmsi, message.observed_at, window_hours=6.0
+        )
+        if episode_id:
+            association = replace(association, episode_id=episode_id)
     from core.db.session import session_scope
 
     with session_scope() as db:
@@ -161,6 +170,8 @@ def public_association(association: RadioAISAssociation) -> dict[str, object]:
         "distance_km": association.distance_km,
         "ais_observed_at": association.ais_observed_at,
         "episode_eligible": association.episode_eligible,
+        "episode_id": association.episode_id,
+        "case_associated": bool(association.episode_id),
     }
 
 
@@ -168,47 +179,25 @@ def persist_strong_radio_ais_episode(
     message: DecodedRadioMessage,
     association: RadioAISAssociation,
 ):
+    """Compatibility shim: resolve an existing parent, never mint a radio case."""
     if not association.episode_eligible or association.match_status != "strong":
         return None
+    episode_id = association.episode_id
+    if not episode_id:
+        from core.intel.episode_association import unique_episode_for_mmsi
 
-    from core.intel.episode_store import save_episode
+        episode_id = unique_episode_for_mmsi(
+            association.mmsi, message.observed_at, window_hours=6.0
+        )
+    if not episode_id:
+        return None
 
-    payload = message.payload if isinstance(message.payload, dict) else {}
-    geometry = None
-    lat = payload.get("latitude")
-    lon = payload.get("longitude")
-    if lat is not None and lon is not None:
-        try:
-            geometry = {"type": "Point", "coordinates": [float(lon), float(lat)]}
-        except (TypeError, ValueError):
-            geometry = None
+    from core.db.models import MaritimeEpisodeDB
+    from core.db.session import session_scope
 
-    material = f"{association.observation_id}|{association.mmsi}|radio_dsc_ais"
-    episode_id = "radio-ais:" + hashlib.blake2s(material.encode(), digest_size=12).hexdigest()
-    observed = message.observed_at.isoformat()
-    feature = {
-        "type": "Feature",
-        "geometry": geometry,
-        "properties": {
-            "episode_id": episode_id,
-            "episode_family": "radio_dsc_ais",
-            "subject_ids": [f"mmsi:{association.mmsi}"],
-            "observation_ids": [association.observation_id],
-            "feature_ids": [],
-            "independence_groups": ["radio", "ais"],
-            "verification_status": "cross_modal_correlated",
-            "behaviour_context": {
-                "radio_ais_match_status": association.match_status,
-                "radio_ais_confidence": association.confidence,
-                "radio_ais_distance_km": association.distance_km,
-            },
-            "alternative_explanations": [
-                "DSC position may be stale or manually entered",
-                "AIS position may be delayed or absent",
-            ],
-            "first_observed_at": observed,
-            "last_observed_at": observed,
-            "episode_status": "active",
-        },
-    }
-    return save_episode(feature)
+    with session_scope() as db:
+        row = db.get(MaritimeEpisodeDB, episode_id)
+        if row is None:
+            return None
+        db.expunge(row)
+        return row

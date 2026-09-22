@@ -311,7 +311,10 @@ _decoder_runtime_lock = threading.Lock()
 
 _NAVTEX_FREQUENCIES_HZ = frozenset({490_000, 518_000})
 _DSC_FREQUENCIES_HZ = frozenset(
-    {2_187_500, 4_207_500, 6_312_000, 8_414_500, 12_577_000, 16_804_500, 156_525_000}
+    # The bundled bridge is the MF/HF 100 Bd / 170 Hz decoder. VHF channel
+    # 70 is 1200 Bd with a different audio shift and is intentionally not
+    # advertised until a dedicated VHF decoder exists.
+    {2_187_500, 4_207_500, 6_312_000, 8_414_500, 12_577_000, 16_804_500}
 )
 
 

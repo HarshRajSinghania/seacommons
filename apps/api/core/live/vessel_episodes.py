@@ -341,6 +341,7 @@ def _build_episode_feature(
             "id": episode_id,
             "episode_id": episode_id,
             "episode_family": family,
+            "live_role": "maritime_episode",
             "subject_ids": list(subject_ids),
             "linked_mmsi": mmsi,
             "mmsi": mmsi,

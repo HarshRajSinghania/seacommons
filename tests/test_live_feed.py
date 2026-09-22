@@ -2472,3 +2472,31 @@ def test_corroborated_news_remains_supporting_evidence_not_live_projection() -> 
     # Corroboration does not turn a generic report into a standalone Live
     # incident. It stays durable supporting evidence for a case/episode.
     assert _public_intel_feature(event) is None
+
+
+def test_single_lineage_position_integrity_evidence_does_not_bypass_hypothesis_gate() -> None:
+    event = IntelEvent(
+        id="raw-position-integrity",
+        type="ais_anomaly",
+        severity="medium",
+        lat=37.2,
+        lon=24.3,
+        title="AIS anomaly: impossible speed",
+        source="ais",
+        linked_mmsi="241159000",
+        metadata={
+            "maritime_domain": "grey_zone",
+            "publication_status": "published",
+            "source_policy": "official_api",
+            "verification_status": "ais_transponder",
+            "analysis_state": "evidence_candidate",
+            "offshore_anomaly_qualified": True,
+            "anomaly_type": "impossible_speed",
+            "anomaly_confidence": 0.9,
+            "anomaly_evidence": {"gap_s": 561, "computed_kts": 987.5},
+            "vessel_type_context": 69,
+        },
+    )
+    assert _public_intel_feature(
+        event, allowed_domains=frozenset({"grey_zone"})
+    ) is None

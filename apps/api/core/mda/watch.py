@@ -815,7 +815,12 @@ class MdaWatch:
         emitted = 0
         now_dt = datetime.now(timezone.utc)
         for mmsi, last in candidates:
-            if self._recently_emitted(f"gap:{mmsi}", 6 * 3600):
+            # Gap qualification evolves as silence, local coverage and
+            # behavioural context accumulate. A six-hour detector cooldown
+            # froze weak one-hour candidates until ~7h and created an artificial
+            # burst of "dark activity". Re-evaluate the same deduplicated
+            # candidate every 30 minutes instead.
+            if self._recently_emitted(f"gap:{mmsi}", 30 * 60):
                 continue
             # docs/fixes.md M14.1: vessel type is context only from here on --
             # it is carried into the emitted event's metadata but never gates

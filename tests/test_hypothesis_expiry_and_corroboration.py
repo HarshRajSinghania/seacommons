@@ -73,7 +73,8 @@ def test_single_ais_lineage_assessed_is_not_corroborated():
 
     play_routes._play_catalog_cache.clear()
     rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
-    row = next(item for item in rows if item["incident_id"] == hyp.hypothesis_id)
+    row = next(item for item in rows if item.get("hypothesis_id") == hyp.hypothesis_id)
+    assert row["incident_id"] == episode_id
     assert row["corroborated"] is False
     assert row["independence_groups"] == ["ais_sensor_lineage"]
     assert row["verification_status"] != "multi_source_corroborated"
@@ -117,7 +118,8 @@ def test_two_independent_lineages_are_corroborated():
 
     play_routes._play_catalog_cache.clear()
     rows = TestClient(app).get("/api/v1/play/incidents?limit=500").json()["incidents"]
-    row = next(item for item in rows if item["incident_id"] == hyp.hypothesis_id)
+    row = next(item for item in rows if item.get("hypothesis_id") == hyp.hypothesis_id)
+    assert row["incident_id"] == episode_id
     assert row["corroborated"] is True
     assert sorted(row["independence_groups"]) == ["ais_sensor_lineage", "gfw_sar"]
 

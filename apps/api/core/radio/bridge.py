@@ -5,7 +5,6 @@ import hashlib
 
 from core.radio.ais_association import (
     associate_and_persist_dsc,
-    persist_strong_radio_ais_episode,
     public_association,
 )
 from core.radio.burst import RadioBurstDetector
@@ -90,13 +89,10 @@ def handle_decoded_radio_message(message: DecodedRadioMessage) -> dict[str, obje
                 association = None
             if association is not None:
                 result["ais_association"] = public_association(association)
-                if association.episode_eligible:
-                    try:
-                        episode = persist_strong_radio_ais_episode(message, association)
-                    except Exception:
-                        episode = None
-                    if episode is not None:
-                        result["maritime_episode_id"] = episode.episode_id
+                if association.episode_id:
+                    # A strong radio↔AIS match enriches an existing canonical
+                    # case. It never mints a parallel radio-only episode.
+                    result["maritime_episode_id"] = association.episode_id
         return result
     return runtime.ingest_navtex(
         message.payload,
@@ -135,6 +131,12 @@ def radio_acquisition_status() -> dict[str, object]:
     elif decoder_frames == 0:
         structured_state = "idle"
     elif not bool(decoder.get("worker_alive")) or int(decoder.get("errors") or 0) > 0:
+        structured_state = "degraded"
+    elif int(decoder.get("decoded") or 0) == 0:
+        # RF transport can be healthy while semantic DSC extraction is not.
+        # Do not label structured radio "live" merely because frames are
+        # flowing; that would hide the exact failure mode that prevents radio
+        # evidence from entering the investigation pipeline.
         structured_state = "degraded"
     else:
         structured_state = "live"

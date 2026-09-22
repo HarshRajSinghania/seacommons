@@ -9,6 +9,11 @@ _PASSENGER_HSC_TYPES = frozenset((*range(40, 50), *range(60, 70)))
 _LOW_SPECIFICITY_FAMILIES = frozenset({
     "gap", "long_gap", "circular_pattern", "static_position_inconsistency",
     "rendezvous", "ais_rendezvous", "sts", "loiter", "infra_proximity",
+    # Position-integrity detectors are high-noise on scheduled passenger/HSC
+    # traffic when provider duplication or delayed/replayed fixes interleave
+    # otherwise normal routes. They may still pass on independently
+    # corroborated evidence or a sustained-relocation pattern.
+    "impossible_speed", "position_jump", "teleport",
 })
 
 
@@ -85,6 +90,12 @@ def anomaly_context_suppression(
         )
     ):
         return ()
+
+    if anomaly in {"position_jump", "impossible_speed", "teleport"}:
+        return (
+            "PASSENGER_HSC_LOW_SPECIFICITY",
+            "POSITION_INTEGRITY_REQUIRES_STRONGER_CONTEXT",
+        )
 
     behaviour = metadata.get("behaviour_context") or {}
     behaviour_status = str(behaviour.get("status") or "") if isinstance(behaviour, dict) else ""
@@ -230,11 +241,43 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         )
         baseline_unusual = bool(behaviour_reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"})
         prolonged = silent_s >= 4 * 3600 and healthy_local_coverage
-        qualified = silent_s >= 3600 and healthy_local_coverage and (baseline_unusual or prolonged)
+        reappearance_confirmed = bool(
+            metadata.get("gap_reappearance_confirmed")
+            or gap.get("reappearance_confirmed")
+            or gap.get("closed_gap")
+        )
+        independently_corroborated = False
+        try:
+            from core.domain.incident_taxonomy import is_independently_corroborated
+
+            independently_corroborated = is_independently_corroborated(metadata)
+        except Exception:
+            independently_corroborated = False
+
+        # An open silence is not dark activity merely because other vessels
+        # continued reporting around the LAST known point. After several hours
+        # the target may be far outside that local receiver footprint. Public
+        # Live therefore needs specific behavioural context, a temporal
+        # community-station witness, a closed/reappeared gap, or an independent
+        # evidence lineage. Neighbor traffic alone remains operator evidence.
+        qualified = (
+            silent_s >= 3600
+            and healthy_local_coverage
+            and (
+                baseline_unusual
+                or (prolonged and community_coverage)
+                or reappearance_confirmed
+                or independently_corroborated
+            )
+        )
         if healthy_local_coverage:
             reasons.append("LOCAL_AIS_COVERAGE_HEALTHY")
         if prolonged:
             reasons.append("PROLONGED_OFFSHORE_GAP")
+        if prolonged and not community_coverage and not baseline_unusual and not reappearance_confirmed:
+            reasons.append("OPEN_GAP_COVERAGE_NOT_TRACK_CONTINUOUS")
+        if reappearance_confirmed:
+            reasons.append("GAP_REAPPEARANCE_CONFIRMED")
         reasons.extend(sorted(behaviour_reasons & {"ROUTE_DEVIATION", "UNUSUAL_AIS_SILENCE"}))
         if (
             qualified
@@ -276,6 +319,6 @@ def qualify_offshore_anomaly(anomaly_type: str, metadata: dict[str, Any], contex
         "rationale": (
             "Offshore anomaly passed contextual gates; it is evidence for investigation, not proof of intent."
             if qualified else
-            "Offshore observation retained as an anomaly; contextual evidence is not yet strong enough for Live."
+            "Offshore observation remains an investigation candidate; local AIS coverage at the last known point alone does not establish continuous coverage along the vessel's possible route."
         ),
     }

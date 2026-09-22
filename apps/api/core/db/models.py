@@ -568,6 +568,9 @@ class SatelliteObservationDB(Base):
     # match. Null means no association question applies (e.g. a routine
     # quicklook, not a dark-ship cue).
     association_status = Column(String(32), nullable=True)
+    # Canonical MaritimeEpisode parent. Null means the satellite row is only
+    # contextual to the originating event/incident and must not corroborate it.
+    episode_id = Column(String(128), nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -941,6 +944,9 @@ class RadioAISAssociationDB(Base):
     distance_km = Column(Float)
     ais_observed_at = Column(String(40))
     episode_eligible = Column(Boolean, nullable=False, default=False)
+    # Set only after a strong DSC↔AIS match is resolved to an already-existing
+    # canonical MaritimeEpisode. No episode is minted from radio alone.
+    episode_id = Column(String(128), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 

@@ -135,7 +135,11 @@ def test_e2e_independent_gap_corroboration_creates_idempotent_v1_hypothesis():
         assert db.query(InvestigationHypothesisDB).count() == 1
 
     features = client.get("/api/v1/live/hypotheses").json()["features"]
-    match = next(f for f in features if f["id"] == hyp.hypothesis_id)
+    match = next(
+        f for f in features
+        if f["properties"].get("hypothesis_id") == hyp.hypothesis_id
+    )
+    assert match["id"] == hyp.episode_id
     for field in ("linked_mmsi", "mmsi", "imo", "vessel_name"):
         assert field not in match["properties"]
 

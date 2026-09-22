@@ -34,6 +34,9 @@ class SatelliteObservation:
     # to a vessel -- a candidate, never a confirmed identity. None means the
     # association question doesn't apply to this observation.
     association_status: str | None = None
+    # Non-null only when this observation is explicitly associated with the
+    # canonical MaritimeEpisode rather than merely sharing case context.
+    episode_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -75,6 +78,14 @@ def persist_observations(observations: list[SatelliteObservation]) -> int:
             existing = db.get(SatelliteObservationDB, observation.observation_id)
             if existing is not None:
                 existing.provenance = _merged_provenance(existing.provenance, observation.provenance)
+                # Association is monotonic: a later resolver may promote a
+                # contextual scene/detection, but a replay must not erase it.
+                if observation.episode_id:
+                    existing.episode_id = observation.episode_id
+                if observation.association_status:
+                    existing.association_status = observation.association_status
+                if observation.evidence_status != "contextual":
+                    existing.evidence_status = observation.evidence_status
                 continue
             discovered = parse_utc(observation.discovered_at)
             db.add(SatelliteObservationDB(
@@ -98,6 +109,7 @@ def persist_observations(observations: list[SatelliteObservation]) -> int:
                 polarisation=observation.polarisation,
                 evidence_status=observation.evidence_status,
                 association_status=observation.association_status,
+                episode_id=observation.episode_id,
             ))
             created += 1
     return created
@@ -136,33 +148,68 @@ def list_incident_observations(incident_id: str) -> list[SatelliteObservation]:
             polarisation=list(row.polarisation) if row.polarisation else None,
             evidence_status=row.evidence_status or "contextual",
             association_status=row.association_status,
+            episode_id=row.episode_id,
         ) for row in rows]
 
 
-def materialize_unmatched_sar_detections(
-    *, incident_id: str, cue: dict[str, Any],
-) -> list[SatelliteObservation]:
-    """Turn core.mda.darkship_cue's gfw_unmatched_in_area detections into
-    proper, persisted satellite evidence -- not decorative images.
+def _valid_mmsi(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if len(text) == 9 and text.isdigit() else ""
 
-    Each unmatched detection is a candidate, never a vessel match: stored
-    with association_status="unmatched_candidate", the exact vocabulary
-    darkship_cue.build() already uses for its own top-level field.
+
+def materialize_sar_detections(
+    *,
+    incident_id: str,
+    cue: dict[str, Any],
+    expected_mmsi: str | None = None,
+    episode_id: str | None = None,
+) -> list[SatelliteObservation]:
+    """Materialize GFW SAR detections with conservative association semantics.
+
+    Exact provider MMSI equality may attach a detection to the current
+    canonical episode. An unmatched target, a conflicting MMSI, or a provider
+    identity that cannot be compared stays contextual.
     """
     import hashlib
 
-    unmatched = [d for d in (cue.get("gfw_unmatched_in_area") or ()) if isinstance(d, dict)]
+    raw = cue.get("gfw_sar_detections")
+    if not isinstance(raw, list):
+        raw = cue.get("gfw_unmatched_in_area") or []
+    detections = [d for d in raw if isinstance(d, dict)]
+    expected = _valid_mmsi(expected_mmsi)
     observations: list[SatelliteObservation] = []
     now = datetime.now(timezone.utc).isoformat()
-    for detection in unmatched:
-        lat = detection.get("lat")
-        lon = detection.get("lon")
+    for detection in detections:
+        lat, lon = detection.get("lat"), detection.get("lon")
         if lat is None or lon is None:
             continue
         timestamp = str(detection.get("timestamp") or now)
         digest = hashlib.blake2s(
             f"{incident_id}:{timestamp}:{lat}:{lon}".encode(), digest_size=16,
         ).hexdigest()
+        detected = _valid_mmsi(detection.get("mmsi"))
+        provider_matched = bool(detection.get("matched"))
+        if provider_matched and expected and detected == expected and episode_id:
+            association_status = "strong"
+            linked_episode = episode_id
+            evidence_status = "associated"
+            association_method = "provider_exact_mmsi"
+        elif provider_matched and detected and expected and detected != expected:
+            association_status = "conflict"
+            linked_episode = None
+            evidence_status = "contextual"
+            association_method = "provider_mmsi_conflict"
+        elif provider_matched:
+            association_status = "provider_matched_unresolved"
+            linked_episode = None
+            evidence_status = "contextual"
+            association_method = "provider_identity_unresolved"
+        else:
+            association_status = "unmatched_candidate"
+            linked_episode = None
+            evidence_status = "contextual"
+            association_method = "none"
+
         observations.append(SatelliteObservation(
             observation_id=f"sat:gfw_sar:{digest}",
             incident_id=incident_id,
@@ -178,8 +225,25 @@ def materialize_unmatched_sar_detections(
             temporal_delta_s=0.0,
             asset_ref="",
             source_url="",
-            provenance={"source": "gfw_sar_unmatched", "darkship_cue": True},
-            evidence_status="contextual",
-            association_status="unmatched_candidate",
+            provenance={
+                "source": "gfw_sar_detection",
+                "darkship_cue": True,
+                "provider_matched": provider_matched,
+                "association_method": association_method,
+            },
+            evidence_status=evidence_status,
+            association_status=association_status,
+            episode_id=linked_episode,
         ))
     return observations
+
+
+def materialize_unmatched_sar_detections(
+    *, incident_id: str, cue: dict[str, Any],
+) -> list[SatelliteObservation]:
+    """Backward-compatible contextual-only materialization."""
+    contextual_cue = dict(cue)
+    contextual_cue["gfw_sar_detections"] = [
+        d for d in (cue.get("gfw_unmatched_in_area") or ()) if isinstance(d, dict)
+    ]
+    return materialize_sar_detections(incident_id=incident_id, cue=contextual_cue)

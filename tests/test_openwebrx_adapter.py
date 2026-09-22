@@ -192,4 +192,6 @@ def test_tune_requested_before_profile_metadata_is_applied_when_config_arrives()
 
     transport.on_message({"type": "config", "value": {"center_freq": 2_200_000, "samp_rate": 200_000}})
     assert any(payload.get("type") == "dspcontrol" and payload.get("action") == "start" for payload in transport.controls)
-    assert any(payload.get("params", {}).get("offset_freq") == -12_500 for payload in transport.controls)
+    # HF DSC USB transport tunes 1700 Hz below the assigned channel so
+    # the decoder receives the standard 1615/1785 Hz audio pair.
+    assert any(payload.get("params", {}).get("offset_freq") == -14_200 for payload in transport.controls)

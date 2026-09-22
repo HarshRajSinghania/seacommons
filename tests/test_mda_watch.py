@@ -157,6 +157,51 @@ def test_infra_loiter_flags_sanctioned_vessel_in_sts_zone():
     assert ev[0].metadata["infrastructure"]["kind"] == "sts_zone"
 
 
+def test_gap_witness_counts_use_one_track_query():
+    from core.mda.watch import _nearby_gap_witness_counts
+
+    gap_start = datetime.now(timezone.utc) - timedelta(hours=2)
+    now = datetime.now(timezone.utc)
+
+    class FakeTrackStore:
+        def __init__(self):
+            self.calls = []
+
+        def positions_between(self, start, end, *, bbox):
+            self.calls.append((start, end, bbox))
+            return [
+                {"mmsi": "111000101", "ts": (gap_start - timedelta(minutes=20)).isoformat()},
+                {"mmsi": "111000102", "ts": (gap_start - timedelta(minutes=10)).isoformat()},
+                {"mmsi": "111000101", "ts": (gap_start + timedelta(minutes=20)).isoformat()},
+                {"mmsi": "111000103", "ts": (gap_start + timedelta(minutes=40)).isoformat()},
+                {"mmsi": "111000100", "ts": (gap_start + timedelta(minutes=30)).isoformat()},
+            ]
+
+    fake = FakeTrackStore()
+    before, after = _nearby_gap_witness_counts(
+        fake, "111000100", 35.0, 15.0, gap_start, now
+    )
+
+    assert (before, after) == (2, 2)
+    assert len(fake.calls) == 1
+
+
+def test_gap_scan_skips_coastal_candidate_before_track_history_queries(monkeypatch):
+    mmsi = "111000105"
+    _feed(mmsi, 37.94, 23.60, sog=12.0)  # Piraeus port/approach context
+    track_store._last[mmsi].ts = time.time() - 5 * 3600
+
+    calls = []
+    monkeypatch.setattr(
+        track_store,
+        "positions_between",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or [],
+    )
+
+    assert MdaWatch().scan_gaps() == 0
+    assert calls == []
+
+
 def test_gap_scan_flags_silent_vessel(monkeypatch):
     """No corroborating neighbour data either way (an isolated vessel with
     nothing else in range) must not be treated as proof of a coverage

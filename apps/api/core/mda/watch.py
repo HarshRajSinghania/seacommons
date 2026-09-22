@@ -97,11 +97,27 @@ def _nearby_gap_witness_counts(
     from core.mda.coverage import _bbox_for_radius
 
     bbox = _bbox_for_radius(lat, lon, radius_nm)
-    before_rows = track_store.positions_between(
-        gap_start - timedelta(minutes=window_min), gap_start, bbox=bbox)
-    after_rows = track_store.positions_between(gap_start, now, bbox=bbox)
-    before = {r["mmsi"] for r in before_rows if r.get("mmsi") and r["mmsi"] != mmsi}
-    after = {r["mmsi"] for r in after_rows if r.get("mmsi") and r["mmsi"] != mmsi}
+    rows = track_store.positions_between(
+        gap_start - timedelta(minutes=window_min), now, bbox=bbox
+    )
+    before: set[str] = set()
+    after: set[str] = set()
+    for row in rows:
+        row_mmsi = str(row.get("mmsi") or "")
+        if not row_mmsi or row_mmsi == mmsi:
+            continue
+        raw_ts = row.get("ts")
+        try:
+            observed_at = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        observed_at = observed_at.astimezone(timezone.utc)
+        if observed_at <= gap_start:
+            before.add(row_mmsi)
+        else:
+            after.add(row_mmsi)
     return len(before), len(after)
 
 
@@ -820,6 +836,7 @@ class MdaWatch:
         from core.mda.coverage import compute_coverage_baseline
         from core.mda.gap_reason import build_gap_reason
         from core.mda.jamming import jamming
+        from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
         from core.mda.reference import reference
         from core.vessels.registry import registry
         from core.vessels.track_store import track_store
@@ -851,6 +868,20 @@ class MdaWatch:
             ship_type = v.get("ship_type")
             silent_s = time.time() - last.ts
             gap_start = datetime.fromtimestamp(last.ts, tz=timezone.utc)
+
+            # Cheap geographic/age gate before any track-history DB queries.
+            # Coastal/port gaps cannot become public maritime cases, and a
+            # narrow-corridor open-sea gap cannot qualify until 4h anyway.
+            # Keep the expensive coverage analysis focused on candidates that
+            # can actually cross the existing publication boundary.
+            coarse_context = build_offshore_context(
+                last.lat, last.lon, include_ais_coverage=False
+            )
+            if not coarse_context.get("open_sea"):
+                continue
+            if not coarse_context.get("deep_offshore") and silent_s < 4 * 3600:
+                continue
+
             nearby_before, nearby_after = _nearby_gap_witness_counts(
                 track_store, mmsi, last.lat, last.lon, gap_start, now_dt)
             gap_reason = None
@@ -933,7 +964,6 @@ class MdaWatch:
                 location_precision=confidence_mod.location_precision_score("ais_position"),
             )
             behaviour_context = _behaviour_context_for(mmsi)
-            from core.mda.offshore_context import build_offshore_context, qualify_offshore_anomaly
             anomaly_type = "long_gap" if (time.time() - last.ts) > 6 * 3600 else "gap"
             gap_meta = {
                 "vessel_type_context": ship_type,

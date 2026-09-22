@@ -500,6 +500,13 @@ class SourceObservationDB(Base):
     __table_args__ = (
         UniqueConstraint("source_name", "source_id", name="uq_source_observation_delivery_key"),
         Index("ix_source_observations_source_ts", "source_name", "observed_at"),
+        # Hot-path lineage lookup: exact payload hash, earliest prior receipt.
+        # Without this, every high-volume observation scans the full table.
+        Index(
+            "ix_source_observations_payload_received",
+            "raw_payload_hash",
+            "received_at",
+        ),
     )
 
 

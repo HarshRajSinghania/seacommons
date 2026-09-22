@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 
-def _frame(payload=b"\x00\x00\xff\x7f"):
+def _frame(payload=b"\x00\x00\x7f\xff"):
     from core.radio.decoder_runtime import EphemeralRadioFrame
     return EphemeralRadioFrame(
         receiver_id="rx-listen", provider="kiwisdr", physical_lineage="lineage-listen",
@@ -122,7 +122,7 @@ def test_listen_websocket_streams_broker_pcm_bytes(monkeypatch):
         websocket.receive_json()
         packet = b"\x01\x00\xff\x7f"
         assert listen_broker.publish(_frame(packet)) == 1
-        assert websocket.receive_bytes() == packet
+        assert websocket.receive_bytes() == b"\x00\x01\x7f\xff"
 
 
 
@@ -154,7 +154,7 @@ def test_listen_http_streams_ephemeral_pcm_without_cloudflare(monkeypatch):
         response = future.result(timeout=10)
 
     assert response.status_code == 200
-    assert response.content == packet
+    assert response.content == b"\x00\x01\x7f\xff"
     assert response.headers["content-type"].startswith("audio/L16")
     assert response.headers["x-seacommons-audio-encoding"] == "pcm_s16le"
     assert response.headers["x-seacommons-sample-rate"] == "12000"

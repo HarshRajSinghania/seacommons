@@ -312,6 +312,78 @@ def test_play_db_routes_are_sync_for_threadpool_isolation():
     assert inspect.iscoroutinefunction(play_incident_timeline) is False
 
 
+def test_play_catalog_uses_episode_parent_instead_of_raw_ais_child():
+    from core.api.routes import play as play_routes
+    from core.db.models import IntelEventDB, MaritimeEpisodeDB
+    from core.db.session import session_scope
+
+    suffix = uuid.uuid4().hex[:8]
+    mmsi = "211879872"
+    event_id = f"aisgap:{mmsi}:{suffix}"
+    episode_id = f"episode:subj:mmsi:{mmsi}:gap_episode:{suffix}"
+    reported = datetime.now(timezone.utc) - timedelta(hours=2)
+    with session_scope() as db:
+        db.add(IntelEventDB(
+            id=event_id, timestamp_utc=reported.isoformat(), type="ais_anomaly",
+            severity="high", lat=35.4, lon=14.2, title="AIS gap — TEST",
+            text="PRIVATE RAW GAP TEXT", url="", source="mda", linked_mmsi=mmsi,
+            maritime_domain="grey_zone", meta={
+                "publication_status": "published",
+                "publication_state": "published",
+                "analysis_state": "evidence_candidate",
+                "verification_status": "ais_transponder",
+                "anomaly_type": "long_gap",
+                "offshore_reason_codes": ["OFFSHORE_CONTEXT", "PROLONGED_OFFSHORE_GAP"],
+                "source_policy": "official_api",
+            },
+        ))
+        db.add(MaritimeEpisodeDB(
+            episode_id=episode_id, episode_family="gap_episode",
+            subject_ids=[f"subj:mmsi:{mmsi}"],
+            start_at=reported.replace(tzinfo=None), end_at=reported.replace(tzinfo=None),
+            geometry={"type": "Point", "coordinates": [14.2, 35.4]},
+            observation_ids=[event_id], feature_ids=[],
+            independence_groups=["ais_sensor_lineage"],
+            verification_status="single_source_observed",
+            behaviour_context={"analysis": {
+                "analysis_state": "evidence_candidate",
+                "publication_state": "published",
+                "resolution_state": "open",
+                "lineage_ids": ["ais_sensor_lineage"],
+            }},
+            alternative_explanations=[],
+            evidence_fingerprint=f"fingerprint-{suffix}",
+            method_version="test", status="active",
+        ))
+    play_routes._play_catalog_cache.clear()
+    play_routes._play_counts_cache.clear()
+
+    response = TestClient(app).get("/api/v1/play/incidents?limit=500")
+    assert response.status_code == 200
+    items = response.json()["incidents"]
+    ids = {item["incident_id"] for item in items}
+    assert episode_id in ids
+    assert event_id not in ids
+    item = next(row for row in items if row["incident_id"] == episode_id)
+    assert item["archive_source"] == "episode"
+    assert item["archive_decision"] == "open_case"
+    assert item["case_type"] == "dark_transit"
+    assert item["evidence_stage"] == "derived"
+
+    timeline_response = TestClient(app).get(
+        f"/api/v1/play/incidents/{episode_id}/timeline"
+    )
+    assert timeline_response.status_code == 200
+    dossier = timeline_response.json()
+    assert dossier["incident_id"] == episode_id
+    assert dossier["archive_decision"] == "open_case"
+    assert dossier["evidence_count"] >= 1
+    assert {"episode", "evidence"}.issubset(
+        {entry["type"] for entry in dossier["timeline"]}
+    )
+    assert "PRIVATE RAW GAP TEXT" not in timeline_response.text
+
+
 def test_play_catalog_includes_current_humanitarian_case():
     event_id = _seed_case(lifecycle="active", age_hours=2, with_update=False)
     response = TestClient(app).get("/api/v1/play/incidents?limit=500")

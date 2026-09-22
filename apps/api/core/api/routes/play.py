@@ -137,6 +137,296 @@ def _generic_maritime_projection(event) -> dict[str, Any]:
     }
 
 
+
+
+def _episode_analysis(episode) -> dict[str, Any]:
+    context = dict(episode.behaviour_context or {})
+    analysis = context.get("analysis")
+    return dict(analysis) if isinstance(analysis, dict) else {}
+
+
+def _is_public_play_episode(episode) -> bool:
+    """A public evidence episode is a Play case before it is a finding.
+
+    Review/publishing of an InvestigationHypothesis is a stronger epistemic
+    boundary. It must not decide whether the underlying public episode has a
+    durable dossier at all. Live and Play therefore share this episode as soon
+    as the already-public analysis marks it evidence_candidate/evidence.
+    """
+    analysis = _episode_analysis(episode)
+    return bool(
+        str(episode.status or "") != "superseded"
+        and analysis.get("publication_state") == "published"
+        and analysis.get("analysis_state") in {"evidence_candidate", "evidence"}
+    )
+
+
+def _episode_projection(episode, evidence_event=None) -> dict[str, Any]:
+    analysis = _episode_analysis(episode)
+    event_meta = dict(evidence_event.meta or {}) if evidence_event is not None else {}
+    event_type = evidence_event.type if evidence_event is not None else "ais_anomaly"
+    maritime_domain = (
+        evidence_event.maritime_domain if evidence_event is not None else "grey_zone"
+    )
+    taxonomy = taxonomy_fields(
+        event_type=event_type,
+        maritime_domain=maritime_domain,
+        metadata=event_meta,
+    )
+    family_case_type = {
+        "gap_episode": "dark_transit",
+        "rendezvous_episode": "covert_rendezvous",
+        "spoofing_episode": "position_spoofing",
+        "infrastructure_proximity_episode": "infrastructure_pattern",
+        "port_call_episode": "port_call",
+        "safety_episode": "safety_event",
+    }.get(str(episode.episode_family or ""), str(episode.episode_family or "maritime_episode"))
+    independence_groups = list(episode.independence_groups or [])
+    verification_status = str(episode.verification_status or "single_source_observed")
+    corroborated = (
+        verification_status == "multi_source_corroborated"
+        or len(independence_groups) >= 2
+    )
+    evidence_stage = "corroborated" if corroborated else "derived"
+    title = (
+        evidence_event.title
+        if evidence_event is not None and evidence_event.title
+        else str(episode.episode_family or "Maritime").replace("_", " ").title()
+    )
+    reason_codes = list(dict.fromkeys(
+        [str(v) for v in (event_meta.get("offshore_reason_codes") or ()) if v]
+        + [str(v) for v in (event_meta.get("cross_modal_reason_codes") or ()) if v]
+    ))
+    return {
+        "incident_id": str(episode.episode_id),
+        "episode_id": str(episode.episode_id),
+        "hypothesis_id": None,
+        "incident_status": str(analysis.get("resolution_state") or episode.status or "open"),
+        "surface": "play",
+        "case_type": family_case_type,
+        **taxonomy,
+        "reported_at": _iso(episode.start_at),
+        "last_update_at": _iso(episode.updated_at) or _iso(episode.end_at),
+        "state_changed_at": _iso(episode.updated_at),
+        "resolved_at": _iso(episode.end_at) if str(episode.status or "") == "resolved" else None,
+        "title": title,
+        "source": "SeaCommons evidence engine",
+        "geometry": episode.geometry,
+        "domain": "maritime",
+        "analysis_state": str(analysis.get("analysis_state") or "evidence_candidate"),
+        "investigation": True,
+        "hypothesis_state": None,
+        "evidence_stage": evidence_stage,
+        "verification_status": verification_status,
+        "corroborated": corroborated,
+        "independence_groups": independence_groups,
+        "evidence_count": len(episode.observation_ids or ()),
+        "archive_decision": "open_case",
+        "review_boundary_crossed": False,
+        "episode_present": True,
+        "archive_source": "episode",
+        "episode_family": episode.episode_family,
+        "subject_ids": list(episode.subject_ids or []),
+        "reason_codes": reason_codes,
+        "counter_indicators": list(episode.alternative_explanations or []),
+    }
+
+
+
+
+def _public_episode_dossier(db, episode, *, now: datetime) -> dict[str, Any]:
+    from sqlalchemy import or_
+    from core.db.models import (
+        DriftResultDB,
+        IntelEventDB,
+        RadioAISAssociationDB,
+        SatelliteObservationDB,
+        SourceObservationDB,
+    )
+
+    canonical_id = str(episode.episode_id)
+    evidence_ids = list(dict.fromkeys(
+        str(value).strip()
+        for value in (*list(episode.observation_ids or ()), *list(episode.feature_ids or ()))
+        if str(value).strip()
+    ))
+    lookup_ids = set(evidence_ids)
+    lookup_ids.update(
+        value.removeprefix("ais:") for value in evidence_ids if value.startswith("ais:")
+    )
+    evidence_by_id = {
+        row.id: row
+        for row in (
+            db.query(IntelEventDB).filter(IntelEventDB.id.in_(sorted(lookup_ids))).all()
+            if lookup_ids else []
+        )
+    }
+    evidence_events = []
+    seen: set[str] = set()
+    for raw in evidence_ids:
+        event = evidence_by_id.get(raw)
+        if event is None and raw.startswith("ais:"):
+            event = evidence_by_id.get(raw.removeprefix("ais:"))
+        if event is not None and event.id not in seen:
+            seen.add(event.id)
+            evidence_events.append(event)
+    evidence_events.sort(key=lambda row: str(row.timestamp_utc or ""))
+    projection = _episode_projection(
+        episode, evidence_event=evidence_events[0] if evidence_events else None
+    )
+
+    timeline = [{
+        "id": canonical_id,
+        "at": _iso(episode.start_at),
+        "type": "episode",
+        "source": "SeaCommons evidence engine",
+        "title": projection["title"],
+        "geometry": episode.geometry,
+        "properties": {
+            "episode_id": canonical_id,
+            "episode_family": episode.episode_family,
+            "analysis_state": projection["analysis_state"],
+            "verification_status": projection["verification_status"],
+            "evidence_stage": projection["evidence_stage"],
+            "subject_ids": list(episode.subject_ids or []),
+        },
+    }]
+    for index, evidence in enumerate(evidence_events, start=1):
+        meta = dict(evidence.meta or {})
+        geometry = (
+            {"type": "Point", "coordinates": [evidence.lon, evidence.lat]}
+            if evidence.lat is not None and evidence.lon is not None else None
+        )
+        timeline.append({
+            "id": f"evidence:{index}:{evidence.id}",
+            "at": _iso(evidence.timestamp_utc),
+            "type": "evidence",
+            "source": evidence.source,
+            "title": evidence.title or str(meta.get("anomaly_type") or evidence.type).replace("_", " "),
+            "geometry": geometry,
+            "properties": {
+                "event_id": evidence.id,
+                "anomaly_type": meta.get("anomaly_type"),
+                "analysis_state": meta.get("analysis_state"),
+                "verification_status": meta.get("verification_status"),
+                "source_lineage": (
+                    meta.get("source_lineage")
+                    or meta.get("lineage_ids")
+                    or meta.get("contributing_independence_groups")
+                    or meta.get("independence_groups")
+                ),
+                "reason_codes": list(meta.get("offshore_reason_codes") or []),
+            },
+        })
+
+    drift_keys = [canonical_id, f"intel:{canonical_id}"]
+    for evidence_id in evidence_ids:
+        drift_keys.extend((evidence_id, f"intel:{evidence_id}"))
+    drifts = (
+        db.query(DriftResultDB)
+        .filter(
+            DriftResultDB.status == "completed",
+            DriftResultDB.event_id.in_(list(dict.fromkeys(drift_keys))),
+        )
+        .order_by(DriftResultDB.created_at.asc())
+        .all()
+    )
+    timeline.extend(_drift_item(row) for row in drifts)
+
+    satellite_ids = [canonical_id, *evidence_ids]
+    satellites = (
+        db.query(SatelliteObservationDB)
+        .filter(
+            or_(
+                SatelliteObservationDB.episode_id == canonical_id,
+                SatelliteObservationDB.incident_id.in_(satellite_ids),
+            )
+        )
+        .order_by(SatelliteObservationDB.acquisition_time.asc())
+        .all()
+    )
+    timeline.extend(_satellite_item(row) for row in satellites)
+
+    evidence_mmsis = {
+        str(event.linked_mmsi or "").strip()
+        for event in evidence_events
+        if str(event.linked_mmsi or "").strip()
+    }
+    association_scope = RadioAISAssociationDB.episode_id == canonical_id
+    if evidence_mmsis:
+        association_scope = or_(
+            association_scope,
+            RadioAISAssociationDB.mmsi.in_(sorted(evidence_mmsis)),
+        )
+    associations = (
+        db.query(RadioAISAssociationDB)
+        .filter(
+            association_scope,
+            RadioAISAssociationDB.match_status.in_(("strong", "identity_only")),
+            RadioAISAssociationDB.confidence >= 0.8,
+        )
+        .order_by(RadioAISAssociationDB.created_at.asc())
+        .limit(200)
+        .all()
+    )
+    observation_ids = [row.observation_id for row in associations]
+    observation_by_id = {
+        row.observation_id: row
+        for row in (
+            db.query(SourceObservationDB)
+            .filter(
+                SourceObservationDB.observation_id.in_(observation_ids),
+                SourceObservationDB.observation_type == "dsc_message",
+            )
+            .all()
+            if observation_ids else []
+        )
+    }
+    start_at = episode.start_at.replace(tzinfo=timezone.utc) if episode.start_at.tzinfo is None else episode.start_at.astimezone(timezone.utc)
+    end_at = episode.end_at.replace(tzinfo=timezone.utc) if episode.end_at.tzinfo is None else episode.end_at.astimezone(timezone.utc)
+    radio_start, radio_end = start_at - timedelta(hours=6), end_at + timedelta(hours=6)
+    radio_rows = []
+    for association in associations:
+        observation = observation_by_id.get(association.observation_id)
+        if observation is None:
+            continue
+        observed_at = parse_utc(str(observation.observed_at))
+        if observed_at is None or observed_at < radio_start or observed_at > radio_end:
+            continue
+        radio_rows.append((observation, association))
+    timeline.extend(_radio_item(observation, association) for observation, association in radio_rows)
+
+    timeline = [item for item in timeline if item.get("at")]
+    timeline.sort(key=lambda item: item["at"])
+    satellite_evidence_count = sum(
+        1 for row in satellites
+        if row.association_status == "strong"
+        and row.episode_id
+        and str(row.episode_id) == canonical_id
+    )
+    radio_evidence_count = sum(
+        1 for _observation, row in radio_rows
+        if row.match_status == "strong"
+        and row.episode_id
+        and str(row.episode_id) == canonical_id
+    )
+    return {
+        **projection,
+        "requested_incident_id": canonical_id,
+        "sar_mission_count": 0,
+        "satellite_count": len(satellites),
+        "satellite_evidence_count": satellite_evidence_count,
+        "satellite_context_count": len(satellites) - satellite_evidence_count,
+        "radio_count": len(radio_rows),
+        "radio_evidence_count": radio_evidence_count,
+        "radio_context_count": len(radio_rows) - radio_evidence_count,
+        "drift_count": len(drifts),
+        "evidence_count": len(evidence_events) + satellite_evidence_count + radio_evidence_count,
+        "timeline": timeline,
+        "generated_at": now.isoformat(),
+    }
+
+
 # The public promotion boundary: candidate/collecting/expired remain durable
 # internal investigation state. review_ready+ are public. Rejected hypotheses
 # are private by default and become a public negative case only after an
@@ -302,6 +592,53 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 continue
             combined.append(_incident_projection(row, event, now=now))
 
+        # Public MaritimeEpisode rows are the canonical Play cases.  Raw
+        # detector events remain evidence children and must not appear beside
+        # their parent as a second "incident".
+        # behaviour_context is a cross-dialect JSON column. Filtering its
+        # nested analysis object in SQL behaves differently across SQLite and
+        # PostgreSQL, so keep the publication predicate in one canonical
+        # Python function. The episode table is bounded/durable and the
+        # catalog itself is cached for 60s.
+        episode_rows = [
+            row
+            for row in db.query(MaritimeEpisodeDB).all()
+            if _is_public_play_episode(row)
+        ]
+        episode_child_ids: set[str] = set()
+        for episode in episode_rows:
+            episode_child_ids.update(
+                str(value).strip()
+                for value in (*list(episode.observation_ids or ()), *list(episode.feature_ids or ()))
+                if str(value).strip()
+            )
+
+        episode_evidence_by_id: dict[str, Any] = {}
+        episode_lookup_ids = set(episode_child_ids)
+        episode_lookup_ids.update(
+            value.removeprefix("ais:")
+            for value in episode_child_ids
+            if value.startswith("ais:")
+        )
+        lookup_episode_ids = sorted(episode_lookup_ids)
+        for start in range(0, len(lookup_episode_ids), 500):
+            chunk = lookup_episode_ids[start:start + 500]
+            for event in db.query(IntelEventDB).filter(IntelEventDB.id.in_(chunk)).all():
+                episode_evidence_by_id[event.id] = event
+
+        episode_item_index: dict[str, int] = {}
+        for episode in episode_rows:
+            evidence_event = None
+            for evidence_id in (*list(episode.observation_ids or ()), *list(episode.feature_ids or ())):
+                raw = str(evidence_id or "").strip()
+                evidence_event = episode_evidence_by_id.get(raw)
+                if evidence_event is None and raw.startswith("ais:"):
+                    evidence_event = episode_evidence_by_id.get(raw.removeprefix("ais:"))
+                if evidence_event is not None:
+                    break
+            episode_item_index[str(episode.episode_id)] = len(combined)
+            combined.append(_episode_projection(episode, evidence_event=evidence_event))
+
         publication_status = IntelEventDB.meta["publication_status"].as_string()
         rows = (
             db.query(IntelEventDB)
@@ -312,7 +649,7 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
             .yield_per(1000)
         )
         for event in rows:
-            if event.id in human_ids:
+            if event.id in human_ids or event.id in episode_child_ids:
                 continue
             if _is_public_catalog_maritime(event):
                 combined.append(_generic_maritime_projection(event))
@@ -348,7 +685,7 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
                 if raw.startswith("ais:"):
                     missing_episode_lookup_ids.add(raw.removeprefix("ais:"))
 
-        evidence_by_id: dict[str, Any] = {}
+        evidence_by_id: dict[str, Any] = dict(episode_evidence_by_id)
         lookup_ids = sorted(missing_episode_lookup_ids)
         for start in range(0, len(lookup_ids), 500):
             chunk = lookup_ids[start:start + 500]
@@ -359,19 +696,26 @@ def _compute_play_catalog() -> list[dict[str, Any]]:
             if not _is_public_play_investigation(hypothesis):
                 continue
             evidence_event = None
-            if episode is None:
-                for evidence_id in hypothesis.evidence_links or ():
-                    raw = str(evidence_id or "").strip()
-                    evidence_event = evidence_by_id.get(raw)
-                    if evidence_event is None and raw.startswith("ais:"):
-                        evidence_event = evidence_by_id.get(raw.removeprefix("ais:"))
-                    if evidence_event is not None:
-                        break
-            combined.append(
-                _investigation_projection(
-                    hypothesis, episode, evidence_event=evidence_event
-                )
+            evidence_ids = (
+                list(episode.observation_ids or ()) + list(episode.feature_ids or ())
+                if episode is not None
+                else list(hypothesis.evidence_links or ())
             )
+            for evidence_id in evidence_ids:
+                raw = str(evidence_id or "").strip()
+                evidence_event = evidence_by_id.get(raw)
+                if evidence_event is None and raw.startswith("ais:"):
+                    evidence_event = evidence_by_id.get(raw.removeprefix("ais:"))
+                if evidence_event is not None:
+                    break
+            projection = _investigation_projection(
+                hypothesis, episode, evidence_event=evidence_event
+            )
+            canonical_id = str(projection["incident_id"])
+            if canonical_id in episode_item_index:
+                combined[episode_item_index[canonical_id]] = projection
+            else:
+                combined.append(projection)
 
         public_ids = [str(item["incident_id"]) for item in combined]
         drift_counts: dict[str, int] = {}
@@ -731,6 +1075,19 @@ def play_incident_timeline(incident_id: str):
                 .order_by(InvestigationHypothesisDB.updated_at.desc())
                 .first()
             )
+
+        public_episode = db.get(MaritimeEpisodeDB, incident_id)
+        if public_episode is None and hypothesis is not None and hypothesis.episode_id:
+            public_episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id)
+        if (
+            public_episode is not None
+            and _is_public_play_episode(public_episode)
+            and (hypothesis is None or not _is_public_play_investigation(hypothesis))
+        ):
+            payload = _public_episode_dossier(db, public_episode, now=now)
+            payload["requested_incident_id"] = incident_id
+            return payload
+
         if hypothesis is not None and _is_public_play_investigation(hypothesis):
             episode = db.get(MaritimeEpisodeDB, hypothesis.episode_id) if hypothesis.episode_id else None
             evidence_links = [

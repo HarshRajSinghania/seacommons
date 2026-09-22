@@ -60,7 +60,7 @@ def test_darkship_cue_refresh_job_is_bounded(monkeypatch):
     assert calls == [
         {
             "limit": 4,
-            "min_age_hours": 0.25,
+            "min_age_hours": 0.0,
             "max_age_days": 1,
             "recheck_hours": 1.0,
             "include_s1": True,

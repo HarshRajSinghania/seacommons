@@ -444,7 +444,7 @@ def _job_darkship_cue_refresh() -> None:
 
         live = mda_watch.refresh_darkship_cues(
             limit=4,
-            min_age_hours=0.25,
+            min_age_hours=0.0,
             max_age_days=1,
             recheck_hours=1.0,
             include_s1=True,

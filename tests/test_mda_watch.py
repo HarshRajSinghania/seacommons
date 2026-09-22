@@ -362,6 +362,13 @@ def test_gap_scan_keeps_satellite_enrichment_off_detector_hot_path(monkeypatch):
         _witness(f"11100017{k}", 37.01, 18.01, minutes_ago=120)
     assert MdaWatch().scan_gaps() == 1
     assert calls == []
+    events = [
+        event for event in _alerts("ais_anomaly")
+        if event.linked_mmsi == mmsi
+        and event.metadata.get("anomaly_type") in {"gap", "long_gap"}
+    ]
+    assert events
+    assert "darkship_cue" not in events[0].metadata
 
 def test_spoofing_circular_ignores_tug_working_the_breakwater():
     import math

@@ -1265,7 +1265,7 @@ class MdaWatch:
                         }
                         if gap_reason is not None else None
                     ),
-                    "darkship_cue": cue,
+                    **({"darkship_cue": cue} if cue is not None else {}),
                     "behaviour_context": _behaviour_context_for(mmsi),
                 },
             ), dedup_key=f"aisgap:{mmsi}:{int(time.time() // 21600)}")

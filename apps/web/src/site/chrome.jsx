@@ -19,13 +19,14 @@ function useClocks() {
 }
 
 const NAV = [
-  ['Environments', '#environments'],
+  ['Docs', '/docs'],
+  ['Live', 'https://live.seacommons.org'],
+  ['Play', 'https://play.seacommons.org'],
   ['Research', '#research'],
   ['System', '#system'],
   ['Method', '#method'],
   ['MDA', '#mda'],
   ['Governance', '#governance'],
-  ['Docs', '/docs'],
 ];
 
 export function BrandMark({ small = false }) {
@@ -57,6 +58,14 @@ export function Header() {
     };
   }, [open]);
 
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <header ref={headerRef} className={`site-header ${scrolled ? 'is-scrolled' : ''}`.trim()}>
       <a className="brand" href="#top" aria-label="SeaCommons — home">
@@ -68,14 +77,22 @@ export function Header() {
 
       <button
         type="button"
-        className="site-header__toggle"
+        className={`site-header__toggle ${open ? 'is-open' : ''}`.trim()}
+        aria-label={open ? 'Close navigation' : 'Open navigation'}
         aria-expanded={open}
         aria-controls="site-nav"
         onClick={() => setOpen((v) => !v)}
       >
-        <span>{open ? 'Close' : 'Menu'}</span>
-        <i />
+        <i aria-hidden="true" />
       </button>
+
+      <button
+        type="button"
+        className={`site-nav__backdrop ${open ? 'is-open' : ''}`.trim()}
+        aria-label="Close navigation"
+        tabIndex={open ? 0 : -1}
+        onClick={() => setOpen(false)}
+      />
 
       <nav id="site-nav" className={`site-nav ${open ? 'is-open' : ''}`.trim()} aria-label="Primary">
         {NAV.map(([label, href]) => (

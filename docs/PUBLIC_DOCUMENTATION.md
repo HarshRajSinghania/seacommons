@@ -27,12 +27,9 @@ credentials, private receiver endpoints, deployment secrets or environment-speci
 
 ## Engineering documentation
 
-Engineering documentation remains versioned in this repository under `docs/`.
-`docs/README.md` is the canonical index. Architecture, data-flow, security,
-configuration, testing and operational documents can be linked from the public
-documentation when a reader needs implementation detail.
+The public reader experience is bundled directly into the web application from `apps/web/src/docs/content/SEACOMMONS.md`. It synthesizes the canonical architecture, data-flow, security, realtime, OSINT, operations and testing documents into a continuous public technical reference. The public page must not send readers to repository Markdown as a substitute for documentation.
 
-Historical audits stay available for traceability but are not current product documentation.
+Engineering documentation remains versioned under `docs/`, with `docs/README.md` as its internal canonical index. Historical audits stay available for traceability but are not current product documentation.
 
 ## Metrics
 

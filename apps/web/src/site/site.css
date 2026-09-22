@@ -187,58 +187,94 @@ button:focus-visible {
   .site-header__live-dot.is-sea { animation: none; }
 }
 
-/* Nav is always collapsed behind the hamburger toggle — desktop included —
-   so the header stays a single slim glass row and the dropdown panel gets
-   its own well-lit, unambiguous surface instead of competing with the video
-   background for legibility. */
+/* Navigation stays behind a compact hamburger on every breakpoint. The
+   drawer opens from the right so site navigation never competes with the
+   editorial content column. */
 .site-header__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
   margin-left: auto;
-  padding: 0.5rem 0.8rem;
-  border: 1px solid var(--sc-line-strong);
+  padding: 0;
+  border: 0;
   background: transparent;
   color: var(--sc-paper);
-  font: 500 0.62rem/1 var(--sc-font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   cursor: pointer;
 }
-.site-header__toggle i {
-  width: 14px;
+.site-header__toggle i,
+.site-header__toggle i::before,
+.site-header__toggle i::after {
+  display: block;
+  width: 18px;
   height: 1px;
   background: currentColor;
-  box-shadow: 0 4px 0 currentColor, 0 -4px 0 currentColor;
+  content: "";
+  transition: transform .22s var(--sc-ease), opacity .22s var(--sc-ease);
+}
+.site-header__toggle i { position: relative; }
+.site-header__toggle i::before { position: absolute; top: -5px; }
+.site-header__toggle i::after { position: absolute; top: 5px; }
+.site-header__toggle.is-open i { background: transparent; }
+.site-header__toggle.is-open i::before { transform: translateY(5px) rotate(45deg); }
+.site-header__toggle.is-open i::after { transform: translateY(-5px) rotate(-45deg); }
+
+.site-nav__backdrop {
+  position: fixed;
+  inset: var(--header-h) 0 0 0;
+  z-index: 88;
+  border: 0;
+  background: rgba(0, 0, 0, .46);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .2s ease;
+}
+.site-nav__backdrop.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .site-nav {
   position: fixed;
-  inset: var(--header-h) 0 auto 0;
+  top: var(--header-h);
+  right: 0;
+  bottom: 0;
   z-index: 90;
+  width: min(380px, 92vw);
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  padding: 0.5rem 0;
-  background: color-mix(in srgb, var(--sc-ink-850) 88%, transparent);
-  backdrop-filter: blur(16px) saturate(1.4);
-  border-bottom: 1px solid var(--sc-line);
-  font: 500 0.7rem/1 var(--sc-font-mono);
-  letter-spacing: 0.07em;
+  padding: 1rem;
+  background: #020408;
+  border-left: 1px solid var(--sc-line);
+  font: 500 .7rem/1 var(--sc-font-mono);
+  letter-spacing: .07em;
   text-transform: uppercase;
-  transform: translateY(-8px);
-  opacity: 0;
+  transform: translateX(100%);
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.18s, transform 0.18s;
+  overflow-y: auto;
+  transition: transform .28s var(--sc-ease), visibility 0s linear .28s;
 }
-.site-nav.is-open { opacity: 1; transform: none; visibility: visible; pointer-events: auto; }
-.site-nav a { color: var(--sc-paper); padding: 1rem var(--pad-x); border-top: 1px solid var(--sc-line); transition: color 0.2s; }
-.site-nav a:hover { color: var(--sc-brand); }
-@media (min-width: 640px) {
-  .site-nav { inset: var(--header-h) auto auto 0; width: min(340px, 90vw); border-right: 1px solid var(--sc-line); }
+.site-nav.is-open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform .28s var(--sc-ease);
 }
+.site-nav a {
+  color: var(--sc-paper);
+  padding: 1rem .65rem;
+  border-top: 1px solid var(--sc-line);
+  transition: color .2s, padding-left .2s;
+}
+.site-nav a:last-child { border-bottom: 1px solid var(--sc-line); }
+.site-nav a:hover { color: var(--sc-brand); padding-left: .9rem; }
+
 @media (max-width: 940px) {
   .site-header__clock { display: none; }
   .site-header__live { display: none; }

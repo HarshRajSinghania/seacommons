@@ -2502,6 +2502,99 @@ def test_single_lineage_position_integrity_evidence_does_not_bypass_hypothesis_g
     ) is None
 
 
+def test_public_live_hides_legacy_gap_without_strong_reception_expectation() -> None:
+    from core.db.models import IntelEventDB, MaritimeEpisodeDB
+    from core.db.session import engine, session_scope
+    from core.live.feed import _published_open_episode_features
+
+    MaritimeEpisodeDB.__table__.create(bind=engine(), checkfirst=True)
+    IntelEventDB.__table__.create(bind=engine(), checkfirst=True)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    legacy_event = "aisgap:111000111"
+    strong_event = "aisgap:111000222"
+    legacy_episode = "episode:test:legacy-gap"
+    strong_episode = "episode:test:strong-gap"
+
+    with session_scope() as db:
+        for event_id in (legacy_event, strong_event):
+            db.query(IntelEventDB).filter_by(id=event_id).delete()
+        for episode_id in (legacy_episode, strong_episode):
+            db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).delete()
+
+        db.add(IntelEventDB(
+            id=legacy_event,
+            timestamp_utc=now.replace(tzinfo=timezone.utc).isoformat(),
+            type="ais_anomaly",
+            severity="medium",
+            lat=35.5,
+            lon=14.1,
+            title="Legacy AIS gap",
+            source="mda",
+            linked_mmsi="111000111",
+            meta={
+                "anomaly_type": "long_gap",
+                "publication_status": "published",
+                "analysis_state": "evidence_candidate",
+            },
+        ))
+        db.add(IntelEventDB(
+            id=strong_event,
+            timestamp_utc=now.replace(tzinfo=timezone.utc).isoformat(),
+            type="ais_anomaly",
+            severity="medium",
+            lat=35.6,
+            lon=14.2,
+            title="Strong AIS gap",
+            source="mda",
+            linked_mmsi="111000222",
+            meta={
+                "anomaly_type": "long_gap",
+                "publication_status": "published",
+                "analysis_state": "evidence_candidate",
+                "reception_expectation": {"support_level": "strong"},
+            },
+        ))
+        for episode_id, event_id, mmsi, lat, lon in (
+            (legacy_episode, legacy_event, "111000111", 35.5, 14.1),
+            (strong_episode, strong_event, "111000222", 35.6, 14.2),
+        ):
+            db.add(MaritimeEpisodeDB(
+                episode_id=episode_id,
+                episode_family="gap_episode",
+                subject_ids=[f"subj:mmsi:{mmsi}"],
+                start_at=now - timedelta(hours=5),
+                end_at=now,
+                geometry={"type": "Point", "coordinates": [lon, lat]},
+                observation_ids=[event_id],
+                feature_ids=[],
+                independence_groups=["ais_sensor_lineage"],
+                verification_status="single_source_observed",
+                behaviour_context={
+                    "analysis": {
+                        "analysis_state": "evidence_candidate",
+                        "publication_state": "published",
+                        "resolution_state": "open",
+                        "lineage_ids": ["ais_sensor_lineage"],
+                    },
+                },
+                alternative_explanations=[],
+                evidence_fingerprint=f"test-{episode_id}",
+                method_version="test",
+                status="active",
+            ))
+
+    try:
+        ids = {item["id"] for item in _published_open_episode_features(500)}
+        assert legacy_episode not in ids
+        assert strong_episode in ids
+    finally:
+        with session_scope() as db:
+            for episode_id in (legacy_episode, strong_episode):
+                db.query(MaritimeEpisodeDB).filter_by(episode_id=episode_id).delete()
+            for event_id in (legacy_event, strong_event):
+                db.query(IntelEventDB).filter_by(id=event_id).delete()
+
+
 def test_public_live_projects_open_maritime_episode_dossier() -> None:
     from core.db.models import MaritimeEpisodeDB
     from core.db.session import engine, session_scope

@@ -301,6 +301,19 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
             if source_event is not None:
                 break
         meta = dict(source_event.get("meta") or {}) if source_event is not None else {}
+        verification = str(row["verification_status"] or "single_source_observed")
+        corroborated = (
+            verification == VerificationStatus.MULTI_SOURCE_CORROBORATED.value
+        )
+        if family == "gap_episode" and not corroborated:
+            reception = meta.get("reception_expectation") or {}
+            if not (
+                isinstance(reception, dict)
+                and reception.get("support_level") == "strong"
+            ):
+                # Legacy single-lineage gap dossiers remain durable in Play,
+                # but Live requires the current reception-expectation gate.
+                continue
         opening = (row["behaviour_context"] or {}).get("case_opening") or {}
         reason_codes = list(opening.get("reason_codes") or ())
         safety = family == "safety_episode"
@@ -336,8 +349,6 @@ def _published_open_episode_features(limit: int) -> list[dict[str, Any]]:
             metadata={**meta, "anomaly_type": anomaly, "episode_family": family},
         )
         observed_at = row["end_at"].isoformat()
-        verification = str(row["verification_status"] or "single_source_observed")
-        corroborated = verification == VerificationStatus.MULTI_SOURCE_CORROBORATED.value
         title = (
             str(source_event.get("title") or "")[:255]
             if source_event is not None and source_event.get("title")

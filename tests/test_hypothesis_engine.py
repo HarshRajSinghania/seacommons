@@ -370,6 +370,25 @@ def test_rendezvous_event_preserves_all_vessel_subjects():
     ]
 
 
+def test_episode_input_uses_registry_imo_like_public_live(monkeypatch):
+    from core.intel.hypothesis_engine import event_to_episode_input_feature
+    from core.vessels.registry import registry
+
+    mmsi = "211879871"
+    monkeypatch.setitem(registry._cache, mmsi, {"imo": "9872092"})
+    event = IntelEvent(
+        id="imo-aligned-gap", type="ais_anomaly", severity="high",
+        lat=35.4, lon=14.2, title="gap", source="mda",
+        linked_mmsi=mmsi, metadata={"anomaly_type": "long_gap"},
+    )
+
+    feature = event_to_episode_input_feature(event)
+
+    assert feature is not None
+    assert feature["properties"]["subject_ids"] == ["subj:imo:9872092"]
+    assert feature["properties"]["imo"] == "9872092"
+
+
 def test_durable_gfw_gap_is_not_independent_from_ais_gap(monkeypatch):
     from core.mda.watch import MdaWatch
 
@@ -395,6 +414,42 @@ def test_durable_gfw_gap_is_not_independent_from_ais_gap(monkeypatch):
     assert get_hypothesis(
         "hyp:v1:dark_transit:episode:subj:mmsi:211879870:gap_episode:1"
     ) is None
+
+
+def test_hypothesis_sampler_never_evicts_public_evidence_candidate():
+    from core.db.models import IntelEventDB
+    from core.db.session import session_scope
+    from core.mda.watch import MdaWatch
+
+    now = datetime.now(timezone.utc).isoformat()
+    priority_id = "sampler-public-priority-gap"
+    with session_scope() as db:
+        db.add(IntelEventDB(
+            id=priority_id, timestamp_utc=now, type="ais_anomaly",
+            severity="high", lat=35.4, lon=14.2, title="public candidate",
+            text="", url="", source="mda", linked_mmsi="211879873",
+            maritime_domain="grey_zone", meta={
+                "anomaly_type": "long_gap",
+                "silent_seconds": 4 * 3600,
+                "publication_status": "published",
+                "analysis_state": "evidence_candidate",
+            },
+        ))
+        db.add(IntelEventDB(
+            id="sampler-internal-louder-gap", timestamp_utc=now,
+            type="ais_anomaly", severity="high", lat=35.5, lon=14.3,
+            title="internal louder gap", text="", url="", source="mda",
+            linked_mmsi="211879874", maritime_domain="grey_zone", meta={
+                "anomaly_type": "long_gap",
+                "silent_seconds": 48 * 3600,
+                "publication_status": "internal",
+                "analysis_state": "anomaly",
+            },
+        ))
+
+    sampled = MdaWatch._durable_hypothesis_family_events(limit_per_family=1)
+
+    assert priority_id in {event.id for event in sampled}
 
 
 def test_unmatched_satellite_candidate_stays_context_and_does_not_promote():

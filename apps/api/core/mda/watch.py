@@ -210,12 +210,27 @@ class MdaWatch:
                     IntelEventDB.type == event_type,
                     anomaly.in_(anomaly_types),
                 )
+                # Never let the bounded historical quota evict a current
+                # public evidence candidate. These are precisely the episodes
+                # visible on Live and therefore must also reach the canonical
+                # case/dossier engine. The quota still bounds additional
+                # historical/internal detector noise.
+                publication_status = IntelEventDB.meta["publication_status"].as_string()
+                analysis_state = IntelEventDB.meta["analysis_state"].as_string()
+                priority_rows = query.filter(
+                    publication_status == "published",
+                    analysis_state.in_(("evidence_candidate", "evidence")),
+                ).all()
+
                 if event_type == "ais_anomaly" and "gap" in anomaly_types:
                     silent = IntelEventDB.meta["silent_seconds"].as_float()
                     query = query.order_by(silent.desc().nullslast(), IntelEventDB.timestamp_utc.desc())
                 else:
                     query = query.order_by(IntelEventDB.timestamp_utc.desc())
-                rows = query.limit(limit_per_family).all()
+                rows_by_id = {row.id: row for row in priority_rows}
+                for row in query.limit(limit_per_family).all():
+                    rows_by_id.setdefault(row.id, row)
+                rows = list(rows_by_id.values())
 
                 now = datetime.now(timezone.utc)
                 for row in rows:

@@ -151,8 +151,22 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
         return None
     mmsi = mmsis[0]
     from core.mda.vessel_subject import subject_id_for
+
+    # Use the same vessel identity enrichment as Public Live. Without this,
+    # Live can canonicalize a vessel as subj:imo:* while the investigation
+    # engine persists the same hull as subj:mmsi:*, splitting one case into
+    # two episode IDs. IMO remains the preferred hull identity; MMSI is the
+    # fallback when the registry has not learned an IMO yet.
+    try:
+        from core.vessels.registry import registry
+        registry_cache = getattr(registry, "_cache", {}) or {}
+    except Exception:  # pragma: no cover - registry enrichment is best effort
+        registry_cache = {}
+    vessel_rows = {value: (registry_cache.get(value, {}) or {}) for value in mmsis}
     subject_ids = tuple(
-        subject_id_for(mmsi=value) or f"subj:mmsi:{value}" for value in mmsis
+        subject_id_for(imo=vessel_rows[value].get("imo"), mmsi=value)
+        or f"subj:mmsi:{value}"
+        for value in mmsis
     )
     coordinates = [event.lon, event.lat] if event.lat is not None and event.lon is not None else []
     metadata = event.metadata or {}
@@ -164,6 +178,7 @@ def event_to_episode_input_feature(event: IntelEvent) -> Optional[dict[str, Any]
             "id": event.id,
             "timestamp_utc": event.timestamp_utc,
             "linked_mmsi": mmsi,
+            "imo": vessel_rows.get(mmsi, {}).get("imo"),
             "subject_ids": list(subject_ids),
             "anomaly_type": metadata.get("anomaly_type"),
             "ais_nav_status_kind": metadata.get("ais_nav_status_kind"),

@@ -18,10 +18,20 @@ export function vesselReportFeature(feature) {
   const p = feature?.properties || {};
   const mmsi = String(p.mmsi || p.vessel_id || '');
   const displayName = normalizeVesselName(p.display_name || p.ship_name || p.name, mmsi);
+  const sanctionLists = Array.isArray(p.sanctions_lists) ? p.sanctions_lists : [];
+  const sanctionPrograms = Array.isArray(p.sanctions_programs) ? p.sanctions_programs : [];
+  const sanctions = Array.isArray(p.sanctions) && p.sanctions.length
+    ? p.sanctions
+    : sanctionLists.map((list, index) => ({
+      list,
+      program: sanctionPrograms[index] || sanctionPrograms[0] || '',
+      reason: 'Public sanctions-list identity match',
+    }));
   return {
     ...feature,
     properties: {
       ...p,
+      ...(sanctions.length ? { sanctions } : {}),
       id: p.id || `vessel:${mmsi}`,
       title: displayName,
       display_name: displayName,

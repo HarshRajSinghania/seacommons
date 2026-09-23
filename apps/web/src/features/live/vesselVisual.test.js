@@ -18,3 +18,17 @@ test('vesselReportFeature preserves the complete vessel name and report fields',
   assert.equal(report.properties.latest_course, 66.2);
   assert.equal(report.properties.latest_heading, 72);
 });
+
+
+test('sanctions arrays are normalized from public overlay metadata', () => {
+  const feature = vesselReportFeature({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [14, 35] },
+    properties: {
+      mmsi: '123456789', ship_name: 'Example', sanctions_matched: true,
+      sanctions_lists: ['OFAC_SDN'], sanctions_programs: ['RUSSIA-EO14024'],
+    },
+  });
+  assert.equal(feature.properties.sanctions[0].list, 'OFAC_SDN');
+  assert.equal(feature.properties.sanctions[0].program, 'RUSSIA-EO14024');
+});

@@ -32,7 +32,7 @@ test('public Live is case-first and does not expose raw AIS vessel layers', () =
   assert.match(main, /id: 'vessels-stationary-layer'/); // operator console still owns raw AIS
   assert.match(main, /id: 'selected-vessel-track'/);
   assert.match(main, /openVesselReport/);
-  assert.match(main, /isTrackedResponder[\s\S]{0,180}if \(!isTrackedResponder\) return/);
+  assert.match(main, /isPublicContextVessel[\s\S]{0,260}if \(!isPublicContextVessel\) return/);
   assert.match(main, /isPublicLiveHost[\s\S]{0,120}Promise\.resolve\(\{ type: 'FeatureCollection', features: \[\] \}\)/);
   assert.match(main, /isPublicLiveHost[\s\S]{0,220}proximity-vessels[\s\S]{0,120}features: \[\]/);
 });
@@ -86,7 +86,7 @@ test('public Live loads only the fresh Civil SAR fleet projection when its facet
   const publicShell = main.slice(main.indexOf('{isPublicLiveHost ? ('), main.indexOf('{!isPublicLiveHost', main.indexOf('{isPublicLiveHost ? (')));
   assert.doesNotMatch(publicShell, /CivilSarFleetPanel/);
   assert.match(main, /sar_fleet: false/);
-  assert.match(main, /\['sar_fleet', 'Civil SAR fleet'\]/);
+  assert.match(main, /Civil SAR fleet/);
   assert.match(main, /liveFacets\.sar_fleet \? '\/api\/v1\/live\/sar-fleet' : null/);
   assert.match(main, /: '\/api\/v1\/intel\/ngo'/);
 });
@@ -116,11 +116,11 @@ test('public Live always boots on OpenStreetMap with nautical seamarks', () => {
 });
 
 
-test('both moving and stationary NGO SAR markers are raised above later map layers', () => {
-  assert.match(
-    main,
-    /for \(const ngoLayerId of \['vessels-ngo-stationary', 'vessels-ngo'\]\)/,
-  );
+test('context vessel markers are raised above later map layers', () => {
+  assert.match(main, /for \(const contextVesselLayerId of/);
+  assert.match(main, /'vessels-ngo-stationary', 'vessels-ngo'/);
+  assert.match(main, /'sanctioned-vessels-stationary', 'sanctioned-vessels-moving'/);
+  assert.match(main, /map\.moveLayer\(contextVesselLayerId\)/);
 });
 
 test('Sanctions is a facet with a fresh-only vessel overlay, not a third macro category', () => {
@@ -129,9 +129,22 @@ test('Sanctions is a facet with a fresh-only vessel overlay, not a third macro c
     main.indexOf('];', main.indexOf('const SIGNALS_MACRO_GROUPS')) + 2,
   );
   assert.doesNotMatch(publicMacros, /key: 'sanctions'/);
-  assert.match(main, /\['sanctions', 'Sanctions'\]/);
+  assert.match(main, /Sanctioned vessels/);
   assert.match(main, /\/api\/v1\/live\/sanctioned-vessels/);
   assert.match(main, /sanctioned-vessels-moving/);
   assert.match(main, /sanctioned-vessels-stationary/);
   assert.doesNotMatch(main, /\['corroborated', 'Corroborated'\]/);
+});
+
+
+test('Sanctions and Civil SAR are always-visible context layers, not hidden investigation filters', () => {
+  assert.match(main, /aria-label="Context layers"/);
+  assert.match(main, /Sanctioned vessels/);
+  assert.match(main, /Civil SAR fleet/);
+  const contextStart = main.indexOf('aria-label="Context layers"');
+  const expandedStart = main.indexOf('{signalsExpanded && (');
+  assert.ok(contextStart > 0 && expandedStart > contextStart);
+  const expandedBlock = main.slice(expandedStart, main.indexOf('{SIGNALS_MACRO_GROUPS.map', expandedStart));
+  assert.doesNotMatch(expandedBlock, /\['sanctions', 'Sanctions'\]/);
+  assert.doesNotMatch(expandedBlock, /\['sar_fleet', 'Civil SAR fleet'\]/);
 });

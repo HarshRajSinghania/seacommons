@@ -880,12 +880,14 @@ function App() {
     if (!feature) return;
     if (isPublicLiveHost) {
       const props = feature.properties || {};
-      const isTrackedResponder = (
+      const isPublicContextVessel = (
         props.intel_type === 'ngo_vessel'
         || props.vessel_class === 'ngo'
         || props.vessel_class === 'coastguard'
+        || props.sanctions_matched === true
+        || props.facet === 'sanctions'
       );
-      if (!isTrackedResponder) return;
+      if (!isPublicContextVessel) return;
     }
     const reportFeature = vesselReportFeature(feature);
     setSelectedVessel(null);
@@ -2265,14 +2267,17 @@ function App() {
         // NGO fleet was added earlier in this sequence (before intel-fused /
         // intel-spike, which draw hundreds of security dots on a busy day)
         // -- later-added layers paint on top in MapLibre, so a genuinely
-        // small teal dot could end up buried under anomaly clutter at the
+        // small teal vessel marker could end up buried under anomaly clutter at the
         // same pixel. moveLayer with no beforeId brings a layer to the very
         // top of whatever exists at call time; doing it last here, after
         // every other addLayer in this setup, guarantees the NGO fleet is
         // always the top-most vessel marker regardless of how much security
         // noise is on screen.
-        for (const ngoLayerId of ['vessels-ngo-stationary', 'vessels-ngo']) {
-          if (map.getLayer(ngoLayerId)) map.moveLayer(ngoLayerId);
+        for (const contextVesselLayerId of [
+          'vessels-ngo-stationary', 'vessels-ngo',
+          'sanctioned-vessels-stationary', 'sanctioned-vessels-moving',
+        ]) {
+          if (map.getLayer(contextVesselLayerId)) map.moveLayer(contextVesselLayerId);
         }
 
         // Hover popup — shows the event's coordinates without needing to open the sidebar.
@@ -2384,7 +2389,7 @@ function App() {
         });
 
         // Vessel click opens the same full Live report used by every signal.
-        for (const lyr of ['vessels-layer', 'vessels-stationary-layer', 'vessels-ngo', 'vessels-ngo-stationary', 'proximity-vessels-layer', 'live-nearby-vessels-layer']) {
+        for (const lyr of ['vessels-layer', 'vessels-stationary-layer', 'vessels-ngo', 'vessels-ngo-stationary', 'sanctioned-vessels-moving', 'sanctioned-vessels-stationary', 'proximity-vessels-layer', 'live-nearby-vessels-layer']) {
           map.on('mouseenter', lyr, () => { map.getCanvas().style.cursor = 'pointer'; });
           map.on('mouseleave', lyr, () => {
             map.getCanvas().style.cursor = APP_PROFILE === 'demo' && (activePanelRef.current === 'sim' || selectionModeRef.current) ? 'crosshair' : '';
@@ -3845,6 +3850,29 @@ function App() {
                     onClick={() => setSignalsExpanded((open) => !open)}
                   ><i /></button>
                 </div>
+                <div className="signals-selector__context" role="group" aria-label="Context layers">
+                  <div className="signals-selector__role-summary">Context layers</div>
+                  <div className="signals-selector__list signals-selector__list--context">
+                    <button
+                      type="button"
+                      className={`signals-selector__link signals-selector__link--context ${liveFacets.sanctions ? 'is-active' : ''}`}
+                      aria-pressed={liveFacets.sanctions}
+                      onClick={() => setLiveFacets((current) => ({ ...current, sanctions: !current.sanctions }))}
+                    >
+                      <span className="signals-selector__box" aria-hidden="true" />
+                      Sanctioned vessels{sanctionedVessels.features?.length ? ` (${sanctionedVessels.features.length})` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      className={`signals-selector__link signals-selector__link--context ${liveFacets.sar_fleet ? 'is-active' : ''}`}
+                      aria-pressed={liveFacets.sar_fleet}
+                      onClick={() => setLiveFacets((current) => ({ ...current, sar_fleet: !current.sar_fleet }))}
+                    >
+                      <span className="signals-selector__box" aria-hidden="true" />
+                      Civil SAR fleet{sarMapFeatures.features?.length ? ` (${sarMapFeatures.features.length})` : ''}
+                    </button>
+                  </div>
+                </div>
                 {signalsExpanded && (
                   <div className="signals-selector__macros" role="group" aria-label="Investigation categories">
                     <div className="signals-selector__role-summary">
@@ -3855,8 +3883,6 @@ function App() {
                       {[
                         ['satellite', 'Satellite evidence'],
                         ['radio', 'Radio evidence'],
-                        ['sanctions', 'Sanctions'],
-                        ['sar_fleet', 'Civil SAR fleet'],
                       ].map(([key, label]) => (
                         <a
                           key={key}

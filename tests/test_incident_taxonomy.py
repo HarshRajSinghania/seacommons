@@ -41,10 +41,10 @@ def test_raw_observations_do_not_claim_hypothesis_semantics():
     # bucket happens to share that name), and it is always a member of the
     # closed set the public selector taxonomy is built from.
     cases = (
-        ("gap", "ais_gap", "dark_activity"),
-        ("long_gap", "ais_gap", "dark_activity"),
-        ("position_jump", "position_anomaly", "spoofing"),
-        ("impossible_speed", "position_anomaly", "spoofing"),
+        ("gap", "ais_gap", "ais_gap"),
+        ("long_gap", "ais_gap", "ais_gap"),
+        ("position_jump", "position_anomaly", "position_integrity"),
+        ("impossible_speed", "position_anomaly", "position_integrity"),
         ("rendezvous", "rendezvous", "transfer"),
         ("infra_proximity", "infrastructure_proximity", "infrastructure_proximity"),
     )

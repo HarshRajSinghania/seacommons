@@ -195,7 +195,7 @@ export function signalCategoryOf(properties = {}) {
     news: 'context_report',
     ngo: 'sar_activity',
     iom: 'migration_incident',
-    ais: 'dark_activity',
+    ais: 'ais_gap',
     fused: 'maritime_context',
   };
   if (explicit) return aliases[explicit] || explicit;
@@ -211,8 +211,8 @@ export function signalCategoryOf(properties = {}) {
     state_sar: 'sar_activity',
     navigation_casualty: 'navigation_safety',
     environmental: 'environmental_hazard',
-    spoofing: 'spoofing',
-    ais_gap: 'dark_activity',
+    spoofing: 'position_integrity',
+    ais_gap: 'ais_gap',
     loitering: 'loitering',
     rendezvous: 'transfer',
     sanctions: 'identity_integrity',

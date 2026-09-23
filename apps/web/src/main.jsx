@@ -167,8 +167,10 @@ const SIGNALS_MACRO_GROUPS = [
     key: 'maritime',
     label: 'Maritime',
     categories: [
-      { key: 'dark_activity', label: 'AIS gaps / dark candidates', groupKey: 'signal_type_dark_activity' },
-      { key: 'spoofing', label: 'Position integrity', groupKey: 'signal_type_spoofing' },
+      { key: 'ais_gap', label: 'AIS gaps', groupKey: 'signal_type_ais_gap' },
+      { key: 'position_integrity', label: 'Position integrity anomalies', groupKey: 'signal_type_position_integrity' },
+      { key: 'dark_activity', label: 'Dark activity hypotheses', groupKey: 'signal_type_dark_activity' },
+      { key: 'spoofing', label: 'Spoofing hypotheses', groupKey: 'signal_type_spoofing' },
       { key: 'transfer', label: 'Transfers / rendezvous', groupKey: 'signal_type_transfer' },
       { key: 'loitering', label: 'Loitering', groupKey: 'signal_type_loitering' },
       { key: 'infrastructure_proximity', label: 'Infrastructure proximity', groupKey: 'signal_type_infrastructure' },

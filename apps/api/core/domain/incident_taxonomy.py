@@ -33,7 +33,8 @@ STABLE_HUMANITARIAN_INCIDENT_TYPES = frozenset({
     "humanitarian_context",
 })
 STABLE_MARITIME_INCIDENT_TYPES = frozenset({
-    "dark_activity", "spoofing", "transfer", "infrastructure_proximity",
+    "ais_gap", "position_integrity", "dark_activity", "spoofing",
+    "transfer", "infrastructure_proximity",
     "loitering", "navigation_safety", "identity_integrity", "port_call",
     "piracy_security", "environmental_hazard", "context_report",
     "public_observation", "maritime_context",
@@ -46,8 +47,8 @@ STABLE_MARITIME_INCIDENT_TYPES = frozenset({
 # added to observation_type() without a matching bucket.
 _OBSERVATION_TYPE_BUCKETS: dict[str, str] = {
     "distress_beacon": "navigation_safety",
-    "ais_gap": "dark_activity",
-    "position_anomaly": "spoofing",
+    "ais_gap": "ais_gap",
+    "position_anomaly": "position_integrity",
     "rendezvous": "transfer",
     "infrastructure_proximity": "infrastructure_proximity",
     "loitering": "loitering",

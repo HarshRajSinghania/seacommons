@@ -165,18 +165,19 @@ export async function createFallbackMap({ container, center, zoom, onFeatureSele
       }
       for (const feature of pointFeatures(vessels)) {
         const [lon, lat] = feature.geometry.coordinates;
-        if (vesselIsStationary(feature) || !L.divIcon || !L.marker) {
+        const stationary = vesselIsStationary(feature);
+        if (!L.divIcon || !L.marker) {
           const marker = L.circleMarker([Number(lat), Number(lon)], {
             radius: 5, weight: 1.5, color: '#06151d', fillColor: vesselColor(feature), fillOpacity: 0.98,
-            className: `${markerClass(feature)} seacommons-fallback-vessel-stationary`,
+            className: `${markerClass(feature)} seacommons-fallback-vessel-emergency`,
           }).addTo(markers);
           bindSelection(marker, feature, onFeatureSelect);
           continue;
         }
-        const heading = vesselHeading(feature);
+        const heading = stationary ? 0 : vesselHeading(feature);
         const color = vesselColor(feature);
         const icon = L.divIcon({
-          className: 'seacommons-fallback-vessel-icon',
+          className: `seacommons-fallback-vessel-icon${stationary ? ' is-stationary' : ''}`,
           html: `<span class="seacommons-fallback-vessel-arrow" style="--vessel-heading:${heading}deg;--vessel-color:${color}"></span>`,
           iconSize: [22, 22],
           iconAnchor: [11, 11],

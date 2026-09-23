@@ -154,3 +154,18 @@ test('fallback map shows image-derived pin centre together with its uncertainty 
   assert.equal(log.circles[0].options.radius, 63118);
   assert.deepEqual(log.circles[0].latlng, [34.20693, 25.40976]);
 });
+
+
+test('fallback map keeps stationary vessels triangular instead of circle markers', async () => {
+  const log = { markers: [], polygons: [], tiles: [], vesselMarkers: [] };
+  const renderer = await createFallbackMap({ container: {}, center: [15, 36], zoom: 5, onFeatureSelect() {}, leaflet: fakeLeaflet(log) });
+  const vessel = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [14.2, 35.9] },
+    properties: { id: 'vessel:456', mmsi: '456', entity_kind: 'vessel', report_type: 'vessel', motion_state: 'stationary' },
+  };
+  renderer.setFeatures({ incidents: [], vessels: [vessel] });
+  assert.equal(log.vesselMarkers.length, 1);
+  assert.equal(log.markers.length, 0);
+  assert.match(log.vesselMarkers[0].options.icon.options.className, /is-stationary/);
+  assert.match(log.vesselMarkers[0].options.icon.options.html, /0deg/);
+});

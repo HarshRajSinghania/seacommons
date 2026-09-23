@@ -24,9 +24,12 @@ and the full evidence-based lifecycle (P0.5) exist.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Optional
 
 from core.intel.store import IntelEvent
+
+logger = logging.getLogger(__name__)
 
 TRANSITION_METHOD_VERSION = "v0_distress_lifecycle_4state"
 PUBLIC_STATUS_RETIRE_AFTER_HOURS = 24
@@ -407,10 +410,13 @@ def list_transitions(incident_id: str) -> list[dict]:
 
 
 def _on_intel_event(event: IntelEvent) -> None:
-    """core.intel.store.intel_store subscriber: syncs the canonical
-    incident for a Humanitarian-service event on every store write.
-    Never raises -- the subscriber fan-out already isolates exceptions
-    per-callback, but this stays defensive on its own too."""
+    """Sync one event into the canonical Humanitarian pipeline.
+
+    Ingestion remains fail-open, but failures are never silent: the bounded
+    stage metric and structured log make a dropped downstream transition
+    observable without exposing raw humanitarian content.
+    """
+    stage = "source_policy"
     try:
         from core.intel.lifecycle import distress_lifecycle
         from core.intel.service_taxonomy import classify_service
@@ -422,34 +428,51 @@ def _on_intel_event(event: IntelEvent) -> None:
 
         source_policy = resolve_source_identity(event.source, event.metadata)
         if source_policy.source_role == "verification":
+            stage = "verification"
             from core.intel.humanitarian_verification import process_verification_event
 
             process_verification_event(event)
             return
+
+        stage = "classification"
         if classify_service(event).service != "humanitarian":
             return
         if not may_open_humanitarian_incident(event):
             return
+
         same_source = [
             other for other in intel_store.events(limit=200)
             if other.source == event.source and other.id != event.id
         ]
-        lifecycle = distress_lifecycle(event, now=datetime.now(timezone.utc), same_source=same_source)
+        lifecycle = distress_lifecycle(
+            event, now=datetime.now(timezone.utc), same_source=same_source
+        )
         case_type = event.metadata.get("humanitarian_case_type") or event.metadata.get("case_type")
+
+        stage = "incident_sync"
         sync_incident_for_event(event, lifecycle=lifecycle, case_type=case_type)
 
-        from core.intel.claims import record_claims_for_incident, sync_assessments_for_incident
+        stage = "recognition"
         from core.intel.humanitarian_recognition import assess
-
         assessment = assess(event.text or event.title)
+
+        stage = "claims"
+        from core.intel.claims import record_claims_for_incident, sync_assessments_for_incident
         record_claims_for_incident(event.id, event, assessment)
         sync_assessments_for_incident(event.id)
 
+        stage = "correlation"
         from core.intel.correlation import generate_correlation_decisions
-
         generate_correlation_decisions(event, lifecycle=lifecycle)
-    except Exception:  # pragma: no cover - never break ingestion over incident sync
-        pass
+    except Exception:
+        from core.observability import record_humanitarian_pipeline_failure
+
+        record_humanitarian_pipeline_failure(stage)
+        logger.exception(
+            "humanitarian incident pipeline failed stage=%s event_id=%s",
+            stage,
+            event.id,
+        )
 
 
 def register() -> None:

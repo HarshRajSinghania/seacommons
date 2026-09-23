@@ -121,6 +121,11 @@ HUMANITARIAN_VERIFICATION_EVENTS = Counter(
     "Humanitarian verification pipeline events by bounded semantic stage",
     ["stage", "source_role", "outcome"],
 )
+HUMANITARIAN_PIPELINE_FAILURES = Counter(
+    "seacommons_humanitarian_pipeline_failures_total",
+    "Humanitarian incident pipeline failures by bounded stage",
+    ["stage"],
+)
 REMOTE_RADIO_EVENTS = Counter(
     "seacommons_remote_radio_events_total",
     "Remote radio runtime events by bounded provider/state/outcome",
@@ -147,6 +152,21 @@ _HV_OUTCOMES = frozenset({
     "rescue_activity_probable", "rescue_confirmed", "disembarkation_confirmed",
     "fatal_outcome_reported", "contradictory_evidence", "other",
 })
+
+
+_HUMANITARIAN_PIPELINE_STAGES = frozenset({
+    "source_policy", "classification", "incident_sync", "recognition",
+    "claims", "correlation", "verification", "other",
+})
+
+
+def record_humanitarian_pipeline_failure(stage: str) -> None:
+    """Count fail-open subscriber failures without high-cardinality labels."""
+    try:
+        label = stage if stage in _HUMANITARIAN_PIPELINE_STAGES else "other"
+        HUMANITARIAN_PIPELINE_FAILURES.labels(label).inc()
+    except Exception:  # pragma: no cover - metrics never block ingestion
+        pass
 
 
 def record_humanitarian_verification_event(*, stage: str, source_role: str, outcome: str) -> None:

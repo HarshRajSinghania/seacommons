@@ -274,3 +274,13 @@ def test_outbound_http_metrics_accept_canonical_labels() -> None:
         'seacommons_outbound_http_requests_total{method="GET",outcome="blocked_target",policy="public_untrusted"}'
         in metrics
     )
+
+
+def test_humanitarian_pipeline_failure_metric_has_bounded_stage_labels() -> None:
+    from core import observability
+
+    secret = "event-raw-private-content-123"
+    observability.record_humanitarian_pipeline_failure(secret)
+    metrics = generate_latest().decode()
+    assert secret not in metrics
+    assert 'seacommons_humanitarian_pipeline_failures_total{stage="other"}' in metrics

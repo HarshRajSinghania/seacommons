@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -732,6 +733,41 @@ def public_signal_collection(
     by_id.update({event.id: event for event in memory_events})
     events = list(by_id.values())
     now = datetime.now(UTC)
+
+    # Public-safe explanation for why durable Alarm Phone observations do or
+    # do not appear on the rolling Live surface.  This is aggregate-only: no
+    # raw text, identifiers or coordinates leave the API.
+    humanitarian_candidate_drops: Counter[str] = Counter()
+    humanitarian_eligible_features: list[dict[str, Any]] = []
+    for candidate in durable_alarm_phone:
+        candidate_domain = candidate.maritime_domain()
+        candidate_mode = (
+            "safety" if candidate_domain == "safety"
+            else compartment_for_domain(candidate_domain)
+        )
+        if candidate_mode != "humanitarian":
+            humanitarian_candidate_drops["not_humanitarian_compartment"] += 1
+            continue
+        candidate_feature = _public_intel_feature(
+            candidate, allowed_domains=domains_for_mode("humanitarian")
+        )
+        if candidate_feature is None:
+            humanitarian_candidate_drops["projection_withheld"] += 1
+            continue
+        if not is_useful_public_case_feature(candidate_feature):
+            humanitarian_candidate_drops["case_gate_withheld"] += 1
+            continue
+        if not lifecycle.is_within_live_retention_window(candidate, now=now):
+            humanitarian_candidate_drops["outside_live_window"] += 1
+            continue
+        humanitarian_eligible_features.append(candidate_feature)
+
+    deduped_candidate_features = dedupe_public_case_items(humanitarian_eligible_features)
+    deduplicated_count = len(humanitarian_eligible_features) - len(deduped_candidate_features)
+    if deduplicated_count:
+        humanitarian_candidate_drops["duplicate_public_case"] += deduplicated_count
+    humanitarian_candidate_drops["eligible"] = len(deduped_candidate_features)
+
     by_source: dict[str, list[IntelEvent]] = {}
     for event in events:
         by_source.setdefault(event.source, []).append(event)
@@ -1033,6 +1069,7 @@ def public_signal_collection(
             "role_counts": role_counts,
             "memory_candidates": len(memory_events),
             "durable_alarm_phone_candidates": len(durable_alarm_phone),
+            "humanitarian_candidate_diagnostics": dict(sorted(humanitarian_candidate_drops.items())),
             "durable_sanction_port_call_candidates": len(durable_sanction_port_calls),
             "with_coords": sum(1 for feature in features if feature.get("geometry") is not None),
             "generated_at": datetime.now(UTC).isoformat(),

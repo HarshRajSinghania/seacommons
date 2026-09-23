@@ -43,9 +43,17 @@ def is_qualifying_ais_evidence(event_type: str, metadata: dict) -> bool:
     retention floor -- everything else stays governed by existing rules."""
     if event_type not in _QUALIFYING_AIS_TYPES:
         return False
-    return bool(metadata.get("offshore_anomaly_qualified")) and metadata.get(
-        "analysis_state"
-    ) == "evidence_candidate"
+    if not (
+        bool(metadata.get("offshore_anomaly_qualified"))
+        and metadata.get("analysis_state") == "evidence_candidate"
+    ):
+        return False
+    anomaly_type = str(metadata.get("anomaly_type") or "").strip().lower()
+    if event_type == "ais_anomaly" and anomaly_type in {"gap", "long_gap", "ais_gap"}:
+        from core.live.eligibility import ais_gap_has_public_support
+
+        return ais_gap_has_public_support(metadata)
+    return True
 
 
 def live_case_key(event_type: str, metadata: dict, linked_mmsi: str) -> str | None:

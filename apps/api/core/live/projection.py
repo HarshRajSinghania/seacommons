@@ -23,6 +23,7 @@ from core.domain.live_contracts import (
 )
 from core.domain.visual_category import visual_category_fields
 from core.domain.incident_taxonomy import is_independently_corroborated
+from core.live.eligibility import ais_gap_has_public_support
 from core.intel import lifecycle
 from core.intel.assessment import build_assessment
 from core.intel.public_geometry import public_geometry_and_precision
@@ -345,14 +346,9 @@ def is_useful_public_case_feature(feature: dict[str, Any] | None) -> bool:
     if (
         event_type == "ais_anomaly"
         and anomaly_type in {"gap", "long_gap", "ais_gap"}
-        and not is_independently_corroborated(props)
+        and not ais_gap_has_public_support(props)
     ):
-        reception = props.get("reception_expectation") or {}
-        if not (
-            isinstance(reception, dict)
-            and reception.get("support_level") == "strong"
-        ):
-            return False
+        return False
     if event_type in {"correlated_alert", "dark_candidate"}:
         return False
     if event_type == "news":

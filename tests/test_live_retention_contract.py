@@ -180,3 +180,19 @@ def test_is_live_retained_handles_naive_datetimes_from_sqlite():
     assert is_live_retained(naive_future, now=now) is True
     assert is_live_retained(naive_past, now=now) is False
     assert is_live_retained(None, now=now) is False
+
+
+def test_gap_retention_uses_same_reception_gate_as_public_live():
+    from core.live.retention import is_qualifying_ais_evidence
+
+    base = {
+        "anomaly_type": "gap",
+        "offshore_anomaly_qualified": True,
+        "analysis_state": "evidence_candidate",
+        "independent_source_count": 1,
+    }
+    assert is_qualifying_ais_evidence("ais_anomaly", base) is False
+    assert is_qualifying_ais_evidence(
+        "ais_anomaly",
+        {**base, "reception_expectation": {"support_level": "strong"}},
+    ) is True

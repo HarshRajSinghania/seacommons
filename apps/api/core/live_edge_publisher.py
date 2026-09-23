@@ -252,7 +252,7 @@ def public_event_from_row(
     # Humanitarian Live" can never depend on whether the browser is served
     # from the edge or the VM.
     from core.intel.public_policy import SECURITY_MARITIME_DOMAINS, domains_for_mode
-    from core.live.projection import _public_intel_feature
+    from core.live.projection import _public_intel_feature, is_useful_public_case_feature
 
     resolved_domain = event.maritime_domain()
     if resolved_domain in SECURITY_MARITIME_DOMAINS or resolved_domain == "safety":
@@ -266,7 +266,7 @@ def public_event_from_row(
     vm_feature = _public_intel_feature(
         event, allowed_domains=domains_for_mode("humanitarian")
     )
-    if vm_feature is None:
+    if vm_feature is None or not is_useful_public_case_feature(vm_feature):
         return None
     # kind == "distress" iff event.tier() == "operational" -- the same signal
     # the VM feed's distress lifecycle / window handling keys off.

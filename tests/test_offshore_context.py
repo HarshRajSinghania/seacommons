@@ -151,8 +151,44 @@ def test_sustained_offshore_tanker_rendezvous_is_evidence_candidate(monkeypatch)
 
 
 def test_published_qualified_offshore_gap_reaches_live_as_evidence_not_case():
+    base_metadata = {
+        "anomaly_type": "gap",
+        "maritime_domain": "grey_zone",
+        "publication_status": "published",
+        "source_policy": "official_api",
+        "verification_status": "ais_transponder",
+        "analysis_state": "evidence_candidate",
+        "offshore_anomaly_qualified": True,
+        "offshore_reason_codes": ["OFFSHORE_CONTEXT", "LOCAL_AIS_COVERAGE_HEALTHY"],
+        "offshore_rationale": "Offshore anomaly passed contextual gates; it is evidence for investigation, not proof of intent.",
+        "offshore_context": {
+            "offshore": True,
+            "distance_from_coast_km": 95.0,
+            "distance_from_port_km": 120.0,
+            "nearest_port": "Test Port",
+        },
+    }
+
+    weak_event = IntelEvent(
+        id="offshore-gap:test:weak-reception",
+        type="ais_anomaly",
+        severity="high",
+        lat=34.5,
+        lon=17.0,
+        title="AIS gap — TEST",
+        source="mda",
+        linked_mmsi="211123456",
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        metadata=base_metadata,
+    )
+    weak_feature = _public_intel_feature(
+        weak_event, allowed_domains=frozenset({"grey_zone"})
+    )
+    assert weak_feature is not None
+    assert is_useful_public_case_feature(weak_feature) is False
+
     event = IntelEvent(
-        id="offshore-gap:test",
+        id="offshore-gap:test:strong-reception",
         type="ais_anomaly",
         severity="high",
         lat=34.5,
@@ -162,20 +198,16 @@ def test_published_qualified_offshore_gap_reaches_live_as_evidence_not_case():
         linked_mmsi="211123456",
         timestamp_utc=datetime.now(timezone.utc).isoformat(),
         metadata={
-            "anomaly_type": "gap",
-            "maritime_domain": "grey_zone",
-            "publication_status": "published",
-            "source_policy": "official_api",
-            "verification_status": "ais_transponder",
-            "analysis_state": "evidence_candidate",
-            "offshore_anomaly_qualified": True,
-            "offshore_reason_codes": ["OFFSHORE_CONTEXT", "LOCAL_AIS_COVERAGE_HEALTHY"],
-            "offshore_rationale": "Offshore anomaly passed contextual gates; it is evidence for investigation, not proof of intent.",
-            "offshore_context": {
-                "offshore": True,
-                "distance_from_coast_km": 95.0,
-                "distance_from_port_km": 120.0,
-                "nearest_port": "Test Port",
+            **base_metadata,
+            "reception_expectation": {
+                "support_level": "strong",
+                "reason_codes": [
+                    "DENSE_PRE_GAP_REPORTING_HISTORY",
+                    "NEIGHBOUR_TRAFFIC_CONTINUED",
+                    "TRACK_CORRIDOR_COVERAGE_PRESENT",
+                    "NO_MATERIAL_JAMMING_CONTEXT",
+                    "MANY_EXPECTED_REPORTS_MISSING",
+                ],
             },
         },
     )
@@ -185,6 +217,7 @@ def test_published_qualified_offshore_gap_reaches_live_as_evidence_not_case():
     assert props["live_role"] == "maritime_evidence"
     assert props["analysis_state"] == "evidence_candidate"
     assert props["offshore_context"]["offshore"] is True
+    assert props["reception_expectation"]["support_level"] == "strong"
     assert is_useful_public_case_feature(feature) is True
 
 

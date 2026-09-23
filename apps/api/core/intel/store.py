@@ -329,6 +329,7 @@ class IntelStore:
     def __init__(self, maxlen: int = MAX_EVENTS) -> None:
         self._events: deque[IntelEvent] = deque(maxlen=maxlen)
         self._seen: set[str] = set()
+        self._seen_order: deque[str] = deque()
         self._lock = threading.Lock()
         # (websocket_obj, asyncio_loop) — loop needed for thread-safe sends
         self._ws_clients: set[tuple[Any, asyncio.AbstractEventLoop]] = set()
@@ -347,6 +348,23 @@ class IntelStore:
         ] = queue.Queue()
         self._persist_worker: threading.Thread | None = None
         self._persist_worker_lock = threading.Lock()
+
+    def _remember_seen_locked(self, keys) -> None:
+        """Remember dedup keys in insertion order while bounding memory.
+
+        Must be called with ``self._lock`` held.  The previous implementation
+        truncated a ``set`` via ``list(set)``; set iteration is unordered, so
+        it could evict fresh keys and retain stale ones nondeterministically.
+        """
+        for raw_key in keys:
+            key = str(raw_key or "")
+            if not key or key in self._seen:
+                continue
+            self._seen.add(key)
+            self._seen_order.append(key)
+        while len(self._seen_order) > DEDUP_WINDOW:
+            oldest = self._seen_order.popleft()
+            self._seen.discard(oldest)
 
     def _enqueue_persist(
         self, target: Callable[..., None], *args: Any, wait: bool = False
@@ -422,7 +440,7 @@ class IntelStore:
                 merged = {**event.metadata, **url_duplicate.metadata}
                 metadata_changed = merged != url_duplicate.metadata
                 url_duplicate.metadata = merged
-                self._seen.update(keys)
+                self._remember_seen_locked(keys)
             elif id_duplicate is not None:
                 # Deterministic machine IDs are mutable episode identities.
                 # Refresh the canonical in-memory object and durable row, but
@@ -449,14 +467,11 @@ class IntelStore:
                 id_duplicate.linked_mmsi = event.linked_mmsi
                 id_duplicate.metadata = merged
                 event.metadata = merged
-                self._seen.update(keys)
+                self._remember_seen_locked(keys)
             elif any(key in self._seen for key in keys):
                 return False
             else:
-                self._seen.update(keys)
-                if len(self._seen) > DEDUP_WINDOW:
-                    # Keep the newest half
-                    self._seen = set(list(self._seen)[DEDUP_WINDOW // 2 :])
+                self._remember_seen_locked(keys)
                 self._events.appendleft(event)
 
         if url_duplicate is not None:
@@ -581,15 +596,15 @@ class IntelStore:
                     keys.add(f"x:{tweet_id}")
                 with self._lock:
                     if not any(key in self._seen for key in keys):
-                        self._seen.update(keys)
+                        self._remember_seen_locked(keys)
                         self._events.appendleft(ev)
                         loaded += 1
             with self._lock:
                 for ev in dedup_only:
-                    self._seen.add(ev.content_hash())
+                    self._remember_seen_locked([ev.content_hash()])
                     tweet_id = str(ev.metadata.get("tweet_id") or "")
                     if tweet_id:
-                        self._seen.add(f"x:{tweet_id}")
+                        self._remember_seen_locked([f"x:{tweet_id}"])
             logger.info(
                 "intel_store: loaded %d events from DB (+%d dedup-only humanitarian keys)",
                 loaded, len(dedup_only),
@@ -658,7 +673,7 @@ class IntelStore:
                     keys.add(f"x:{tweet_id}")
                 if any(key in self._seen for key in keys):
                     continue
-                self._seen.update(keys)
+                self._remember_seen_locked(keys)
                 self._events.appendleft(new_event)
                 new_count += 1
                 changed_events.append(new_event)

@@ -65,3 +65,14 @@ def test_deterministic_machine_event_refreshes_without_duplication(monkeypatch):
     assert len(persisted) == 2
     assert broadcasts == [first.id]
     assert notified == [first.id]
+
+
+def test_dedup_window_evicts_oldest_keys_deterministically(monkeypatch):
+    import core.intel.store as store_module
+
+    monkeypatch.setattr(store_module, "DEDUP_WINDOW", 3)
+    store = IntelStore()
+    with store._lock:
+        store._remember_seen_locked(["a", "b", "c", "d"])
+    assert store._seen == {"b", "c", "d"}
+    assert list(store._seen_order) == ["b", "c", "d"]

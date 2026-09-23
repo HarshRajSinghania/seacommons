@@ -36,7 +36,7 @@ _ALLOWED_CHANNEL_FIELDS = frozenset(
     }
 )
 _ALLOWED_DECODER_FIELDS = frozenset(
-    {"enabled", "decoders", "frames", "decoded", "invalid", "dropped", "errors", "queued", "worker_alive"}
+    {"enabled", "decoders", "frames", "decoded", "invalid", "dropped", "errors", "queued", "worker_alive", "decode_ratio", "drop_ratio"}
 )
 
 

@@ -1807,6 +1807,12 @@ def test_live_routes_remain_public_when_internal_reads_require_auth() -> None:
         assert source_payload["collector"]["browser_independent"] is True
         assert all(source["type"] != "ais" for source in source_payload["sources"])
         assert all(
+            source["status"] != "offline"
+            for source in source_payload["sources"]
+            if source["configured"] == 0
+        )
+        assert source_payload["summary"]["disabled"] >= 0
+        assert all(
             {
                 "pipeline_status",
                 "source_status",

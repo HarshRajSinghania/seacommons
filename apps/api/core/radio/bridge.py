@@ -108,7 +108,12 @@ def radio_acquisition_status() -> dict[str, object]:
 
     status = get_remote_radio_status(include_receivers=True)
     channels = list(status.get("channels") or [])
-    decoder = radio_decoder_status()
+    decoder = dict(radio_decoder_status())
+    frames = int(decoder.get("frames") or 0)
+    decoded = int(decoder.get("decoded") or 0)
+    dropped = int(decoder.get("dropped") or 0)
+    decoder["decode_ratio"] = round(decoded / frames, 6) if frames else 0.0
+    decoder["drop_ratio"] = round(dropped / frames, 6) if frames else 0.0
     if not status.get("enabled"):
         state = "disabled"
     elif int(status.get("started") or 0) == 0:

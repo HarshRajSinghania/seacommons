@@ -268,7 +268,13 @@ async def root_status():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "runtime_profile": config.RUNTIME_PROFILE}
+    from core.build_info import revision
+
+    return {
+        "status": "ok",
+        "runtime_profile": config.RUNTIME_PROFILE,
+        "revision": revision(),
+    }
 
 
 @app.get("/ready")

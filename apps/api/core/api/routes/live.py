@@ -414,8 +414,11 @@ async def live_pipeline():
     )
 
     ensure_default_acquisition_status()
+    from core.build_info import revision
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "revision": revision(),
         "sources": acquisition_status_sources(),
     }
 
@@ -749,14 +752,14 @@ async def live_sources():
                 "type": source_type,
                 "status": observed["status"]
                 if observed
-                else ("pending" if configured else "offline"),
+                else ("pending" if configured else "disabled"),
                 "last_poll_at": observed["last_poll_at"] if observed else None,
                 "events_last_hour": observed["events_last_hour"] if observed else 0,
                 "total_events": observed["total_events"] if observed else 0,
                 "consecutive_errors": observed["consecutive_errors"] if observed else 0,
                 "pipeline_status": observed.get("pipeline_status", observed["status"])
                 if observed
-                else ("pending" if configured else "offline"),
+                else ("pending" if configured else "disabled"),
                 "source_status": observed.get("source_status", "unknown")
                 if observed
                 else "unknown",
@@ -810,6 +813,7 @@ async def live_sources():
             "active": active,
             "degraded": sum(1 for source in sources if source["status"] == "degraded"),
             "offline": sum(1 for source in sources if source["status"] == "offline"),
+            "disabled": sum(1 for source in sources if source["status"] == "disabled"),
             "pending": sum(1 for source in sources if source["status"] == "pending"),
         },
         "channels": {

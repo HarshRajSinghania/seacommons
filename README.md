@@ -24,6 +24,12 @@ canonical architecture documentation.
 | Public demo | https://play.seacommons.org | Isolated SAR-simulation sandbox |
 | Public Live edge | https://seacommons-edge.seacommons.workers.dev/health | Cloudflare Worker + Durable Object distributing Public Live |
 
+## Glossary
+
+Public Live uses **Humanitarian** and **Maritime** as the two incident families, plus terms such as AIS, DSC, dark activity and corroboration. Those labels are observations or derived cues — they do not by themselves confirm an incident.
+
+A short glossary for new readers: [docs/GLOSSARY.md](./docs/GLOSSARY.md).
+
 ## What is operational vs experimental
 
 | Area | Status |
